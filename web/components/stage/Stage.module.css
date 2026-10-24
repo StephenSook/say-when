@@ -1,14 +1,11 @@
 /*
  * The stage view (/stage), one projector screen. The tree takes the main area; a side column holds the brain slot,
  * the earpiece and what was said out loud; the command strip runs along the bottom. Color is for state only: lilac
- * is the earpiece cursor, green is the pick (as on the tree), and cyan and amber mark an imagined right and left
+ * is the earpiece cursor, green is the pick (--pick, as on every screen), and cyan and amber mark an imagined right and left
  * fist, the brain part, nowhere else.
  */
 
 .root {
-  --pick: #7be3a6; /* ours: the pick, as on the tree (components/replies/ReplyTree.module.css) */
-  --pick-soft: rgba(123, 227, 166, 0.12);
-  --pick-line: rgba(123, 227, 166, 0.55);
   --hand-yes: #38e1ff; /* an imagined right fist (YES), the brain part only; the same as /brain */
   --hand-yes-soft: rgba(56, 225, 255, 0.16);
   --hand-no: #ffb020; /* an imagined left fist (NO), the brain part only; the same as /brain */
