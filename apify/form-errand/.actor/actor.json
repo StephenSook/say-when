@@ -1,0 +1,24 @@
+{
+    "$schema": "https://apify.com/schemas/v1/actor.ide.json",
+    "actorSpecification": 1,
+    "name": "confirm-gated-form-errand",
+    "title": "Confirm-Gated Form Errand",
+    "description": "Fills a web form, reads every value back off the page, and submits only after a person confirms what they heard. Built for assistive switch users.",
+    "version": "0.1",
+    "buildTag": "latest",
+    "usesStandbyMode": true,
+    "meta": {
+        "generatedBy": "Claude Code with Claude Opus 5.5"
+    },
+    "input": "./input_schema.json",
+    "output": "./output_schema.json",
+    "storages": {
+        "dataset": "./dataset_schema.json",
+        "keyValueStore": "./key_value_store_schema.json"
+    },
+    "webServerSchema": "./openapi.json",
+    "minMemoryMbytes": 1024,
+    "maxMemoryMbytes": 4096,
+    "defaultMemoryMbytes": 2048,
+    "dockerfile": "../Dockerfile"
+}

@@ -45,3 +45,33 @@ jobs:
           rows=$(grep -cE '^\| [0-9]+\.[0-9]+ \|' PLAN.md)
           echo "PLAN.md task rows: $rows"
           test "$rows" -ge 10
+
+  form-errand:
+    name: Apify form-errand Actor
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apify/form-errand
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apify/form-errand/package-lock.json
+      - run: npm ci
+      - name: Install the Chromium that matches playwright 1.61.1
+        run: npx playwright install --with-deps chromium
+      - run: npm run typecheck
+      - run: npm run build
+      - name: Tests (unit and real browser)
+        run: |
+          npm test > test.log 2>&1
+          status=$?
+          cat test.log
+          test "$status" -eq 0
+          grep -qE '^# fail 0$' test.log
+          # Floor on passing tests, so a run that finds no tests cannot pass.
+          pass=$(awk '/^# pass/ {print $3}' test.log)
+          echo "passing tests: $pass"
+          test "$pass" -ge 36

@@ -1,0 +1,85 @@
+{
+    "$schema": "https://apify.com/schemas/v1/input.ide.json",
+    "title": "Confirm-gated form errand",
+    "type": "object",
+    "schemaVersion": 1,
+    "properties": {
+        "formUrl": {
+            "title": "Form URL",
+            "type": "string",
+            "editor": "textfield",
+            "description": "HTTPS address of the form, or demo for the built-in Care team request form. To fill or submit a real form, its owner must opt in by putting form-errand:allow in the form's description, or the form must be on this Actor's allowed list.",
+            "prefill": "demo"
+        },
+        "mode": {
+            "title": "Mode",
+            "type": "string",
+            "editor": "select",
+            "enum": ["inspect", "preview", "submit"],
+            "enumTitles": ["Inspect: list the questions", "Preview: fill and read back, never send", "Submit: send after a confirm"],
+            "description": "Inspect lists the questions. Preview fills the form, reads every value back off the page and returns a digest and a screenshot, without sending. Submit sends only with a confirm and the digest from the preview.",
+            "default": "preview"
+        },
+        "fields": {
+            "title": "Answers",
+            "type": "array",
+            "editor": "json",
+            "description": "List of answers, each {\"label\": question text, \"value\": answer, \"source\": optional note on where the answer came from}. Use a list of strings for checkbox questions and true or false for a single checkbox.",
+            "prefill": [
+                { "label": "Who is this from?", "value": "Demo user", "source": "memory" },
+                { "label": "What do you need?", "value": "Meal or drink" },
+                { "label": "Details", "value": "Lunch at the cafe across the street, wheelchair entrance on the side." },
+                { "label": "When?", "value": "12:30 today" },
+                { "label": "How urgent?", "value": "Today" }
+            ]
+        },
+        "confirm": {
+            "title": "The person confirmed the read-back",
+            "type": "boolean",
+            "editor": "checkbox",
+            "description": "Submit only. Turn on only after the person heard the read-back and confirmed it.",
+            "default": false
+        },
+        "confirmDigest": {
+            "title": "Digest from the preview",
+            "type": "string",
+            "editor": "textfield",
+            "description": "Submit only. The previewDigest the person confirmed. If the page holds anything different now, nothing is sent."
+        },
+        "submitButtonText": {
+            "title": "Send button text",
+            "type": "string",
+            "editor": "textfield",
+            "description": "Visible name of the form's send button.",
+            "default": "Submit"
+        },
+        "confirmationPattern": {
+            "title": "Confirmation text pattern",
+            "type": "string",
+            "editor": "textfield",
+            "description": "Case-insensitive regular expression the page must show after sending. If it does not appear, the run reports that it could not confirm.",
+            "default": "recorded|received|thank|submitted|sent"
+        },
+        "disclosureText": {
+            "title": "Note added to the answers",
+            "type": "string",
+            "editor": "textfield",
+            "description": "Appended to one paragraph answer so the recipient knows how the form was sent. Leave empty to turn it off.",
+            "default": "Sent with an assistive switch after a spoken read-back and a confirm."
+        },
+        "disclosureField": {
+            "title": "Question that gets the note",
+            "type": "string",
+            "editor": "textfield",
+            "description": "Optional. Label of the paragraph question for the note. Defaults to the last paragraph question you fill."
+        },
+        "includeScreenshot": {
+            "title": "Return the screenshot inline",
+            "type": "boolean",
+            "editor": "checkbox",
+            "description": "Standby only. Adds the screenshot as base64 to the HTTP response so a dashboard needs no second request.",
+            "default": true
+        }
+    },
+    "required": ["formUrl"]
+}

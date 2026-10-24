@@ -1,0 +1,77 @@
+{
+    "$schema": "https://apify.com/schemas/v1/dataset.ide.json",
+    "actorSpecification": 1,
+    "fields": {
+        "type": "object",
+        "properties": {
+            "status": {
+                "type": "string",
+                "title": "Status",
+                "description": "What happened: inspected, previewed, submitted, duplicate, refused or failed.",
+                "enum": ["inspected", "previewed", "submitted", "duplicate", "refused", "failed"],
+                "example": "previewed"
+            },
+            "mode": { "type": "string", "title": "Mode", "description": "inspect, preview or submit.", "example": "preview" },
+            "formTitle": { "type": ["string", "null"], "title": "Form title", "example": "Care team request" },
+            "formUrl": { "type": "string", "title": "Form URL", "example": "demo" },
+            "fillAllowed": {
+                "type": "boolean",
+                "title": "Fill allowed",
+                "description": "True when the form opted in or is on the allowed list."
+            },
+            "readBackText": {
+                "type": ["string", "null"],
+                "title": "Read-back",
+                "description": "The sentence to read aloud before the person confirms, built from values read back off the page."
+            },
+            "previewDigest": {
+                "type": ["string", "null"],
+                "title": "Digest",
+                "description": "16 hex characters over the form and the values read back. Submit needs this exact digest.",
+                "example": "3f9a1c0b7d2e4a65"
+            },
+            "confirmationText": {
+                "type": ["string", "null"],
+                "title": "Confirmation",
+                "description": "The confirmation line the form showed after sending."
+            },
+            "screenshotUrl": { "type": ["string", "null"], "title": "Screenshot", "description": "Preview or confirmation screenshot." },
+            "unmatched": { "type": "array", "title": "Unmatched answers", "items": { "type": "string" } },
+            "missingRequired": { "type": "array", "title": "Empty required questions", "items": { "type": "string" } },
+            "refusalCode": { "type": ["string", "null"], "title": "Refusal code", "example": "captcha" },
+            "refusalReason": { "type": ["string", "null"], "title": "Refusal reason", "description": "A short sentence written to be spoken." },
+            "totalMs": { "type": "number", "title": "Total time (ms)" },
+            "submittedAt": { "type": ["string", "null"], "title": "Submitted at" }
+        }
+    },
+    "views": {
+        "overview": {
+            "title": "Overview",
+            "transformation": {
+                "fields": [
+                    "status",
+                    "formTitle",
+                    "readBackText",
+                    "previewDigest",
+                    "confirmationText",
+                    "screenshotUrl",
+                    "refusalReason",
+                    "totalMs"
+                ]
+            },
+            "display": {
+                "component": "table",
+                "properties": {
+                    "status": { "label": "Status", "format": "text" },
+                    "formTitle": { "label": "Form", "format": "text" },
+                    "readBackText": { "label": "Read-back", "format": "text" },
+                    "previewDigest": { "label": "Digest", "format": "text" },
+                    "confirmationText": { "label": "Confirmation", "format": "text" },
+                    "screenshotUrl": { "label": "Screenshot", "format": "image" },
+                    "refusalReason": { "label": "Why not", "format": "text" },
+                    "totalMs": { "label": "Time (ms)", "format": "number" }
+                }
+            }
+        }
+    }
+}

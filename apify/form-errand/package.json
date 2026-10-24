@@ -1,0 +1,29 @@
+{
+    "name": "confirm-gated-form-errand",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "description": "Apify Actor that fills a web form, reads every value back off the page, and submits only after a confirm whose digest still matches.",
+    "engines": {
+        "node": ">=22"
+    },
+    "dependencies": {
+        "apify": "^3.7.2",
+        "playwright": "1.61.1"
+    },
+    "devDependencies": {
+        "@types/node": "^24.19.2",
+        "tsx": "^4.23.15",
+        "typescript": "~6.0.3"
+    },
+    "scripts": {
+        "start": "npm run start:dev",
+        "start:prod": "node dist/main.js",
+        "start:dev": "tsx src/main.ts",
+        "serve:dev": "FORM_ERRAND_SERVE=1 tsx src/main.ts",
+        "build": "tsc",
+        "typecheck": "tsc --noEmit",
+        "test": "tsx --test test/*.test.ts"
+    },
+    "license": "MIT"
+}

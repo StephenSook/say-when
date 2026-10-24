@@ -1,0 +1,18 @@
+{
+    "actorKeyValueStoreSchemaVersion": 1,
+    "title": "Errand records",
+    "collections": {
+        "output": {
+            "title": "Result",
+            "description": "The full errand result, including the read-back and digest.",
+            "key": "OUTPUT",
+            "contentTypes": ["application/json"]
+        },
+        "screenshots": {
+            "title": "Screenshots",
+            "description": "The filled form before sending, and the confirmation page after.",
+            "keyPrefix": "SCREENSHOT-",
+            "contentTypes": ["image/jpeg"]
+        }
+    }
+}
