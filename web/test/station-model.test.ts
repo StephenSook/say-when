@@ -158,6 +158,21 @@ describe('during a session', () => {
     assert.equal(bigStatus(running({ scan: scan({ phase: 'idle' }) }), NOW).sentence, "YES opens the person's menu.");
   });
 
+  test('a yes or no answer reads as an answer, not as a picked option', () => {
+    const no = bigStatus(running({ scan: scan({ phase: 'veto', answerMode: 'yes_no', stepMs: 700, arrivedWall: NOW, pickedRank: 2 }) }), NOW);
+    assert.equal(no.title, 'Answered no. Saying it in 0.7 s.');
+    const yes = bigStatus(running({ scan: scan({ phase: 'veto', answerMode: 'yes_no', stepMs: 700, arrivedWall: NOW, pickedRank: 1 }) }), NOW);
+    assert.equal(yes.title, 'Answered yes. Saying it in 0.7 s.');
+  });
+
+  test('no status word chip where the word list has no true word: idle in a session, a session to continue', () => {
+    assert.equal(bigStatus(running({ scan: scan({ phase: 'idle' }) }), NOW).chip, false);
+    assert.equal(bigStatus(base({ session: { ...base().session, id: 7n } }), NOW).chip, false);
+    // Every other state keeps its chip: a word, an icon and a color.
+    assert.equal(bigStatus(running({ scan: scan({ phase: 'reading' }) }), NOW).chip, true);
+    assert.equal(bigStatus(base(), NOW).chip, true);
+  });
+
   test('every pause reason has its sentence; a helper pause shows the owner command', () => {
     assert.equal(pauseSentence('stop', 'headset', 120_000), 'Paused. YES resumes.');
     assert.equal(pauseSentence('idle', 'headset', 120_000), 'Paused after 2 minutes. YES resumes.');

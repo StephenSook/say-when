@@ -161,7 +161,7 @@ function StatusBlock({ status }: { status: BigStatus }) {
     <div className={cx(styles.status, styles[status.status])}>
       {/* Only the state and its title are announced; the countdown sentence below changes every frame. */}
       <div className={styles.statusLive} role={status.alert ? 'alert' : 'status'}>
-        <DeviceChip view={runStatusChip(status.status, STATUS_WORDS[status.status])} />
+        {status.chip ? <DeviceChip view={runStatusChip(status.status, STATUS_WORDS[status.status])} /> : null}
         <p className={styles.statusTitle}>{status.title}</p>
       </div>
       {status.sentence ? <p className={styles.sentence}>{status.sentence}</p> : null}

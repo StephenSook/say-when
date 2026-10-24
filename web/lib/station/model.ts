@@ -123,10 +123,16 @@ export interface BigStatus {
   command: string | null;
   /** Announce as an alert: something needs a person now. */
   alert: boolean;
+  /**
+   * Show the status word chip above the title. Off where the title already says the state and the word list has no
+   * true word for it: idle inside a running session is not "Not started", and a session to continue is not
+   * "Waiting for confirm".
+   */
+  chip: boolean;
 }
 
 function status(status: RunStatus, title: string, sentence: string | null = null, extra: Partial<BigStatus> = {}): BigStatus {
-  return { status, title, sentence, command: null, alert: status === 'failed', ...extra };
+  return { status, title, sentence, command: null, alert: status === 'failed', chip: true, ...extra };
 }
 
 const ACTIVE_ERRAND: Readonly<Record<string, string>> = {
@@ -159,7 +165,7 @@ export function bigStatus(s: StationSnapshot, now: number): BigStatus {
     return status('not_started', 'No session running', session.error ?? startBlocker(s) ?? 'Ready to start.', { alert: session.error !== null });
   }
   if (session.ownership === 'claiming') return status('working', `Taking over session ${session.id}`);
-  if (session.ownership === 'none') return status('waiting', `Session ${session.id} is active.`, 'Continue it here, or end it.', { alert: false });
+  if (session.ownership === 'none') return status('waiting', `Session ${session.id} is active.`, 'Continue it here, or end it.', { alert: false, chip: false });
 
   // This station runs the session.
   const scan = s.scan;
@@ -185,7 +191,7 @@ export function bigStatus(s: StationSnapshot, now: number): BigStatus {
   const callWord = s.work.call ? ACTIVE_CALL[s.work.call.status] : undefined;
   if (callWord) return status('working', callWord);
 
-  if (!scan) return status('not_started', 'Idle. Nothing in the earpiece.');
+  if (!scan) return status('not_started', 'Idle. Nothing in the earpiece.', null, { chip: false });
   const of = scan.optionCount > 0 ? ` of ${scan.optionCount}` : '';
   const item = scan.mode === 'menu' ? 'menu item' : 'option';
   switch (scan.phase) {
@@ -197,11 +203,16 @@ export function bigStatus(s: StationSnapshot, now: number): BigStatus {
       return status('working', scan.answerMode === 'yes_no' ? 'Window open for yes or no' : `Window open for ${item} ${scan.cursor}${of}`, 'NO skips. Silence moves on.');
     case 'veto': {
       const left = Math.max(0, scan.stepMs - (now - scan.arrivedWall));
+      const saying = `Saying it in ${formatSeconds(left)}.`;
+      // A yes or no answer is option 1 (yes) or 2 (no) in the module (spacetime/src/gesture.ts), never a pick.
+      if (scan.answerMode === 'yes_no' && (scan.pickedRank === 1 || scan.pickedRank === 2)) {
+        return status('working', `Answered ${scan.pickedRank === 1 ? 'yes' : 'no'}. ${saying}`, 'NO or STOP cancels.');
+      }
       const which = scan.pickedRank !== null ? `${item} ${scan.pickedRank}` : 'the reply';
-      return status('working', `Picked ${which}. Saying it in ${formatSeconds(left)}.`, 'NO or STOP cancels.');
+      return status('working', `Picked ${which}. ${saying}`, 'NO or STOP cancels.');
     }
     case 'idle':
-      return status('not_started', 'Idle. Nothing in the earpiece.', s.config?.menuEnabled ? "YES opens the person's menu." : null);
+      return status('not_started', 'Idle. Nothing in the earpiece.', s.config?.menuEnabled ? "YES opens the person's menu." : null, { chip: false });
   }
 }
 
