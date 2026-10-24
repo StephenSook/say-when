@@ -36,9 +36,9 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⛔ blocked
 | 5.2 | Screen 1, Live data: each pipeline stage with its real payload as it flows | `web/` | Stephen | ✅ | 5.1 | Built and checked on live data |
 | 5.3 | Screen 2, Agents at work: form errand and phone call, step by step | `web/` | Stephen | ✅ | 5.1, 4.1 | Built; errands checked on live data, calls on the replay (live call fields come with module v2) |
 | 5.4 | Screen 3, Live conversation: question, options, pick, spoken reply | `web/` | Stephen | ✅ | 5.1 | Built and checked on live data |
-| 5.5 | Partner phone view | `web/` | Stephen | 🟡 | 5.1 | Status view built and live. Asking is not wired yet: Hold to ask (Cartesia Ink-2) and the typed fallback still need pairing and `ask_question` |
-| 5.6 | Station page: the wearer's laptop | `web/` | Stephen | ⬜ | 1.1, 2.1 | Pairs as Station; relays decoder events from `ws://127.0.0.1` to the `gesture` reducer (with a labeled keyboard fallback for testing); heartbeats the dead-man lease; plays each option into the earpiece with Cartesia Sonic (tokens from the module's procedure); reports read-back done and speak timings. Without it the headset cannot drive the system |
-| 5.7 | Speaker page: the room voice | `web/` | Stephen | ⬜ | 1.1 | Pairs as Speaker; says the released reply out loud with Cartesia Sonic and reports `reply_spoken` |
+| 5.5 | Partner phone view | `web/` | Stephen | 🟡 | 5.1 | Status view live. Asking built: pairing, typed `ask_question` (passed the live keyboard run L1 on Oct 24) and Hold to ask with Cartesia Ink-2 (not run yet: needs the Cartesia key on the module, then L3 on the real phone) |
+| 5.6 | Station page: the wearer's laptop | `web/` | Stephen | 🟡 | 1.1, 2.1 | Built (`/station`). L1 on `say-when-dev`, Oct 24, silent keyboard mode: pairing, session label `keyboard-test`, a pick, a pick 52 ms late that still took the option heard, a yes or no answer, the refractory ignore, the dead-man pause and resume (hidden page simulated), reload and continue; 11 of 13 steps pass. Not run: the voiced read-back and CONFIRM (step 8) until the module has the Cartesia key; the decoder from Shashank (L4); a real hidden window (5.2) |
+| 5.7 | Speaker page: the room voice | `web/` | Stephen | 🟡 | 1.1 | Built (`/speaker`): says each released reply once, reports `reply_spoken`, shows Missed after 20 s. Not run live until the module has the Cartesia key (L2) |
 | 5.8 | Judge page | `web/` | Stephen | ⬜ | 5.1 | A three-minute itinerary with deep links, the live stats route and what is verified, no login |
 | 6.1 | Telemetry to Tiger Data (switch timing, latency) | `telemetry/` | Stephen | ✅ | 1.1 | Built: free Tiger service `neurolingo-telemetry` (TimescaleDB, us-east-1), schema verified live, pinned TLS, 134 tests. The writer reads switch events from SpacetimeDB, so the decoder needs no Tiger code. Not yet run during a real session. Telemetry only, no app state |
 | 6.2 | Tiger compression policy and a measured ratio on our own rows | `telemetry/` | Stephen | ⬜ | 6.1 | Compression is a core Timescale feature; measure it, do not quote it |
@@ -204,4 +204,4 @@ All three update over SpacetimeDB subscriptions, so every laptop shows the same 
 
 ---
 
-_Last updated: Oct 23 by Stephen._
+_Last updated: Oct 24 by Stephen._
