@@ -44,7 +44,7 @@ import { HeardLog, type HeardPhase } from './heard';
 import { Heartbeat, heartbeatInterval, inputHealthy, workerTicker, FOCUS_GRACE_MS, type Ticker } from './heartbeat';
 import { canLearnSwitchKey, isTypingTarget, keyboardCommand, SwitchPattern } from './keys';
 import { cliTargetOf, SESSION_LABEL_RE, sessionLabel } from './model';
-import { MENU_ITEM_TEXTS, phraseText, warmPhraseKeys, type PhraseKey } from './phrases';
+import { isMenuItemText, MENU_ITEM_TEXTS, phraseText, warmPhraseKeys, type PhraseKey } from './phrases';
 import { indexedDbClipStore, persistentSynth, type ClipStore } from './phrase-store';
 import { Readback, readbackSegments, type WorkLite } from './readback';
 import type { Ownership, PauseReasonWord, Purpose, ScanView, StationSnapshot } from './snapshot';
@@ -1094,7 +1094,7 @@ export class StationEngine {
   }
 
   private speakOption(row: OptionRowLite): SynthJob<Clip> {
-    if (row.kind === 'Menu') {
+    if (row.kind === 'Menu' && isMenuItemText(row.text)) {
       if (!this.cache) throw new Error('The voice is not ready.');
       // Menu items were cached at start in the reply voice, by their text.
       return { done: this.cache.get(this.optionUtterance({ text: row.text, tone: '', laugh: false })), cancel: () => {} };

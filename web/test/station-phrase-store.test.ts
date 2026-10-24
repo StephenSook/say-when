@@ -8,6 +8,7 @@ import { describe, test } from 'node:test';
 import { PhraseCache, type Clip } from '../lib/cartesia/tts';
 import { utterance, voiceProfile, type Utterance } from '../lib/cartesia/tones';
 import { clipFromStore, clipToStore, indexedDbClipStore, persistentSynth, phraseStoreKey, type ClipStore, type StoredClip, type Synthesizer } from '../lib/station/phrase-store';
+import { isMenuItemText, MENU_ITEM_TEXTS } from '../lib/station/phrases';
 
 function fakeClip(u: Utterance, durationMs = 900): Clip {
   return {
@@ -136,5 +137,12 @@ describe('a storage that misbehaves never fails a phrase', () => {
     const player = fakePlayer();
     assert.equal(persistentSynth(player, null), player);
     assert.equal(indexedDbClipStore(undefined), null);
+  });
+});
+
+describe('menu rows', () => {
+  test('only the four module menu items go through the phrase cache and its store', () => {
+    for (const text of MENU_ITEM_TEXTS) assert.equal(isMenuItemText(text), true);
+    for (const text of ['Call Sam about the lunch', 'I need something now', 'call', '']) assert.equal(isMenuItemText(text), false, text);
   });
 });
