@@ -148,6 +148,10 @@ const NEGATIVES: [string, string][] = [
     ['Should I read to you?', 'request'],
     ['Should I read now?', 'request'],
     ['Do you want me to watch?', 'request'],
+    // Found while preparing round 9: eat, drink and swallow asked of the person are requests too.
+    ['Could you drink the water?', 'request'],
+    ['Can you eat the soup?', 'request'],
+    ['Would you like to eat now?', 'request'],
     ['Can you come up with one?', 'request'],
     ['Is the big pharmacy near the old train station still open today?', 'long'],
     // Review round 3 (Codex): a list of alternatives, with commas or slashes, is a choice for the planner.

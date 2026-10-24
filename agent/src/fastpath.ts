@@ -64,7 +64,7 @@ const REQUEST_START = /^(can|could|would|will) you\b/;
  * wants or is able to do. Anything else ("would you mind", "could you hand me", "can you please", "could you be more
  * specific", "would you be able to describe") reads as a request.
  */
-const REQUEST_SAFE: readonly string[] = ['hear', 'see', 'feel', 'like', 'want', 'need', 'understand', 'sleep', 'breathe', 'eat', 'drink', 'swallow'];
+const REQUEST_SAFE: readonly string[] = ['hear', 'see', 'feel', 'like', 'want', 'need', 'understand', 'sleep', 'breathe'];
 /**
  * An offer to act: "do you want (me) to ...", "would you like (me) to ...", "should I ...", "shall I ...", "can I ...",
  * and "able, willing, ready, going or trying to ..." ("Are you able to describe it?").
