@@ -58,6 +58,8 @@ The hand commands are imagined movements read over the motor cortex, so they onl
 | Tiger Data telemetry | `telemetry/` | Built, 149 tests in CI. Live on a free Tiger service: 5 hypertables, 3 real-time continuous aggregates, retention and a columnstore policy, verified from the live catalog (73 checks); pinned TLS. Not yet run during a real session |
 | Headset decoder | `switch/` | Shashank; not in this repo yet. Brain test in [docs/brain-mode-test.md](docs/brain-mode-test.md) |
 
+The deployed site is checked on its own, every hour and on every push to main ([deployed-smoke.yml](.github/workflows/deployed-smoke.yml), [scripts/deployed-smoke.mjs](scripts/deployed-smoke.mjs)): every page answers 200 with an Eleven title, the dashboards, the partner phone and the judge page load in a browser with no page or console error, the sample replay and the judge page's stats render, and the public stats route answers JSON. It only reads: the station and speaker pages ask to pair as they load, so those two are checked from their server HTML.
+
 ## How we use SpacetimeDB
 
 SpacetimeDB is the whole live backend. One server-side clock (chained scheduled reducers) moves the scan cursor on every screen at once. A heartbeat lease pauses everything if the headset or laptop drops. Consent is a row: a form or a call is released only by a fresh CONFIRM whose digest matches what the person heard. Each device has a role checked in every reducer, per-role views keep private text private, and a public pipeline table drives the live dashboards on any laptop. Details in [docs/spacetime.md](docs/spacetime.md).
