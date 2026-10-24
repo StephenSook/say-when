@@ -49,7 +49,7 @@ Signals differ per person. An eyes-only profile exists for people who can no lon
 | `switch/` | Headset reader, four-command decoder, calibration |
 | `agent/` | Speech to text, option planner, earpiece voice, call agent |
 | `apify/form-errand/` | Apify Actor: preview, read back, submit |
-| `apify/search/` | Apify search and scrape client (RAG Web Browser, Google Maps) |
+| `apify/client/` | Apify client for the agent: web search, places, errand preview and submit |
 | `moss/` | Moss retrieval over web results and the person's memory |
 | `web/` | Live dashboard and partner phone view |
 | `telemetry/` | Tiger Data telemetry writer and SQL |

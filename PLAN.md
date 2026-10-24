@@ -3,7 +3,7 @@
 > Living status doc for Stephen, Khadim, Shashank and Leon. Update it on every task change and push to `main`. This file is the single source of truth for who is working on what.
 
 **Project:** Screenless reply and errand assistant for people who cannot speak or use their hands, driven by four head-worn switch commands.
-**Team:** Stephen (frontend UI/UX, Apify, Moss), Khadim (frontend UI/UX), Shashank (backend, AI, hardware and EEG), Leon (user consult, consent, demo video)
+**Team:** Stephen (frontend UI/UX, Apify, Moss, Cartesia), Khadim (frontend UI/UX), Shashank (SpacetimeDB, AI planner, hardware and EEG), Leon (user consult, consent, demo video)
 **Deadline:** Sunday Oct 25, 8:50 AM PDT submission. Judging 10:30 AM to 12:30 PM.
 **Repo:** https://github.com/StephenSook/say-when
 
@@ -21,15 +21,15 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⛔ blocked
 | 2.1 | Headset reader and four-command decoder | `switch/` | Shashank | ⬜ | - | Which headset? See Q1 |
 | 2.2 | Calibration: per-person signal map and thresholds | `switch/` | Shashank | ⬜ | 2.1 | Idle false-activation rate goes on the dashboard |
 | 2.3 | PAUSE and HEADSET-OFF watchdog | `switch/` | Shashank | ⬜ | 2.1 | 0.5 s packet watchdog |
-| 3.1 | Partner speech to text (Cartesia Ink-2) | `agent/` | Shashank | ⬜ | - | |
-| 3.2 | Apify search and scrape client (RAG Web Browser, Google Maps) | `apify/search/` | Stephen | 🟡 | - | Stephen, since Oct 23 8:45pm PT |
-| 3.3 | Moss retrieval over Apify results and memory | `moss/` | Stephen | ⬜ | 3.2 | Starts after the sponsor research lands |
+| 3.1 | Partner speech to text (Cartesia Ink-2) | `cartesia/` | Stephen | 🟡 | - | Stephen, since Oct 23 9:30pm PT. Claude implementing |
+| 3.2 | Apify search and scrape client (RAG Web Browser, Google Maps) | `apify/client/` | Stephen | 🟡 | - | Stephen, since Oct 23 8:45pm PT. Claude implementing |
+| 3.3 | Moss retrieval over Apify results and memory | `moss/` | Stephen | 🟡 | 3.2 | Stephen, since Oct 23 9:30pm PT. Research landed; Claude implementing |
 | 3.4 | Option planner (Claude, up to four options) | `agent/` | Shashank | ⬜ | 3.2, 3.3 | |
-| 3.5 | Earpiece voice (Cartesia Sonic, pronunciation dictionary) | `agent/` | Shashank | ⬜ | 3.4 | |
-| 4.1 | Form-errand Apify Actor: preview, read back, submit | `apify/form-errand/` | Stephen | 🟡 | - | Stephen, since Oct 23 8:45pm PT. Public on Apify Store |
+| 3.5 | Earpiece voice (Cartesia Sonic, pronunciation dictionary) | `cartesia/` | Stephen | 🟡 | 3.4 | Stephen, since Oct 23 9:30pm PT. Claude implementing |
+| 4.1 | Form-errand Apify Actor: preview, read back, submit | `apify/form-errand/` | Stephen | 🟡 | - | Stephen, since Oct 23 8:45pm PT. Built, 40 tests green in CI. Next: `apify login`, `apify push`, publish to Store |
 | 4.2 | Errand wiring: ERRAND, read-back, confirm_errand, submit | `agent/` | Shashank | ⬜ | 1.1, 4.1 | |
 | 4.3 | Care team request form (demo target) | external | Leon | ⬜ | - | Owned by the consenting caregiver |
-| 4.4 | Outbound call agent (Cartesia Managed Agents) | `agent/` | Shashank | ⬜ | 1.1, 4.2 | Consenting number only |
+| 4.4 | Outbound call agent (Cartesia Managed Agents) | `cartesia/` | Stephen | 🟡 | 1.1, 4.2 | Stephen, since Oct 23 9:30pm PT. Consenting number only. Claude implementing |
 | 5.0 | UI reference: `docs/ui.md` with tokens, wireframes and mockups | `docs/` | Stephen | 🟡 | - | Stephen, since Oct 23 9:10pm PT. Research done by Claude; Stephen and Khadim build the UI |
 | 5.1 | Dashboard shell: Next.js, SpacetimeDB WebSocket subscriptions, layout | `web/` | Khadim | ⬜ | 1.1 | Must work on any laptop with no login. See D7 |
 | 5.2 | Screen 1, Live data: each pipeline stage with its real payload as it flows | `web/` | Stephen | ⬜ | 5.1 | Reads `pipeline_event` |
@@ -67,7 +67,7 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⛔ blocked
 | Command event | Shashank | agent, web | Decoder calls reducer `record_gesture(command, confidence, window_id)`. `command` is one of `SELECT`, `NO`, `ERRAND`, `CALL`, `PAUSE`, `HEADSET_OFF`. One row per accepted gesture, consumed once. |
 | Option row | Shashank | web, agent | `option { id, question_id, version, rank, text, kind, sources }`. `kind` is `reply`, `errand` or `call`. `sources` is a list of `{ source, url or placeId, fetchedAt }`. |
 | Pipeline event | Shashank | web | `pipeline_event { id, session_id, stage, status, detail, ms, at }`. `stage` is `listen`, `search`, `retrieve`, `plan`, `speak`, `select`, `errand` or `call`. `status` is `started`, `ok` or `error`. The dashboard renders these live. |
-| Search client | Stephen | agent | `searchWeb(question)` and `searchPlaces(query, near)` return `{ rows, ms }`. Each row is `{ id, source, title, text, url or placeId, fetchedAt }`. See `apify/search/README.md`. |
+| Search client | Stephen | agent | `searchWeb(question)` and `searchPlaces(query, near)` return `{ rows, ms }`. Each row is `{ id, source, title, text, url or placeId, fetchedAt }`. See `apify/client/README.md`. |
 | Form-errand Actor | Stephen | agent | Standby `POST /preview { formUrl, fields }` returns `{ status, readBack, readBackText, previewDigest, screenshot }`. `POST /submit { formUrl, fields, confirmDigest }` returns `{ status, confirmationText }`. See `apify/form-errand/README.md`. |
 | Errand row | Shashank | agent, web | `errand { id, form, status, preview_digest, read_back_text, confirmation_text, screenshot_url }`. Reducer `confirm_errand(errand_id, digest)` accepts only when the row awaits confirmation, the window is open and the digest matches. |
 | Call request | Shashank | agent, web | `call_request { id, contact, script_digest, status }`. Consent and do-not-call list are private tables. One call per confirm, retries off. |
@@ -107,9 +107,9 @@ Deterministic Playwright, not an LLM clicking. Preview by default, a form allowl
 
 **Locked Oct 23 by Stephen.**
 
-### D6: Stephen owns Apify and Moss
+### D6: Stephen owns Apify, Moss and Cartesia
 
-Apify search, the form-errand Actor and Moss retrieval are Stephen's, alongside frontend work with Khadim.
+Apify search, the form-errand Actor, Moss retrieval, and every Cartesia piece (Ink-2 speech to text, Sonic earpiece voice, pronunciation dictionary, and the outbound call agent) are Stephen's, alongside frontend work with Khadim. Shashank keeps SpacetimeDB, the headset and decoder, the option planner and Tiger telemetry.
 
 **Locked Oct 23 by Stephen.**
 
