@@ -83,14 +83,14 @@ if (preview.status === 'previewed' && preview.previewDigest) {
 
 ### Submit outcomes
 
-`submit` resolves only when the outcome is known. Everything else rejects with `UnknownOutcomeError`.
+`submit` resolves only when the outcome is known. Everything else rejects with `UnknownOutcomeError`. A `submitted` or `duplicate` reply counts only when its `previewDigest` is the digest the person confirmed and its `confirmationText` has visible text (not empty, spaces or invisible characters).
 
 | What comes back | Meaning | What to do |
 |---|---|---|
 | `status: 'submitted'` | Sent once, for the digest the person confirmed; `confirmationText` is the page's confirmation. | Show it. |
 | `status: 'duplicate'` | This digest was sent and confirmed in the last ten minutes. Nothing new went out. | Treat as sent; `confirmationText` is the first send's confirmation. |
 | `status: 'refused'` | A gate failed before anything was clicked; `refusal.code` says which. | Nothing was sent. Speak `refusal.reason`. |
-| `UnknownOutcomeError` | `reason` says why: `timeout`, `network`, `aborted` (cancelled after sending), `server_error` (a 5xx or 408), `bad_response` (an invalid or oversized reply), `click_uncertain` (the click on send failed partway), `no_confirmation` (send was pressed, no confirmation appeared) or `unconfirmed_duplicate` (a repeat of a send that was never confirmed). | Unknown. Do not resend; check the errand row or the form's responses first. When the Actor sent a result, it is on `error.result`, which is not enumerable, so logging the error does not print form values. |
+| `UnknownOutcomeError` | `reason` says why: `timeout`, `network`, `aborted` (cancelled after sending), `server_error` (a 5xx or 408), `bad_response` (an invalid or oversized reply, a `submitted` or `duplicate` reply for another digest or none, or a `submitted` reply without a confirmation), `click_uncertain` (the click on send failed partway), `no_confirmation` (send was pressed, no confirmation appeared) or `unconfirmed_duplicate` (a repeat of a send that has no confirmation on record). | Unknown. Do not resend; check the errand row or the form's responses first. When the Actor sent a result, it is on `error.result`, which is not enumerable, so logging the error does not print form values. |
 | `ApifyHttpError` with `attempts: 0`, or status 400, 401, 402, 403, 404, 405, 413 or 429 | Refused before any errand ran. | Nothing was sent. |
 | `TypeError` | `confirm` was not `true`, or the digest was not 16 hex characters. Thrown before any request. | Fix the call. |
 
@@ -147,6 +147,8 @@ For Moss (the "Moss docs" contract in PLAN.md): metadata values are strings, so 
 
 A reply is counted while it streams in and refused, before any parsing, once it passes its limit: 16 MiB for RAG Web Browser, 4 MiB for the Google Maps Scraper and 16 MiB for the form errand (room for an inline screenshot). A declared `Content-Length` over the limit fails before anything is read. An oversized reply is `ApifyHttpError` with `kind: 'bad_response'` and is not retried.
 
+The pieces are copied into one buffer that never grows past the limit, so a reply sent one byte at a time takes no more memory than one sent whole. When a read stops early (too large, timed out or cancelled), the body is cancelled and its reader released, and a body that arrives only after we gave up is cancelled unread.
+
 After parsing, a search keeps at most `maxResults` pages or `maxPlaces` places, whatever the reply holds. Titles are cut to 300 characters, addresses to 300 and categories to 100. Links over 2,048 characters, phone numbers over 40 and place ids over 200 are dropped rather than cut, since a cut one would be wrong; a web page without a usable link is skipped.
 
 ## Partial results and timeouts
@@ -193,11 +195,13 @@ Events never carry the question, page text, answers, form values, URLs, digests 
 2. Outside facts. Places first (open, closed or closing times, near and nearest, directions, a meal or outing), then facts (weather, news, scores, prices, hours and schedules, "when is the ...", general knowledge), then requests to look something up ("can you look up ...", "check if ...", "find out ...") and current events ("what happened ... today"). These win even when the question is also personal, so "Want to grab lunch nearby?" and "Can you check if Target is closed?" search.
 3. Talk about what the person already did ("How was your day at the park?", "Did you have a good time at the restaurant?") and shared memories ("Do you remember ...?"). No search, even with a place word in it.
 4. Place words such as pharmacy, cafe or restaurant.
-5. Names. A capitalized name in the middle of a sentence is looked up, unless it reads like someone the person knows ("How's Sarah doing?", "Is Dr. Lee coming?").
+5. Names. A capitalized name in the middle of a sentence is looked up, unless it reads like someone the person knows ("How's Sarah doing?", "Is Dr. Lee coming?"). A question naming more than 16 people or places is not something said aloud, so it is treated as a lookup.
 6. Small talk and personal questions: greetings, thanks, feelings, wants, care, family and plans. No search.
 7. Anything left is unsure and searches, so the planner can decide.
 
 `reason` is one sentence from a fixed list and never quotes the question. These are fast plain rules, not a model: they will misjudge some questions, and they lean toward searching when unsure. A transcript without capital letters loses the name check. The tests cover more than 70 example questions, lowercase transcripts included.
+
+Only the first 2,000 characters are classified (`MAX_QUESTION_CHARS`, leading spaces not counted), far more than any spoken question, so a long or garbled transcript still takes only milliseconds (under 5 ms for each of 22 hostile inputs in our local check). Rules that look for one phrase followed later by another ("what happened ... today", "how late ... open") run as two plain searches rather than one pattern, which would slow down sharply on a transcript that repeats the first phrase.
 
 ## Costs and latency (indicative)
 

@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { describe, it, mock } from 'node:test';
 
 import { ConfigError } from '../src/config.js';
-import { ApifyHttpError, requestJson, scrub, snippetOf, type RequestOptions } from '../src/http.js';
+import { ApifyHttpError, requestJson, scrub, snippetOf, type FetchLike, type RequestOptions } from '../src/http.js';
 import { TOKEN, deaf, fakeFetch, hang, json, networkError, recordSleep, text } from './fake-fetch.js';
 
 const base = (extra: Partial<RequestOptions>): RequestOptions => ({
@@ -286,5 +286,122 @@ describe('reply size limit', () => {
         await rejection(requestJson(base({ fetch: second.fetch, maxBytes: 1_024, retries: 3 })));
         assert.equal(second.calls.length, 1);
         assert.equal(calls.length, 1);
+    });
+});
+
+/**
+ * A JSON string sent one byte per piece, the way a slow or hostile server can trickle a reply. With `stallAfter`,
+ * it stops sending after that many bytes without ever closing. It records whether the reader cancelled it.
+ */
+function trickle(body: string, stallAfter?: number) {
+    const bytes = new TextEncoder().encode(body);
+    let sent = 0;
+    let cancelled = false;
+    let response: Response | undefined;
+    const reply = (): Response => {
+        response = new Response(
+            new ReadableStream<Uint8Array>(
+                {
+                    pull(controller) {
+                        if (stallAfter !== undefined && sent >= stallAfter) return new Promise<void>(() => undefined);
+                        if (sent >= bytes.length) {
+                            controller.close();
+                            return;
+                        }
+                        controller.enqueue(bytes.slice(sent, sent + 1));
+                        sent += 1;
+                    },
+                    cancel() {
+                        cancelled = true;
+                    },
+                },
+                { highWaterMark: 0 },
+            ),
+            { status: 200 },
+        );
+        return response;
+    };
+    return { reply, sent: () => sent, cancelled: () => cancelled, locked: () => response?.body?.locked };
+}
+
+// Codex review, round 2: every piece added a reaction to the pending stop promise and kept its own buffer,
+// so 100,000 one-byte pieces under a 1 MiB cap grew the heap by tens of MiB.
+describe('reply made of many tiny pieces', () => {
+    it('reads 100,000 one-byte pieces with one race against the stop, not one per piece', async () => {
+        const stream = trickle(`"${'x'.repeat(100_000)}"`);
+        const race = mock.method(Promise, 'race');
+        let races: number;
+        let body: unknown;
+        try {
+            body = (await requestJson(base({ fetch: fakeFetch(stream.reply).fetch, maxBytes: 1_024 * 1_024, timeoutMs: 60_000 }))).body;
+        } finally {
+            races = race.mock.callCount();
+            race.mock.restore();
+        }
+        assert.equal(body, 'x'.repeat(100_000));
+        // One race for the response headers and one for the whole body.
+        assert.ok(races <= 2, `${races} races`);
+        assert.equal(stream.locked(), false, 'the reader must be released');
+    });
+
+    it('stops at the cap, then cancels and releases the stream', async () => {
+        const stream = trickle(`"${'x'.repeat(100_000)}"`);
+        const error = await rejection(
+            requestJson(base({ fetch: fakeFetch(stream.reply).fetch, maxBytes: 50_000, timeoutMs: 60_000, retries: 3 })),
+        );
+        assert.ok(error instanceof ApifyHttpError);
+        assert.equal(error.kind, 'bad_response');
+        assert.match(error.bodySnippet, /larger than 50000 bytes/);
+        assert.ok(stream.sent() <= 50_001, `sent ${stream.sent()} bytes`);
+        assert.equal(stream.cancelled(), true, 'the stream must be cancelled');
+        assert.equal(stream.locked(), false, 'the reader must be released');
+    });
+
+    it('cancels and releases a body that stalls when the attempt times out', async () => {
+        const stream = trickle(`"${'x'.repeat(1_000)}"`, 10);
+        const error = await rejection(requestJson(base({ fetch: fakeFetch(stream.reply).fetch, timeoutMs: 100 })));
+        assert.ok(error instanceof ApifyHttpError);
+        assert.equal(error.kind, 'timeout');
+        assert.equal(stream.sent(), 10);
+        assert.equal(stream.cancelled(), true, 'the stream must be cancelled');
+        assert.equal(stream.locked(), false, 'the reader must be released');
+    });
+
+    it('refuses a body whose pieces are not bytes, so its size cannot go uncounted', async () => {
+        const notBytes = () =>
+            new Response(
+                new ReadableStream({
+                    start(controller) {
+                        controller.enqueue('"abc"' as unknown as Uint8Array);
+                        controller.close();
+                    },
+                }),
+            );
+        const error = await rejection(requestJson(base({ fetch: fakeFetch(notBytes).fetch, retries: 0 })));
+        assert.ok(error instanceof ApifyHttpError);
+        assert.equal(error.kind, 'network');
+    });
+
+    it('drops the body of a fetch that ignores its signal and answers after the attempt gave up', async () => {
+        const stream = trickle(`"${'x'.repeat(100)}"`);
+        const late: FetchLike = () => new Promise((resolve) => setTimeout(() => resolve(stream.reply()), 100));
+        const error = await rejection(requestJson(base({ fetch: late, timeoutMs: 20 })));
+        assert.ok(error instanceof ApifyHttpError);
+        assert.equal(error.kind, 'timeout');
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        assert.equal(stream.sent(), 0);
+        assert.equal(stream.cancelled(), true, 'the late body must be cancelled');
+    });
+
+    it('cancels and releases a body when the caller aborts mid-read', async () => {
+        const stream = trickle(`"${'x'.repeat(1_000)}"`, 10);
+        const controller = new AbortController();
+        const pending = requestJson(base({ fetch: fakeFetch(stream.reply).fetch, timeoutMs: 5_000, signal: controller.signal }));
+        setTimeout(() => controller.abort(), 20);
+        const error = await rejection(pending);
+        assert.ok(error instanceof ApifyHttpError);
+        assert.equal(error.kind, 'aborted');
+        assert.equal(stream.cancelled(), true, 'the stream must be cancelled');
+        assert.equal(stream.locked(), false, 'the reader must be released');
     });
 });

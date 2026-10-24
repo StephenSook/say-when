@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 
-import { classifyQuestion, type QuestionKind } from '../src/classify.js';
+import { MAX_QUESTION_CHARS, classifyQuestion, type QuestionKind } from '../src/classify.js';
 
 type Case = [question: string, kind: QuestionKind, needsWeb: boolean];
 
@@ -91,6 +91,16 @@ const CASES: Case[] = [
     ['Are your eyes closed?', 'personal', false],
 ];
 
+// Each of these is decided by a rule that used to scan with ".*" (Codex review, round 2), so the split into two
+// plain searches must classify them exactly as before.
+const SPLIT_RULE_CASES: Case[] = [
+    ["What's happening right now?", 'facts', true],
+    ['What happened in the market this week?', 'facts', true],
+    ['How late do they stay open?', 'places', true],
+    ['Is there any bathroom on this floor?', 'places', true],
+    ['Where is that toilet they mentioned?', 'places', true],
+];
+
 describe('classifyQuestion', () => {
     it('has at least 30 cases covering all four kinds', () => {
         assert.ok(CASES.length >= 30);
@@ -99,12 +109,57 @@ describe('classifyQuestion', () => {
         }
     });
 
-    for (const [question, kind, needsWeb] of CASES) {
+    for (const [question, kind, needsWeb] of [...CASES, ...SPLIT_RULE_CASES]) {
         it(`${JSON.stringify(question)} is ${kind}, needsWeb ${needsWeb}`, () => {
             const got = classifyQuestion(question);
             assert.deepEqual({ kind: got.kind, needsWeb: got.needsWeb }, { kind, needsWeb }, got.reason);
         });
     }
+
+    it('needs the time word after "what happened", as before the split', () => {
+        assert.equal(classifyQuestion('What happened today?').reason, 'Asks about something happening now.');
+        assert.match(classifyQuestion('Today, what happened?').reason, /^Not sure/);
+    });
+
+    it('classifies only the first 2,000 characters, not counting leading spaces', () => {
+        assert.equal(MAX_QUESTION_CHARS, 2_000);
+        // 2,700 characters that no rule matches.
+        const filler = 'and then '.repeat(300);
+        const early = classifyQuestion(`Is the pharmacy open? ${filler}`);
+        assert.deepEqual({ kind: early.kind, needsWeb: early.needsWeb }, { kind: 'places', needsWeb: true });
+        assert.match(classifyQuestion(`${filler}is the pharmacy open?`).reason, /^Not sure/);
+        assert.equal(classifyQuestion(`${' '.repeat(5_000)}Is the pharmacy open?`).kind, 'places');
+    });
+
+    it('treats a question naming more than 16 people or places as a lookup', () => {
+        const names = ['Ann', 'Bob', 'Cal', 'Dee', 'Eve', 'Fay', 'Gus', 'Hal', 'Ivy', 'Jon', 'Kim', 'Lou', 'Max', 'Ned', 'Pam', 'Ray', 'Sam'];
+        const ask = (count: number) => classifyQuestion(names.slice(0, count).map((name) => `How's ${name}?`).join(' '));
+        const sixteen = ask(16);
+        assert.deepEqual({ kind: sixteen.kind, needsWeb: sixteen.needsWeb }, { kind: 'personal', needsWeb: false });
+        const seventeen = ask(17);
+        assert.equal(seventeen.needsWeb, true);
+        assert.match(seventeen.reason, /name/);
+    });
+
+    // Codex review, round 2: "what happened ".repeat(16000) + "z" took 2.6 s, quadratic in its length.
+    it('stays fast on long, repetitive input', () => {
+        const nameOf = (i: number) => `${String.fromCharCode(65 + (i % 26))}${String.fromCharCode(97 + (Math.floor(i / 26) % 26))}x`;
+        const inputs: Array<[string, string]> = [
+            ['a repeated event phrase', `${'what happened '.repeat(16_000)}z`],
+            ['a repeated opening-hours phrase', `${'how late '.repeat(20_000)}z`],
+            ['a repeated place word', `${'where '.repeat(30_000)}z`],
+            ['a long run of apostrophes', `a${"'".repeat(100_000)}b`],
+            ['a long run of full stops', `a${'.'.repeat(100_000)}b`],
+            ['hundreds of names', Array.from({ length: 2_000 }, (_, i) => `meet ${nameOf(i)},`).join(' ')],
+        ];
+        for (const [what, question] of inputs) {
+            const started = performance.now();
+            classifyQuestion(question);
+            const ms = performance.now() - started;
+            // Generous on purpose: a linear pass over 2,000 characters takes a few ms on a slow machine.
+            assert.ok(ms < 250, `${what}: ${ms.toFixed(1)} ms`);
+        }
+    });
 
     it('searches when no rule is sure, and says so', () => {
         const got = classifyQuestion('What happened?');

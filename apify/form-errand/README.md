@@ -66,7 +66,7 @@ Each refusal comes back as a code plus one short sentence written to be spoken a
 | `confirm` | boolean | `false` | Submit only. |
 | `confirmDigest` | string | | Submit only. The `previewDigest` the person confirmed. |
 | `submitButtonText` | string | `Submit` | Visible name of the send button. |
-| `confirmationPhrases` | list of strings | `recorded`, `received`, `thank`, `submitted`, `sent` | Plain phrases for the confirmation page, matched without regard to case. Never a regular expression. |
+| `confirmationPhrases` | list of strings | `recorded`, `received`, `thank`, `submitted`, `sent` | Plain phrases for the confirmation page, matched without regard to case. Never a regular expression. Only a line that was not on the page before send was pressed counts, compared whole however long it is; `confirmationText` is its first 300 characters. |
 | `disclosureText` | string | `Sent with an assistive switch after a spoken read-back and a confirm.` | Added to one paragraph answer so the recipient knows how it was sent. Empty turns it off. |
 | `disclosureField` | string | last paragraph question | Which paragraph question gets the note. |
 | `includeScreenshot` | boolean | `true` | Standby only: return the screenshot inline as base64. |

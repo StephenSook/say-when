@@ -75,7 +75,7 @@ jobs:
           # Floor on passing tests, so a run that finds no tests cannot pass.
           pass=$(awk '/^# pass/ {print $3}' test.log)
           echo "passing tests: $pass"
-          test "$pass" -ge 44
+          test "$pass" -ge 46
 
   apify-client:
     name: Apify client (search, places, errand)
@@ -102,7 +102,7 @@ jobs:
           grep -qE '^# fail 0$' test.log
           pass=$(awk '/^# pass/ {print $3}' test.log)
           echo "passing tests: $pass"
-          test "$pass" -ge 166
+          test "$pass" -ge 191
 
   cartesia:
     name: Cartesia (speech, voice, call)

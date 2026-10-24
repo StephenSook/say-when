@@ -156,15 +156,24 @@ function asSubmitError(error: unknown): unknown {
     }
 }
 
+/** True when a confirmation has nothing a person could read: null, empty, spaces, or invisible characters. */
+function isBlank(text: string | null): boolean {
+    return text === null || !/[^\s\p{Cc}\p{Cf}]/u.test(text);
+}
+
 /** A valid submit result that still does not prove what happened. */
 function uncertainSubmit(result: ErrandResult, confirmDigest: string): UnknownOutcomeError | null {
     if (result.status === 'failed') {
         return new UnknownOutcomeError(result.refusal?.code === 'click_uncertain' ? 'click_uncertain' : 'no_confirmation', { result });
     }
-    // A duplicate of a send that has no confirmation on record: the first one may or may not have arrived.
-    if (result.status === 'duplicate' && result.confirmationText === null) return new UnknownOutcomeError('unconfirmed_duplicate', { result });
-    // "Submitted" with a digest other than the one the person confirmed proves nothing we can stand behind.
-    if (result.status === 'submitted' && result.previewDigest !== confirmDigest) return new UnknownOutcomeError('bad_response', { result });
+    if (result.status !== 'submitted' && result.status !== 'duplicate') return null;
+    // "Submitted" or "duplicate" for a digest other than the one the person confirmed proves nothing we can stand behind.
+    if (result.previewDigest !== confirmDigest) return new UnknownOutcomeError('bad_response', { result });
+    if (isBlank(result.confirmationText)) {
+        // A duplicate of a send that has no confirmation on record: the first one may or may not have arrived.
+        // A "submitted" with no confirmation contradicts itself.
+        return new UnknownOutcomeError(result.status === 'duplicate' ? 'unconfirmed_duplicate' : 'bad_response', { result });
+    }
     return null;
 }
 
@@ -222,7 +231,9 @@ export class FormErrandClient {
     /**
      * Sends the form, once. Checks confirm and the digest before anything leaves this process. It resolves
      * only when the outcome is known: "submitted" (sent once), "duplicate" of a confirmed send (nothing new
-     * went out), or "refused" (nothing was sent). Every other case rejects with UnknownOutcomeError.
+     * went out), or "refused" (nothing was sent). "Submitted" and "duplicate" count only for the digest the
+     * person confirmed and with a confirmation that has visible text. Every other case rejects with
+     * UnknownOutcomeError.
      */
     async submit(req: SubmitRequest, call: ErrandCallOptions = {}): Promise<ErrandResult> {
         if (req.confirm !== true) {

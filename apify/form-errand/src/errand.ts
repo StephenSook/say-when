@@ -80,15 +80,20 @@ async function findSubmitButton(page: Page, text: string): Promise<Locator | nul
     return null;
 }
 
-/** Waits for a line containing one of the phrases that was not on the page before the click. */
+/** Longest confirmation text returned; the whole line is still what gets compared. */
+const CONFIRMATION_CHARS = 300;
+
+/**
+ * Waits for a line containing one of the phrases that was not on the page before the click. Whole lines are
+ * compared with the whole lines from before, and only the line returned is cut, so a long line that was
+ * already there can never pass for a new one.
+ */
 async function waitForConfirmation(page: Page, before: Set<string>, phrases: string[], timeoutMs: number): Promise<string | null> {
     const wanted = phrases.map((p) => p.toLowerCase());
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-        const fresh = (await pageLines(page))
-            .map((line) => line.slice(0, 300))
-            .find((line) => !before.has(line) && wanted.some((p) => line.toLowerCase().includes(p)));
-        if (fresh) return fresh;
+        const fresh = (await pageLines(page)).find((line) => !before.has(line) && wanted.some((p) => line.toLowerCase().includes(p)));
+        if (fresh) return fresh.slice(0, CONFIRMATION_CHARS);
         await page.waitForTimeout(250);
     }
     return null;

@@ -208,9 +208,14 @@ type Outcome =
     | { type: 'aborted' }
     | { type: 'network'; code?: string };
 
+// First size of the buffer a reply is collected in; it doubles as needed, never past the reply's limit.
+const FIRST_BUFFER_BYTES = 64 * 1024;
+
 /**
  * Reads the body and gives up as soon as it passes maxBytes, so an oversized reply is never held, or parsed,
  * whole. Null means too large. A declared Content-Length over the limit fails before reading anything.
+ * Pieces are copied into one buffer of at most maxBytes, so a reply sent one byte at a time costs no more
+ * memory than one sent in a single piece, and the read races the stop once, not once per piece.
  */
 async function readCapped(res: Response, maxBytes: number, stopped: Promise<never>): Promise<string | null> {
     const declared = Number(res.headers.get('content-length') ?? '');
@@ -220,21 +225,41 @@ async function readCapped(res: Response, maxBytes: number, stopped: Promise<neve
     }
     if (!res.body) return '';
     const reader = res.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let total = 0;
-    for (;;) {
-        const next = reader.read();
-        next.catch(() => undefined);
-        const { done, value } = await Promise.race([next, stopped]);
-        if (done) break;
-        total += value.byteLength;
-        if (total > maxBytes) {
-            reader.cancel().catch(() => undefined);
-            return null;
+    let buffer = new Uint8Array(Math.max(0, Math.min(maxBytes, FIRST_BUFFER_BYTES)));
+    let used = 0;
+    let stop = false;
+    const collect = async (): Promise<boolean> => {
+        while (!stop) {
+            const { done, value } = await reader.read();
+            if (done) return true;
+            if (!(value instanceof Uint8Array)) throw new TypeError('The reply body is not made of bytes.');
+            if (value.byteLength > maxBytes - used) return false;
+            if (value.byteLength > buffer.byteLength - used) {
+                const grown = new Uint8Array(Math.min(maxBytes, Math.max(buffer.byteLength * 2, used + value.byteLength)));
+                grown.set(buffer.subarray(0, used));
+                buffer = grown;
+            }
+            buffer.set(value, used);
+            used += value.byteLength;
         }
-        chunks.push(value);
+        return false;
+    };
+    const reading = collect();
+    reading.catch(() => undefined);
+    try {
+        if (!(await Promise.race([reading, stopped]))) return null;
+        return new TextDecoder().decode(buffer.subarray(0, used));
+    } finally {
+        // After a stop or an oversized reply a read may still be waiting: cancelling ends it with done, and
+        // releasing the lock lets the stream and its buffered pieces go.
+        stop = true;
+        reader.cancel().catch(() => undefined);
+        try {
+            reader.releaseLock();
+        } catch {
+            // A runtime that still has a read waiting refuses to release; the cancel above already ended the body.
+        }
     }
-    return new TextDecoder().decode(Buffer.concat(chunks));
 }
 
 async function attemptOnce(
@@ -260,7 +285,13 @@ async function attemptOnce(
     stopped.catch(() => undefined);
     try {
         const pending = doFetch(url, { ...init, signal: controller.signal });
-        pending.catch(() => undefined);
+        // A fetch that ignores its signal can still answer after this attempt gave up; drop that body unread.
+        pending.then(
+            (late) => {
+                if (controller.signal.aborted) late?.body?.cancel().catch(() => undefined);
+            },
+            () => undefined,
+        );
         const res = await Promise.race([pending, stopped]);
         const text = await readCapped(res, maxBytes, stopped);
         if (text === null) return { type: 'too_large', status: res.status };

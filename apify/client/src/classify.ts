@@ -42,6 +42,26 @@ const REASON = {
 
 const result = (needsWeb: boolean, kind: QuestionKind, reason: string): QuestionClass => ({ needsWeb, kind, reason });
 
+/**
+ * Only the first this many characters of a question are classified, leading spaces aside. That is far more
+ * than anything said aloud, and it bounds the cost of every rule on a long or garbled transcript.
+ */
+export const MAX_QUESTION_CHARS = 2_000;
+
+// Each name is checked against every other name, so the cost grows with the square of the count. A question
+// naming more than this many people or places is not something said aloud; it is treated as a lookup.
+const MAX_NAMES = 16;
+
+/**
+ * True when `first` matches and `then` matches somewhere after it. Two plain searches take time linear in the
+ * text, while one pattern with ".*" between the two parts backtracks over the rest of the text at every place
+ * the first part matches, which is quadratic on a transcript that repeats it.
+ */
+function followedBy(t: string, first: RegExp, then: RegExp): boolean {
+    const found = first.exec(t);
+    return found !== null && then.test(t.slice(found.index + found[0].length));
+}
+
 // Curly and modifier apostrophes and the backtick, built from code points so the source stays ASCII.
 const APOSTROPHES = new RegExp(`[${String.fromCharCode(0x2018, 0x2019, 0x02bc, 0x60)}]`, 'g');
 
@@ -98,7 +118,10 @@ function asksOpenOrClosed(t: string): boolean {
 }
 
 const OPEN_TIMES =
-    /\b(?:open|opens|close|closes|closing)\s+(?:now|today|tonight|tomorrow|late|early|yet|soon|until|till|right now|at \d|on (?:sunday|monday|tuesday|wednesday|thursday|friday|saturday|sundays|weekends?|the weekend|holidays?))\b|\bstill open\b|\bhow late\b.*\bopen\b|\bopen 24\b/;
+    /\b(?:open|opens|close|closes|closing)\s+(?:now|today|tonight|tomorrow|late|early|yet|soon|until|till|right now|at \d|on (?:sunday|monday|tuesday|wednesday|thursday|friday|saturday|sundays|weekends?|the weekend|holidays?))\b|\bstill open\b|\bopen 24\b/;
+// "How late ... open", as two searches (see followedBy).
+const HOW_LATE = /\bhow late\b/;
+const OPEN_WORD = /\bopen\b/;
 const WHEN_OPEN =
     /\b(?:when|what time)\s+(?:does|do|is|are|will)\s+(?!(?:you|we|i|your|my|our)\b)(?:[a-z']+\s+){0,4}?(?:open|opens|close|closes|closing)\b/;
 const OUTING =
@@ -107,7 +130,9 @@ const NEARBY =
     /\b(?:nearby|nearest|the closest (?:one|place|spot)|near (?:here|me|us|by|campus|downtown|the venue)|close by|close to here|around here|in the area|walking distance|within walking|downtown)\b/;
 const DIRECTIONS =
     /\b(?:directions?|how far|is it far|is that far|are they far|how (?:do|can|should|would|will) (?:we|i|you) get (?:to|there|back)|how long (?:does it take|will it take) to (?:get|walk|drive)|which way|what's the address|what is the address|where is it|where's it)\b/;
-const RESTROOM_WHERE = /\b(?:where|nearest|closest|find|any)\b.*\b(?:bathrooms?|restrooms?|toilets?)\b/;
+// "Where ... restroom", as two searches (see followedBy).
+const RESTROOM_ASK = /\b(?:where|nearest|closest|find|any)\b/;
+const RESTROOM = /\b(?:bathrooms?|restrooms?|toilets?)\b/;
 const PLACE_NOUN = new RegExp(
     `\\b(?:${[
         'restaurants?', 'cafes?', 'coffee shops?', 'coffee places?', 'diners?', 'bistros?', 'bakery', 'bakeries', 'pubs?',
@@ -189,9 +214,11 @@ const when = (pattern: RegExp, unless?: (t: string) => boolean) => (t: string) =
 // A request to look something up, wherever the pronouns are: "Can you look up the menu at Chipotle?".
 const LOOKUP =
     /\b(?:look up|look it up|looking up|look into|search for|search the web|search online|google it|google that|check online|find out|(?:check|see) (?:if|whether))\b/;
-// Something happening now: "What happened in Ukraine today?".
-const NEWS_NOW =
-    /\bwhat(?:'s| is)? happen(?:ed|ing)\b.*\b(?:today|tonight|yesterday|last night|this week|this weekend|this morning|lately|recently|right now)\b|\b(?:latest|breaking) news\b/;
+// Something happening now: "What happened in Ukraine today?". The event and the time word are two searches
+// (see followedBy), so a transcript that repeats "what happened" stays fast.
+const HAPPENED = /\bwhat(?:'s| is)? happen(?:ed|ing)\b/;
+const NOW_WORDS = /\b(?:today|tonight|yesterday|last night|this week|this weekend|this morning|lately|recently|right now)\b/;
+const LATEST_NEWS = /\b(?:latest|breaking) news\b/;
 // Talk about something the person already did: "How was your day at the park?".
 const RETRO =
     /\bhow (?:was|did) your [a-z']+\b|\bhow did you (?:like|enjoy|find)\b|\bdid you (?:have (?:a )?(?:good|nice|great|lovely|fun|bad|rough|hard) (?:time|day|night|evening|morning)|have fun|enjoy|like|love|hate)\b/;
@@ -199,12 +226,12 @@ const RETRO =
 /** Checked first and in order: a question that needs outside facts searches even when it is also personal. */
 const WEB_RULES: Rule[] = [
     { kind: 'places', reason: REASON.placeOpen, test: asksOpenOrClosed },
-    { kind: 'places', reason: REASON.placeOpen, test: when(OPEN_TIMES) },
+    { kind: 'places', reason: REASON.placeOpen, test: (t) => OPEN_TIMES.test(t) || followedBy(t, HOW_LATE, OPEN_WORD) },
     { kind: 'places', reason: REASON.placeOpen, test: when(WHEN_OPEN) },
     { kind: 'places', reason: REASON.outing, test: when(OUTING) },
     { kind: 'places', reason: REASON.nearby, test: when(NEARBY) },
     { kind: 'places', reason: REASON.directions, test: when(DIRECTIONS) },
-    { kind: 'places', reason: REASON.place, test: when(RESTROOM_WHERE) },
+    { kind: 'places', reason: REASON.place, test: (t) => followedBy(t, RESTROOM_ASK, RESTROOM) },
     { kind: 'facts', reason: REASON.weather, test: when(WEATHER, (t) => SMALLTALK_WEATHER.test(t) && !FORECAST.test(t)) },
     { kind: 'facts', reason: REASON.news, test: when(NEWS, (t) => NEWS_PERSONAL.test(t)) },
     { kind: 'facts', reason: REASON.sports, test: when(SPORTS, (t) => SCORE_PERSONAL.test(t)) },
@@ -213,7 +240,7 @@ const WEB_RULES: Rule[] = [
     { kind: 'facts', reason: REASON.when, test: when(WHEN, (t) => CARE.test(t)) },
     { kind: 'facts', reason: REASON.general, test: when(GENERAL) },
     { kind: 'facts', reason: REASON.lookup, test: when(LOOKUP) },
-    { kind: 'facts', reason: REASON.current, test: when(NEWS_NOW) },
+    { kind: 'facts', reason: REASON.current, test: (t) => LATEST_NEWS.test(t) || followedBy(t, HAPPENED, NOW_WORDS) },
 ];
 
 // ---------- Names ----------
@@ -296,10 +323,11 @@ function markNames(text: string, names: string[], focus: number): string {
  * Decides, with plain rules and no network, whether a question needs a web or place search.
  * Order: the local clock; outside-fact rules (places, facts, lookups, current events); talk about what the
  * person already did and shared memories; plain place words; names; then small talk and personal rules.
- * Anything left over is treated as unsure and searches.
+ * Anything left over is treated as unsure and searches. Only the first MAX_QUESTION_CHARS characters count.
  */
 export function classifyQuestion(question: string): QuestionClass {
-    const original = typeof question === 'string' ? question.replace(/\s+/g, ' ').trim() : '';
+    const original =
+        typeof question === 'string' ? question.trimStart().slice(0, MAX_QUESTION_CHARS).replace(/\s+/g, ' ').trim() : '';
     const text = normalize(original);
     if (text === '') return result(false, 'smalltalk', REASON.empty);
     const asked = text.replace(WRAPPER, '') || text;
@@ -312,6 +340,7 @@ export function classifyQuestion(question: string): QuestionClass {
     if (PLACE_NOUN.test(asked)) return result(true, 'places', REASON.place);
 
     const names = findNames(original);
+    if (names.length > MAX_NAMES) return result(true, 'facts', REASON.name);
     if (names.length > 0) {
         const marked = names.map((_, i) => markNames(asked, names, i));
         const allPeople = marked.every((t) => !NOT_A_PERSON.test(t) && PERSON_FRAMES.some((re) => re.test(t)));

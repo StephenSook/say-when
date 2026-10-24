@@ -8,7 +8,7 @@ import { runErrand, type ErrandDeps } from '../src/errand.js';
 import { SubmitLedger, type RecordStore } from '../src/ledger.js';
 import type { ErrandInput, FieldInput } from '../src/types.js';
 import { parseInput } from '../src/validate.js';
-import { startFixtures, type FixtureServer } from './fixtures.js';
+import { LONG_RECEIVED, LONG_THANKS, startFixtures, type FixtureServer } from './fixtures.js';
 
 class MemoryStore implements RecordStore {
     readonly data = new Map<string, unknown>();
@@ -307,5 +307,36 @@ describe('the send click', () => {
         assert.equal(again.status, 'duplicate');
         assert.equal(again.confirmationText, null);
         assert.equal(fixtures.count('/hang/submit'), 1);
+    });
+
+    // Codex review, round 2: lines from after the click were cut to 300 characters before being compared with
+    // the uncut lines from before it, so a long line that never changed looked new.
+    it('never takes a long line that was on the page before the click as the confirmation', async () => {
+        const deps = makeDeps({ timeouts: { clickMs: 1_500, confirmMs: 1_000 } });
+        const fields = [{ label: 'Name', value: 'Demo user' }];
+        const formUrl = `${fixtures.base}/thanks-disabled`;
+        const preview = await runErrand(input({ formUrl, fields }), deps);
+        assert.equal(preview.status, 'previewed');
+        assert.ok(LONG_THANKS.length > 300);
+        const r = await runErrand(input({ formUrl, fields, mode: 'submit', confirm: true, confirmDigest: preview.previewDigest }), deps);
+        // The click on the disabled button timed out, nothing new appeared, and nothing reached the server.
+        assert.equal(r.status, 'failed');
+        assert.equal(r.refusal?.code, 'click_uncertain');
+        assert.equal(r.confirmationText, null);
+        assert.equal(r.submittedAt, null);
+        assert.equal(fixtures.count('/thanks-disabled/submit'), 0);
+    });
+
+    it('accepts a new confirmation line longer than 300 characters and returns its first 300', async () => {
+        const deps = makeDeps();
+        const fields = [{ label: 'Name', value: 'Demo user' }];
+        const formUrl = `${fixtures.base}/long-confirm`;
+        const preview = await runErrand(input({ formUrl, fields }), deps);
+        assert.equal(preview.status, 'previewed');
+        const sent = await runErrand(input({ formUrl, fields, mode: 'submit', confirm: true, confirmDigest: preview.previewDigest }), deps);
+        assert.equal(sent.status, 'submitted');
+        assert.ok(LONG_RECEIVED.length > 300);
+        assert.equal(sent.confirmationText, LONG_RECEIVED.slice(0, 300));
+        assert.equal(fixtures.count('/long-confirm/submit'), 1);
     });
 });

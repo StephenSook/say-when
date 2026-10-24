@@ -1,4 +1,4 @@
-export { classifyQuestion, type QuestionClass, type QuestionKind } from './classify.js';
+export { MAX_QUESTION_CHARS, classifyQuestion, type QuestionClass, type QuestionKind } from './classify.js';
 export { APIFY_API_BASE, ConfigError, DEFAULT_RAG_WEB_BROWSER_URL, loadConfig, type ApifyConfig } from './config.js';
 export type {
     ErrandResult,

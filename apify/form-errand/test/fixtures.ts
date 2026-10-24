@@ -8,6 +8,12 @@ const OPT_IN_META = '<meta name="form-errand" content="allow">';
 const page = (body: string, optIn = true) =>
     `<!doctype html><html><head><meta charset="utf-8"><title>Fixture</title>${optIn ? OPT_IN_META : ''}</head><body>${body}</body></html>`;
 
+/** One line of well over 300 characters that starts with a confirmation phrase ("thank"). */
+export const LONG_THANKS = `Thank you for helping the care team. ${'We read every request during the day and answer the urgent ones first. '.repeat(6)}`.trim();
+
+/** One line of well over 300 characters that a real confirmation page shows after the send. */
+export const LONG_RECEIVED = `Your request was received. ${'Someone from the care team will read it and reply before the end of the day. '.repeat(6)}`.trim();
+
 /** A Google Forms style page: ARIA radio groups, labelled-by inputs, question cards, a div button. */
 const ARIA_FORM = `<!doctype html><html><head><meta charset="utf-8"><title>Care team request</title>
 <style>[role=radio],[role=checkbox]{display:inline-block;width:18px;height:18px;border:1px solid #333;margin-right:6px}</style>
@@ -80,6 +86,17 @@ export async function startFixtures(): Promise<FixtureServer> {
         '/no-button': page('<form><label for="a">Name</label><input id="a" name="a"></form>'),
         // Its POST reaches the server, which never answers, so the click's navigation never finishes.
         '/hang': DEMO_FORM_HTML.replace('action="/demo-form/submit"', 'action="/hang/submit"'),
+        // A long thank-you line is on the page before the click, and the send button never enables, so the
+        // click times out and nothing is sent.
+        '/thanks-disabled': page(
+            `<p>${LONG_THANKS}</p><form method="post" action="/thanks-disabled/submit"><label for="a">Name</label>` +
+                '<input id="a" name="a"><button type="submit" disabled>Submit</button></form>',
+        ),
+        // Its confirmation page is one line longer than 300 characters.
+        '/long-confirm': page(
+            '<form method="post" action="/long-confirm/submit"><label for="a">Name</label><input id="a" name="a">' +
+                '<button type="submit">Submit</button></form>',
+        ),
     };
     const server: Server = createServer((req, res) => {
         const path = (req.url ?? '/').split('?')[0];
@@ -94,7 +111,8 @@ export async function startFixtures(): Promise<FixtureServer> {
                 posts.set(path, (posts.get(path) ?? 0) + 1);
                 if (path === '/hang/submit') return;
                 res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-                res.end(path === '/aria/submit' ? '{}' : DEMO_CONFIRMATION_HTML);
+                if (path === '/long-confirm/submit') res.end(page(`<p>${LONG_RECEIVED}</p>`, false));
+                else res.end(path === '/aria/submit' ? '{}' : DEMO_CONFIRMATION_HTML);
             });
             return;
         }

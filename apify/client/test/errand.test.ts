@@ -323,6 +323,42 @@ describe('FormErrandClient reply checks', () => {
         assert.equal(error.reason, 'bad_response');
     });
 
+    // Codex review, round 2: a duplicate skipped the digest check, and only a literal null confirmation counted.
+    const zeroWidth = String.fromCharCode(0x200b);
+    const notProof: Array<[string, unknown, string]> = [
+        ['a duplicate for another digest', { ...CONFIRMED_DUPLICATE, previewDigest: 'aaaaaaaaaaaaaaaa' }, 'bad_response'],
+        ['a duplicate with no digest', { ...CONFIRMED_DUPLICATE, previewDigest: null }, 'bad_response'],
+        ['a duplicate with an empty confirmation', { ...CONFIRMED_DUPLICATE, confirmationText: '' }, 'unconfirmed_duplicate'],
+        ['a duplicate with a blank confirmation', { ...CONFIRMED_DUPLICATE, confirmationText: ' \n\t ' }, 'unconfirmed_duplicate'],
+        ['a duplicate with an invisible confirmation', { ...CONFIRMED_DUPLICATE, confirmationText: zeroWidth }, 'unconfirmed_duplicate'],
+        ['a submit with an empty confirmation', { ...SUBMITTED, confirmationText: '' }, 'bad_response'],
+        ['a submit with a blank confirmation', { ...SUBMITTED, confirmationText: '   ' }, 'bad_response'],
+        ['a submit with an invisible confirmation', { ...SUBMITTED, confirmationText: `${zeroWidth} ` }, 'bad_response'],
+        ['a submit with no digest', { ...SUBMITTED, previewDigest: null }, 'bad_response'],
+    ];
+    for (const [what, reply, reason] of notProof) {
+        it(`never resolves ${what}; it is an unknown outcome`, async () => {
+            const events: PipelineEvent[] = [];
+            const { fetch, calls } = fakeFetch(json(reply), json(SUBMITTED));
+            const error = await rejection(client(fetch, { events }).submit(SUBMIT));
+            assert.ok(error instanceof UnknownOutcomeError, String(error));
+            assert.equal(error.reason, reason);
+            assert.equal(calls.length, 1, 'submit must be sent at most once');
+            assert.equal(events.at(-1)?.detail, `submit unknown outcome (${reason})`);
+            for (const content of ['Demo user', 'Meal or drink', 'Lunch', 'received', '3172ba2e39fc4791']) {
+                assert.ok(!error.message.includes(content), content);
+                assert.ok(!JSON.stringify(error).includes(content), content);
+            }
+        });
+    }
+
+    it('still resolves a duplicate for the confirmed digest whose confirmation has text', async () => {
+        const { fetch } = fakeFetch(json({ ...CONFIRMED_DUPLICATE, confirmationText: '  Your response has been recorded.  ' }));
+        const res = await client(fetch).submit(SUBMIT);
+        assert.equal(res.status, 'duplicate');
+        assert.equal(res.previewDigest, SUBMIT.confirmDigest);
+    });
+
     it('refuses a reply that says it is larger than 16 MiB before reading it', async () => {
         const huge = (): Response =>
             new Response(JSON.stringify(SUBMITTED), { status: 200, headers: { 'content-type': 'application/json', 'content-length': String(17 * 1024 * 1024) } });
