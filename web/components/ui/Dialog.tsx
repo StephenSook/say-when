@@ -18,7 +18,7 @@ export interface DialogProps {
 
 /**
  * A native modal <dialog> (docs/ui.md "Dialog"): dialog radius and shadow over the backdrop color.
- * Esc or a click on the backdrop closes it, and keys 1, 2 and 3 do not switch screens while it is open.
+ * Esc or a click on the backdrop closes it, and the screen keys do not switch screens while it is open.
  */
 export function Dialog({ open, onClose, title, children, size = 'md', className }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
