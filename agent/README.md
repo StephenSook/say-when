@@ -1,8 +1,8 @@
-# NeuroLingo agent sidecar
+# Eleven agent sidecar
 
-The sidecar is the backend worker behind NeuroLingo. It drafts the options the person hears (PLAN row 3.4), previews and sends form errands (row 4.2), and places consented calls. It runs on a laptop that is not the EEG laptop, connects to the SpacetimeDB module as the Agent role, and never acts on its own: a form or a call leaves the room only after the module records a fresh CONFIRM (double jaw clench) on the exact read-back the person heard (PLAN D4, D11).
+The sidecar is the backend worker behind Eleven. It drafts the options the person hears (PLAN row 3.4), previews and sends form errands (row 4.2), and places consented calls. It runs on a laptop that is not the EEG laptop, connects to the SpacetimeDB module as the Agent role, and never acts on its own: a form or a call leaves the room only after the module records a fresh CONFIRM (double jaw clench) on the exact read-back the person heard (PLAN D4, D11).
 
-Stephen's side owns the backend, this sidecar included (PLAN D14). Shashank owns the headset and the decoder in `switch/`, which reach the backend only through the SpacetimeDB contract in [docs/spacetime.md](../docs/spacetime.md). The product is NeuroLingo; code identifiers keep `say-when` (PLAN D13), so the package is `@say-when/agent`.
+Stephen's side owns the backend, this sidecar included (PLAN D14). Shashank owns the headset and the decoder in `switch/`, which reach the backend only through the SpacetimeDB contract in [docs/spacetime.md](../docs/spacetime.md). The product is Eleven; code identifiers keep `say-when` (PLAN D13), so the package is `@say-when/agent`.
 
 Nothing here reads thoughts. The jaw clench is a muscle signal; the imagined squeezes are the brain test in `docs/brain-mode-test.md`.
 
@@ -62,6 +62,31 @@ npm start        # runs the sidecar. Ctrl-C stops it cleanly; a second Ctrl-C ex
 ```
 
 `npm start` loads `agent/.env.local`, then the repo's `.env.local`, without overriding variables already set (`AGENT_ENV_FILES=off` skips both). It stops before connecting if a setting is malformed or there are no Anthropic credentials, and says which variable to fix.
+
+### Keys from the macOS Keychain
+
+`scripts/run-with-keychain.sh` runs the same commands with the keys read from the Keychain at run time, so no key sits in a file:
+
+```bash
+agent/scripts/run-with-keychain.sh check    # npm run check
+agent/scripts/run-with-keychain.sh pair     # npm run pair
+agent/scripts/run-with-keychain.sh          # npm start
+```
+
+| Variable | Keychain service |
+|---|---|
+| `ANTHROPIC_API_KEY` | `anthropic-api-key` |
+| `APIFY_TOKEN` | `apify-token` |
+| `MOSS_PROJECT_ID` | `moss-project-id` |
+| `MOSS_PROJECT_KEY` | `moss-project-key` |
+| `CARTESIA_API_KEY` | `cartesia-api-key` |
+
+- Each key goes only into the sidecar's environment. Nothing is printed, logged or written to a file, and settings files are skipped (`AGENT_ENV_FILES=off`).
+- Each item is read by service and account: `KEYCHAIN_ACCOUNT`, or your login name by default. Without the account, `security` returns the first item with that service; on the build Mac an older `anthropic-api-key` item (account `default`) is refused by Anthropic with 401.
+- It refuses to start when an item is missing or empty, and names the variable (an empty Keychain item still exits 0, so it checks the length).
+- It refuses any database whose name does not end in `-dev`. Pass `--allow-non-dev` to use `say-when-demo` on purpose.
+- Calls are always off here (`AGENT_CALLS=off`): calls need consent confirmed under the Eleven name first.
+- Defaults, each overridden by a value already in the environment: `SPACETIMEDB_DB=say-when-dev`, `SPACETIMEDB_URI` Maincloud, `AGENT_PLANNER_MODEL=claude-haiku-5-5`, `FORM_ERRAND_URL` the form-errand Actor's Standby URL, `AGENT_FORMS_FILE=agent/forms.example.json` (the Actor's built-in demo form, which sends nothing anywhere; grant `errand care_team_request` for it), `MOSS_SNAPSHOT_DIR=moss/.memory`, and `AGENT_TOKEN_FILE=~/.config/say-when/agent_token_<database>`, outside the repo and one per database.
 
 ## Settings
 
