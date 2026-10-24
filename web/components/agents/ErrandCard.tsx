@@ -62,6 +62,7 @@ function errandSteps(errand: Errand, option: AnswerOption | null, commands: read
       status: plan.picked,
       label: numbered(1, picked ? `Picked with YES: "${picked}"` : 'Picked with YES'),
       time: formatClock(errand.createdAt),
+      pick: true,
     },
   ];
 

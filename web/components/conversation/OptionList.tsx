@@ -104,7 +104,7 @@ function OptionRow({ option, yesNo, cursor, picked, vetoing, agent, live, paused
 }
 
 /**
- * "Picked" in the accent color, then the veto or where the picked errand or call is. The shared
+ * "Picked" in the pick green, then the veto or where the picked errand or call is. The shared
  * mark carries the word for screen readers; the visible words are larger than its meta size,
  * because this line is read from across the room.
  */
@@ -112,7 +112,7 @@ function PickedLine({ vetoing, agent }: { vetoing: boolean; agent: AgentStatus |
   return (
     <div className={styles.pickedLine}>
       <span className={styles.state}>
-        <StatusMark status="done" showWord={false} word="Picked" />
+        <StatusMark status="done" showWord={false} word="Picked" pick />
         <span className={styles.pickedWord} aria-hidden="true">
           Picked
         </span>

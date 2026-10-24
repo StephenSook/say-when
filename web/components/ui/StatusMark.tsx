@@ -14,14 +14,16 @@ export interface StatusMarkProps {
   showWord?: boolean;
   /** A more precise word, for example "Not sent" or "Ringing". Defaults to the docs/ui.md vocabulary. */
   word?: string;
+  /** The person's pick: a done mark draws in the pick green instead of the accent, on every screen. */
+  pick?: boolean;
   className?: string;
 }
 
 /** Status as an icon shape, a word and a color, never color alone (docs/ui.md "Status vocabulary"). */
-export function StatusMark({ status, showWord = true, word, className }: StatusMarkProps) {
+export function StatusMark({ status, showWord = true, word, pick = false, className }: StatusMarkProps) {
   const text = word ?? STATUS_WORDS[status];
   return (
-    <span className={cx(styles.status, styles[status], className)} title={showWord ? undefined : text}>
+    <span className={cx(styles.status, styles[status], pick && status === 'done' && styles.pick, className)} title={showWord ? undefined : text}>
       <span className={styles.mark} aria-hidden="true">
         <MarkGlyph status={status} />
       </span>

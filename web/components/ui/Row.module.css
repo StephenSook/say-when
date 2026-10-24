@@ -74,6 +74,10 @@
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
+.pick .grid {
+  box-shadow: inset 3px 0 0 var(--pick);
+}
+
 .button {
   display: block;
   width: 100%;

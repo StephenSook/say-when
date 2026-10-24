@@ -76,7 +76,7 @@
 }
 
 .picked {
-  color: var(--accent);
+  color: var(--pick);
 }
 
 .rank {
