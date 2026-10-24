@@ -60,9 +60,15 @@ const ERRAND_VERB =
 /** "Can you", "could you", "would you", "will you": the start of a request unless the verb is on REQUEST_SAFE. */
 const REQUEST_START = /^(can|could|would|will) you\b/;
 /**
- * The only verbs after "can/could/would/will you" that keep a question yes or no: what the person hears, feels,
- * wants or is able to do. Anything else ("would you mind", "could you hand me", "can you please", "could you be more
- * specific", "would you be able to describe") reads as a request.
+ * The only requests that stay fast: "would you like ..." (an offer, checked by the offer rules) and the check-ins
+ * "can/could you hear me" and "can/could you see me". Every other "can/could/would/will you ..." asks the person to
+ * do something ("Could you feel the water for me?") and goes to the planner (review round 10).
+ */
+const REQUEST_FAST = /^(?:would you like\b|(?:can|could) you (?:hear|see) me[?]*$)/;
+/** A favor: "... for me?", "... for us?". */
+const FAVOR = /\bfor (?:me|us)\b/;
+/**
+ * The plain verbs of hearing, seeing, feeling, wanting and understanding: the base of the offer and main-verb lists.
  */
 const REQUEST_SAFE: readonly string[] = ['hear', 'see', 'feel', 'like', 'want', 'need', 'understand'];
 /**
@@ -180,10 +186,8 @@ export function classifyYesNo(question: string): YesNoVerdict {
     if (ERRAND_VERB.test(body)) return { yesNo: false, reason: 'errand_verb' };
     if (COMPOUND.test(body)) return { yesNo: false, reason: 'compound' };
     if (CONTENT_VERB.test(body)) return { yesNo: false, reason: 'request' };
-    if (REQUEST_START.test(body)) {
-        const verb = /^[a-z]+ you ([a-z]+)/.exec(body)?.[1] ?? '';
-        if (!REQUEST_SAFE.includes(verb)) return { yesNo: false, reason: 'request' };
-    }
+    if (FAVOR.test(body)) return { yesNo: false, reason: 'request' };
+    if (REQUEST_START.test(body) && !REQUEST_FAST.test(body.replace(/["'“”)\s]+$/, ''))) return { yesNo: false, reason: 'request' };
     for (const offer of [OFFER_WANT, OFFER_SELF]) {
         const verb = offer.exec(body)?.[1];
         if (verb !== undefined && !OFFER_SAFE.includes(verb)) return { yesNo: false, reason: 'request' };

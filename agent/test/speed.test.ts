@@ -55,7 +55,7 @@ const POSITIVES = [
     'Have you slept?',
     'Did you eat lunch?',
     'Do you want me to stay?',
-    'Can you see the screen from there?',
+    'Can you see me?',
     'Are you feeling okay?',
     'Are you coming?',
     'Is Sam here?',
@@ -135,7 +135,8 @@ const NEGATIVES: [string, string][] = [
     ['Would you like to go sit?', 'second_verb'],
     ['Is it okay to go rest?', 'second_verb'],
     ['Is your pain mild-moderate-severe?', 'list'],
-    ['Can you hear Sam?', 'vocabulary'],
+    ['Can you hear Sam?', 'request'],
+    ['Do you want Sam here?', 'vocabulary'],
     ['Is the soup spicy?', 'vocabulary'],
     // Review round 8 (Codex): "move" asks for an action on a thing; so do come, read, watch, play, try, walk, talk and
     // listen. They left the plain verb lists.
@@ -157,6 +158,12 @@ const NEGATIVES: [string, string][] = [
     ['Could you breathe in for me?', 'request'],
     ['Could you sleep last night?', 'request'],
     ['Would you like to sleep?', 'request'],
+    // Review round 10 (Codex): "Could you feel the water for me?" asks for a favor. "can/could/would/will you" now
+    // stays fast only as "would you like ..." or "can/could you hear/see me"; anything "for me" or "for us" is a favor.
+    ['Could you feel the water for me?', 'request'],
+    ['Can you see the screen from there?', 'request'],
+    ['Can you hear the music?', 'request'],
+    ['Is it warm enough for me?', 'request'],
     ['Can you come up with one?', 'request'],
     ['Is the big pharmacy near the old train station still open today?', 'long'],
     // Review round 3 (Codex): a list of alternatives, with commas or slashes, is a choice for the planner.
