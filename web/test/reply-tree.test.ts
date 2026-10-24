@@ -8,7 +8,7 @@ import { describe, test } from 'node:test';
 import { boardRows } from '../lib/data/spacetime-map';
 import { LOOP_MS, replayRowsAt } from '../lib/data/replay';
 import { EMPTY_ROWS } from '../lib/data/types';
-import { cameraViewport, READABLE_ZOOM } from '../lib/tree/camera';
+import { cameraFraming, cameraViewport, cardRects, drawnRect, READABLE_ZOOM, type Viewport } from '../lib/tree/camera';
 import { CHILD_SLOTS, firstRoundRect, OPTION_SLOTS, optionRect, slot, stepRect, type Rect } from '../lib/tree/layout';
 import { deriveReplyTree, pickPhrase, sourceLine, STOP_LINE, type OptionNode, type ReplyTree, type TreeNode } from '../lib/tree/model';
 import { config, errand, event, ledger, midScan, option, question, scan, ts } from './board-fixtures';
@@ -373,5 +373,60 @@ describe('the camera on a projector', () => {
     assert.ok(onScreen(options.tight, vp, w, h), 'the drafting hub and all four options are in view');
     const centered = (options.tight.x + options.tight.width / 2) * vp.zoom + vp.x;
     assert.ok(centered > w / 2, 'the view slid left to show more of the lookup');
+  });
+});
+
+describe('the camera never cuts a card at the screen edge', () => {
+  /** The canvas sizes measured in the browser: 1920 x 1080 and 1280 x 720, with and without the replay banner. */
+  const SCREENS: Array<[number, number]> = [
+    [1920, 899],
+    [1920, 935],
+    [1280, 539],
+    [1280, 575],
+  ];
+
+  function cut(rect: Rect, vp: Viewport, w: number, h: number): boolean {
+    const left = rect.x * vp.zoom + vp.x;
+    const top = rect.y * vp.zoom + vp.y;
+    const right = (rect.x + rect.width) * vp.zoom + vp.x;
+    const bottom = (rect.y + rect.height) * vp.zoom + vp.y;
+    const hits = left < w - 0.5 && right > 0.5 && top < h - 0.5 && bottom > 0.5;
+    const inside = left >= -0.5 && right <= w + 0.5 && top >= -0.5 && bottom <= h + 0.5;
+    return hits && !inside;
+  }
+
+  test('every 100 ms of a replay loop, at 1920 and 1280: each card is fully on screen or fully off, the pick whole', () => {
+    for (const [w, h] of SCREENS) {
+      let key: string | null = null;
+      let vp: Viewport | null = null;
+      for (let t = 0; t < LOOP_MS; t += 100) {
+        const tree = deriveReplyTree(replayRowsAt(START, START + t));
+        // The screen moves the camera only when the key changes, so later nodes must also land clean.
+        if (tree.camera.key !== key) {
+          key = tree.camera.key;
+          vp = cameraFraming(tree.camera, tree.nodes, w, h);
+          assert.ok(vp.zoom >= READABLE_ZOOM - 1e-9, `${w}x${h} at ${t} ms: zoom ${vp.zoom}`);
+        }
+        const v: Viewport = vp!;
+        const cutCards: string[] = tree.nodes.filter((n) => n.kind !== 'region' && cut(drawnRect(n), v, w, h)).map((n) => n.id);
+        assert.deepEqual(cutCards, [], `${w}x${h} at ${t} ms (${key})`);
+        if (tree.camera.nodeIds) {
+          for (const id of tree.camera.nodeIds) {
+            const n = tree.nodes.find((node) => node.id === id)!;
+            const r = drawnRect(n);
+            assert.ok(r.x * v.zoom + v.x >= 0 && (r.x + r.width) * v.zoom + v.x <= w && r.y * v.zoom + v.y >= 0 && (r.y + r.height) * v.zoom + v.y <= h, `${id} whole at ${t} ms`);
+          }
+        }
+      }
+    }
+  });
+
+  test('the pick frame at 1920: the green option and "Said out loud" whole, close in, no card cut', () => {
+    const tree = treeAt(20);
+    assert.equal(tree.camera.intent, 'pick');
+    assert.ok(node(tree, 'r1:said'), 'the "Said out loud" step is there');
+    const vp = cameraFraming(tree.camera, tree.nodes, 1920, 899);
+    assert.ok(vp.zoom >= 1, `comes close: ${vp.zoom}`);
+    assert.deepEqual(cardRects(tree.nodes).filter((r) => cut(r, vp, 1920, 899)), []);
   });
 });

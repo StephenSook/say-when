@@ -204,7 +204,8 @@ export interface Handoff {
 
 /**
  * What to frame. `rect` is the preferred view; `tight` is what to frame instead when `rect` would make the labels too
- * small for the screen. `nodeIds` (a pick, a confirmed errand) asks for React Flow's fitView on those nodes.
+ * small for the screen. `nodeIds` (a pick, a confirmed errand) asks to frame those nodes as drawn, closer in
+ * (lib/tree/camera.ts `cameraFraming`).
  */
 export interface CameraTarget {
   key: string;

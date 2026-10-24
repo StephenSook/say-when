@@ -35,7 +35,7 @@ import {
 } from '@xyflow/react';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { cx } from '@/lib/cx';
-import { cameraViewport, MAX_ZOOM, READABLE_ZOOM } from '@/lib/tree/camera';
+import { cameraFraming } from '@/lib/tree/camera';
 import type { CameraTarget, EdgeTone, Handoff, ReplyTree, TreeEdge, TreeNode } from '@/lib/tree/model';
 import { CardBody, cardClass } from './TreeCards';
 import styles from './ReplyTree.module.css';
@@ -126,12 +126,15 @@ const TreeFlowEdge = memo(function TreeFlowEdge(props: EdgeProps<FlowEdge>) {
 const NODE_TYPES = { tree: TreeFlowNode };
 const EDGE_TYPES = { tree: TreeFlowEdge };
 
-/** Frames the model's camera target whenever its key changes, or the canvas changes size. */
-function CameraDirector({ camera, reduced }: { camera: CameraTarget; reduced: boolean }) {
+/**
+ * Frames the model's camera target whenever its key changes, or the canvas changes size. lib/tree/camera.ts picks the
+ * view: the target whole, as close as allowed, with the screen's edges in the gaps between cards, so no card is ever
+ * cut in half at the edge of the picture.
+ */
+function CameraDirector({ camera, nodes, reduced }: { camera: CameraTarget; nodes: readonly TreeNode[]; reduced: boolean }) {
   const flow = useReactFlow<FlowNode, FlowEdge>();
   const width = useStore((state) => state.width);
   const height = useStore((state) => state.height);
-  const count = useStore((state) => state.nodeLookup.size);
   const last = useRef<{ key: string; size: string } | null>(null);
 
   useEffect(() => {
@@ -139,32 +142,12 @@ function CameraDirector({ camera, reduced }: { camera: CameraTarget; reduced: bo
     const size = `${width}x${height}`;
     const before = last.current;
     if (before && before.key === camera.key && before.size === size) return;
-    // fitView needs the nodes in React Flow's store (they carry their own width and height); a rectangle does not.
-    if (camera.nodeIds && count === 0) return;
     last.current = { key: camera.key, size };
     // The first frame and a resize jump straight there; only a new row moves the camera smoothly.
     const instant = reduced || before === null || before.key === camera.key;
     const duration = instant ? 0 : camera.intent === 'pick' ? PICK_MS : MOVE_MS;
-    const frameRect = () => flow.setViewport(cameraViewport(camera, width, height), { duration, interpolate: 'smooth' });
-    if (camera.nodeIds && camera.nodeIds.length > 0) {
-      // The pick: React Flow frames the picked option and what grew from it. If a node is not in its store yet,
-      // the same rectangle from the layout is framed instead.
-      void flow
-        .fitView({
-          nodes: camera.nodeIds.map((id) => ({ id })),
-          duration,
-          interpolate: 'smooth',
-          padding: 0.3,
-          minZoom: READABLE_ZOOM,
-          maxZoom: MAX_ZOOM,
-        })
-        .then((framed) => {
-          if (!framed) void frameRect();
-        });
-      return;
-    }
-    void frameRect();
-  }, [camera, width, height, count, reduced, flow]);
+    void flow.setViewport(cameraFraming(camera, nodes, width, height), { duration, interpolate: 'smooth' });
+  }, [camera, nodes, width, height, reduced, flow]);
 
   return null;
 }
@@ -269,7 +252,7 @@ function Canvas({ tree, reduced }: { tree: ReplyTree; reduced: boolean }) {
       zoomActivationKeyCode={null}
     >
       <Background variant={BackgroundVariant.Dots} gap={48} size={2} color="rgba(255, 255, 255, 0.07)" />
-      <CameraDirector camera={tree.camera} reduced={reduced} />
+      <CameraDirector camera={tree.camera} nodes={tree.nodes} reduced={reduced} />
     </ReactFlow>
   );
 }
