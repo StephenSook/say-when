@@ -166,6 +166,9 @@ export function attachSpeakerRows(conn: SpeakerConnLike, target: SpeakerRowsTarg
   const roomChanged = () => target.room(readRoom(conn));
 
   db.mySession.onInsert(sessionChanged);
+  // A newly released reply arrives as an update to the session's row, not an insert: without this the room voice
+  // never says a live reply and only shows it as Missed after a reload (live run, Oct 24).
+  db.mySession.onUpdate?.(sessionChanged);
   db.mySession.onDelete(sessionChanged);
   db.scanState.onInsert(scanChanged);
   db.scanState.onUpdate?.(scanChanged);
@@ -178,6 +181,7 @@ export function attachSpeakerRows(conn: SpeakerConnLike, target: SpeakerRowsTarg
 
   return () => {
     db.mySession.removeOnInsert(sessionChanged);
+    db.mySession.removeOnUpdate?.(sessionChanged);
     db.mySession.removeOnDelete(sessionChanged);
     db.scanState.removeOnInsert(scanChanged);
     db.scanState.removeOnUpdate?.(scanChanged);

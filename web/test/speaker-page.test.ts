@@ -178,6 +178,26 @@ describe('the rows the room voice reads', () => {
     for (const table of Object.values(t)) assert.equal(table.callbackCount(), 0, 'every callback is removed');
   });
 
+  test('a reply released into the existing session row (an update, not an insert) is offered live', () => {
+    const { conn, t } = speakerConn();
+    const offers: Array<{ id: bigint | null; source: string }> = [];
+    const detach = attachSpeakerRows(conn, {
+      engine: {
+        offer: (r: SpeakerReply | null, source: 'snapshot' | 'live') => offers.push({ id: r?.questionId ?? null, source }),
+        noteServerTime: () => {},
+      },
+      room: () => {},
+      now: () => T0,
+    });
+    const before = { sessionId: 1n, reply: undefined };
+    const after = { sessionId: 1n, reply: { questionId: 8n, text: 'Water.', tone: 'calm', laugh: false, releasedAt: ts(T0) } };
+    t.mySession.rows = [after];
+    fire(t.mySession, 'update', { event: { tag: 'Reducer' } }, before, after);
+    assert.deepEqual(offers, [{ id: 8n, source: 'live' }]);
+    detach();
+    assert.equal(t.mySession.callbackCount(), 0);
+  });
+
   test('no reply is offered before pairing completes; then the cache is offered as a snapshot', () => {
     const { conn, t } = speakerConn();
     let paired = false;
