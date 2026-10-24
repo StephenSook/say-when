@@ -64,7 +64,7 @@ const REQUEST_START = /^(can|could|would|will) you\b/;
  * wants or is able to do. Anything else ("would you mind", "could you hand me", "can you please", "could you be more
  * specific", "would you be able to describe") reads as a request.
  */
-const REQUEST_SAFE: readonly string[] = ['hear', 'see', 'feel', 'like', 'want', 'need', 'remember', 'understand', 'sleep', 'breathe', 'eat', 'drink', 'swallow', 'taste', 'smell', 'move', 'come'];
+const REQUEST_SAFE: readonly string[] = ['hear', 'see', 'feel', 'like', 'want', 'need', 'understand', 'sleep', 'breathe', 'eat', 'drink', 'swallow'];
 /**
  * An offer to act: "do you want (me) to ...", "would you like (me) to ...", "should I ...", "shall I ...", "can I ...",
  * and "able, willing, ready, going or trying to ..." ("Are you able to describe it?").
@@ -72,7 +72,9 @@ const REQUEST_SAFE: readonly string[] = ['hear', 'see', 'feel', 'like', 'want', 
  */
 const OFFER_WANT = /\b(?:want|wants|like|need|needs|able|willing|ready|going|trying)(?: (?:me|us|him|her|them|someone|somebody))? to ([a-z]+)/;
 const OFFER_SELF = /^(?:should|shall|can|could|may|will) (?:i|we) ([a-z]+)/;
-const OFFER_SAFE: readonly string[] = [...REQUEST_SAFE, 'go', 'sit', 'rest', 'stay', 'wait', 'talk', 'listen', 'watch', 'read', 'walk', 'stand', 'lie', 'try', 'play'];
+// No verb that acts on a thing or a person ("move my chair", "read this", "watch the baby", "come with us"): those are
+// requests for the planner, even when the answer could be yes or no (review round 8).
+const OFFER_SAFE: readonly string[] = [...REQUEST_SAFE, 'go', 'sit', 'rest', 'stay', 'wait', 'stand', 'lie'];
 /** A wh-question, also an embedded one ("Do you know where it is?", "Do you know if it is open?"). */
 const WH_WORD = /\b(what|whats|when|where|which|who|whom|whose|why|how|whether|if)\b/;
 /** A question about what the person knows ("Do you know the doctor's name?"): it asks for the content, not a yes. */

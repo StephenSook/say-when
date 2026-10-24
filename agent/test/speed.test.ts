@@ -38,7 +38,6 @@ const POSITIVES = [
     'Were you there?',
     'Can you hear me?',
     'Could you sleep last night?',
-    'Will you come with us?',
     'Would you like to go outside?',
     'Shall we go?',
     'Have you eaten yet?',
@@ -116,7 +115,7 @@ const NEGATIVES: [string, string][] = [
     ['Has it stopped raining?', 'main_verb'],
     // Review round 6 (Codex): an approved verb must not carry a request after it. Every "to" verb is checked, the
     // words after the main verb are few and have no particle ("come up with"), and the question is short.
-    ['Can you come up with a name for the baby?', 'long'],
+    ['Can you come up with a name for the baby?', 'request'],
     ['Do you care to elaborate on your pain?', 'request'],
     ['Are you going to the store?', 'request'],
     ['Do you feel like talking about it?', 'main_verb'],
@@ -130,13 +129,26 @@ const NEGATIVES: [string, string][] = [
     // Review round 7 (Codex): a second bare verb ("come help", "come read") and hyphenated alternatives. The fast
     // path now takes only words from a closed list (plus names after is, are, was, were), and a verb after the
     // main one only right after "to".
-    ['Can you come help me?', 'vocabulary'],
-    ['Can you come read this?', 'second_verb'],
-    ['Is it okay to come read this?', 'second_verb'],
+    ['Can you come help me?', 'request'],
+    ['Can you come read this?', 'request'],
+    ['Is it okay to come read this?', 'request'],
+    ['Would you like to go sit?', 'second_verb'],
+    ['Is it okay to go rest?', 'second_verb'],
     ['Is your pain mild-moderate-severe?', 'list'],
     ['Can you hear Sam?', 'vocabulary'],
     ['Is the soup spicy?', 'vocabulary'],
-    ['Can you come up with one?', 'main_verb'],
+    // Review round 8 (Codex): "move" asks for an action on a thing; so do come, read, watch, play, try, walk, talk and
+    // listen. They left the plain verb lists.
+    ['Could you move my chair?', 'request'],
+    ['Can you move the bed?', 'request'],
+    ['Would you move the car?', 'request'],
+    ['Will you come with us?', 'request'],
+    ['Could you read this?', 'request'],
+    ['Can you watch the baby?', 'request'],
+    ['Should I read to you?', 'request'],
+    ['Should I read now?', 'request'],
+    ['Do you want me to watch?', 'request'],
+    ['Can you come up with one?', 'request'],
     ['Is the big pharmacy near the old train station still open today?', 'long'],
     // Review round 3 (Codex): a list of alternatives, with commas or slashes, is a choice for the planner.
     ['Is your pain mild/moderate/severe?', 'list'],
