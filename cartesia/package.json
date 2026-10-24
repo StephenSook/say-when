@@ -1,0 +1,39 @@
+{
+    "name": "@say-when/cartesia",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "description": "Cartesia for Say When: Ink-2 speech to text, Sonic voice with tones and a pronunciation dictionary, access tokens, and a guarded outbound call.",
+    "engines": {
+        "node": ">=22"
+    },
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "default": "./dist/index.js"
+        },
+        "./browser": {
+            "types": "./dist/browser.d.ts",
+            "default": "./dist/browser.js"
+        },
+        "./server": {
+            "types": "./dist/server.d.ts",
+            "default": "./dist/server.js"
+        }
+    },
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json",
+        "typecheck": "tsc --noEmit",
+        "test": "tsx --test test/*.test.ts",
+        "voices": "tsx src/cli/voices.ts",
+        "dict:sync": "tsx src/cli/sync-dictionary.ts",
+        "call:check": "tsx src/cli/check-call.ts",
+        "call:delete": "tsx src/cli/delete-calls.ts"
+    },
+    "devDependencies": {
+        "@types/node": "^24.19.2",
+        "tsx": "^4.23.15",
+        "typescript": "~6.0.3"
+    },
+    "license": "MIT"
+}

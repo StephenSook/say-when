@@ -1,0 +1,8 @@
+node_modules/
+dist/
+
+# Private: the consent list, the do-not-call list and the household lexicon hold real names and phone numbers.
+private/
+*consent*.json
+do-not-call*
+lexicon*.json
