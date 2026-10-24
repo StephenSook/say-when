@@ -9,6 +9,7 @@ import { CallRunner } from '../src/calls.js';
 import { MemoryDb } from '../src/db/memory-db.js';
 import { ErrandRunner } from '../src/errands.js';
 import { ConversationLog, PreviewBook, type JobDeps } from '../src/jobs.js';
+import { MemoryWatch } from '../src/requests.js';
 import { recordingLogger, type RecordingLogger } from '../src/log.js';
 import { Orchestrator, type OrchestratorOptions } from '../src/orchestrator.js';
 import { ClaudePlanner, type MessagesApi } from '../src/planner/claude.js';
@@ -260,6 +261,8 @@ export class FakeMemory implements MemoryPort {
     writeBackDelayMs = 0;
     /** What a past-request query (src/requests.ts) finds. None by default. */
     pastRequestHits: MemoryHit[] = [];
+    /** A past-request query that never answers (the question's own recall still does). */
+    pastRequestHang = false;
     /** Notes added with addNote: the past requests kept after a send. */
     readonly notes: { text: string; shareable: false }[] = [];
     noteError: Error | null = null;
@@ -273,6 +276,7 @@ export class FakeMemory implements MemoryPort {
     async recall(question: string, partnerId: string): Promise<Recall> {
         this.recalls.push({ question, partnerId });
         this.trace?.add('memory.recall');
+        if (this.pastRequestHang && question.startsWith('Past request (')) await new Promise<never>(() => undefined);
         if (this.recallHang) await new Promise<never>(() => undefined);
         if (this.recallDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, this.recallDelayMs));
         if (this.recallError) throw this.recallError;
@@ -542,6 +546,7 @@ export function harness(options: HarnessOptions = {}): Harness {
     const previews = new PreviewBook();
     const clock = options.clock ?? (() => performance.now());
     let requests = 0;
+    const memoryWatch = new MemoryWatch(db);
     const deps: JobDeps = {
         db,
         planner,
@@ -564,6 +569,7 @@ export function harness(options: HarnessOptions = {}): Harness {
         timeZone: 'America/Los_Angeles',
         maxOptions: 4,
         memoryShareable: options.memoryShareable ?? false,
+        memoryWatch,
         now: options.now ?? Date.now,
         clock,
         requestId: () => `call-test-${++requests}`,
@@ -589,7 +595,7 @@ export function harness(options: HarnessOptions = {}): Harness {
         log,
         clock,
         retryMs: 5,
-        pastRequests: { memory: deps.retrieval.memory, forms: deps.forms, timeZone: deps.timeZone, now: deps.now, sandbox: options.sandbox ?? false },
+        pastRequests: { memory: deps.retrieval.memory, forms: deps.forms, timeZone: deps.timeZone, now: deps.now, sandbox: options.sandbox ?? false, watch: memoryWatch },
     });
     const orchestrator = new Orchestrator(
         deps,

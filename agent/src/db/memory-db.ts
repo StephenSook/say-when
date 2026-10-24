@@ -179,6 +179,8 @@ export class MemoryDb implements AgentDb {
     readonly consent = { memory: true, webSearch: true };
     /** False to play a module whose `agent_consent` shows no row for this sidecar (or bindings without the view). */
     consentRowShown = true;
+    /** The active session `agent_consent` shows, or 0n between sessions. Tests set it to start a new session. */
+    sessionId = 1n;
     maxOptions = LIMITS.maxOptions;
     connected = true;
 
@@ -287,7 +289,7 @@ export class MemoryDb implements AgentDb {
 
     agentConsent(): AgentConsent | null {
         if (!this.consentRowShown) return null;
-        return { sessionId: 1n, memoryAllowed: this.consent.memory, webSearchAllowed: this.consent.webSearch };
+        return { sessionId: this.sessionId, memoryAllowed: this.consent.memory, webSearchAllowed: this.consent.webSearch };
     }
 
     onMemoryOff(listener: () => void): () => void {

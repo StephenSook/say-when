@@ -17,6 +17,7 @@ import { applyOrder, buildOptions, looksYesNo, memoryFirstOptions } from './opti
 import { JobEvents, label, StaleAttemptError } from './pipeline.js';
 import { PlannerError, type ConversationTurn, type MemoryContext, type PlanInput, type PlannerPort, type PlanResult, type WebContext } from './planner/types.js';
 import type { DialerPort, ErrandPort, MemoryPort } from './ports.js';
+import type { ConsentMark, MemoryWatch } from './requests.js';
 import { withDeadline } from './deadline.js';
 import { JobAbortedError, memoryContext, mossDeadline, recallMemory, retrieveStep, searchStep, type RetrievalDeps } from './retrieval.js';
 import type { AgentQueueRow, AllowedForm, CallContact, OptionInput } from './types.js';
@@ -57,6 +58,11 @@ export interface PreviewRecord {
     fieldsJson: string;
     /** False when the attach's reply was lost, so it is not known whether this preview is the one on the errand. */
     certain: boolean;
+    /**
+     * Memory consent taken right before the preview was attached, so before the CONFIRM. A past request is kept only if
+     * it held without a break from here to the write (src/requests.ts MemoryWatch). Null or unset: no note.
+     */
+    memory?: ConsentMark | null;
 }
 
 /** The previews this sidecar attached, by errand id. The submit gate (src/errands.ts) reads it. */
@@ -96,6 +102,8 @@ export interface JobDeps {
     maxOptions: number;
     /** Mark written-back replies shareable (AGENT_MEMORY_SHAREABLE): only if the person agreed. */
     memoryShareable: boolean;
+    /** Memory consent marks for past requests (src/requests.ts). Unset: previews carry no mark, so no note is kept. */
+    memoryWatch?: MemoryWatch;
     /** Wall clock, epoch ms. */
     now: () => number;
     /** Monotonic clock for durations. */
@@ -272,7 +280,7 @@ export async function runOptionsJob(row: AgentQueueRow, attempt: number, deps: J
             row,
             signal,
             allowMemory,
-            deps.forms.map((form) => form.formTitle),
+            deps.forms,
         );
         if (signal.aborted) throw new JobAbortedError();
 
@@ -638,6 +646,8 @@ async function previewJob(row: AgentQueueRow, attempt: number, deps: JobDeps, si
             return;
         }
         const readBackJson = JSON.stringify(result.readBack);
+        // Before the attach: once the errand shows previewed, the read-back and the CONFIRM can follow at any time.
+        const memory = deps.memoryWatch?.mark() ?? null;
         await step.ok('preview previewed', {
             counts: { readBack: result.readBack.length, unmatched: result.unmatched.length, missingRequired: result.missingRequired.length, previewMs },
         });
@@ -652,7 +662,7 @@ async function previewJob(row: AgentQueueRow, attempt: number, deps: JobDeps, si
         });
         if (attached.attached) {
             // The submit gate checks the module's confirmed digest against this one.
-            deps.previews.record(row.errandId, { digest: result.previewDigest, formUrl: row.formUrl, fieldsJson: row.fieldsJson, certain: attached.certain });
+            deps.previews.record(row.errandId, { digest: result.previewDigest, formUrl: row.formUrl, fieldsJson: row.fieldsJson, certain: attached.certain, memory });
         }
         return;
     }

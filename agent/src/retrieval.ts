@@ -17,7 +17,7 @@ import { label, StaleAttemptError, type JobEvents } from './pipeline.js';
 import type { MemoryContext, WebContext } from './planner/types.js';
 import type { Classifier, MemoryPort, SearchPort, WebIndexPort } from './ports.js';
 import { excerpt, memoryHitPayload, searchRowPayload, sourceRefOf, webHitPayload, type PayloadHit } from './privacy.js';
-import { isPastRequest, pastRequestQuery } from './requests.js';
+import { isPastRequest, pastRequestQuery, type FormRef } from './requests.js';
 import type { AgentQueueRow } from './types.js';
 
 export { JobAbortedError };
@@ -74,42 +74,59 @@ export function searchErrorLabel(kind: 'web' | 'maps', error: unknown, deadline:
 /** At most this many allowed forms get a past-request query per question. */
 const MAX_PAST_REQUEST_FORMS = 4;
 
-/** The newest past request of one form among the hits, or null. */
-function newestPastRequest(hits: readonly MemoryHit[], formTitle: string): MemoryHit | null {
-    let newest: MemoryHit | null = null;
-    for (const hit of hits) {
-        if (hit.type !== 'pref' || !isPastRequest(hit.text, formTitle)) continue;
-        if (!newest || (hit.at ?? -Infinity) > (newest.at ?? -Infinity)) newest = hit;
+/** The newer of two hits; the first when their times tie or are unknown. */
+function newer(a: MemoryHit | null, b: MemoryHit): MemoryHit {
+    if (!a) return b;
+    return (b.at ?? -Infinity) > (a.at ?? -Infinity) ? b : a;
+}
+
+/**
+ * A form's past-request query, bounded on its own: a query that fails or never answers only leaves its form out, and
+ * never costs the question's own recall.
+ */
+async function findPastRequests(memory: MemoryPort, row: AgentQueueRow, form: FormRef, deadlineMs: number): Promise<MemoryHit[]> {
+    try {
+        const result = await withDeadline(memory.recall(pastRequestQuery(form), row.askedBy), deadlineMs, 'past request recall');
+        return result.hits;
+    } catch {
+        return [];
     }
-    return newest;
 }
 
 /**
  * The question's recall, plus the newest past request (src/requests.ts) of each allowed form, first, so the planner
- * can offer to send the same form again. One local query per form, by the form's title. Older past requests the
- * question's own recall found are left out: only the newest one is "last time". A past-request query that fails only
- * leaves its form out.
+ * can offer to send the same form again. One local query per form by its title and key, run beside the question's
+ * own query. The two rank by similarity and can find different notes, so the newest note of each form is taken from
+ * both; every other past request is left out, since only the newest one is "last time".
  */
-async function recallWithPastRequests(memory: MemoryPort, row: AgentQueueRow, formTitles: readonly string[]): Promise<{ recall: Recall; pastRequests: number }> {
-    const titles = [...new Set(formTitles)].slice(0, MAX_PAST_REQUEST_FORMS);
-    const [recall, ...found] = await Promise.all([
-        memory.recall(row.questionText, row.askedBy),
-        ...titles.map((title) =>
-            memory.recall(pastRequestQuery(title), row.askedBy).then(
-                (result) => newestPastRequest(result.hits, title),
-                () => null,
-            ),
-        ),
-    ]);
-    const past = found.filter((hit): hit is MemoryHit => hit !== null);
+async function recallWithPastRequests(
+    memory: MemoryPort,
+    row: AgentQueueRow,
+    forms: readonly FormRef[],
+    deadlineMs: number,
+    signal: AbortSignal,
+): Promise<{ recall: Recall; pastRequests: number }> {
+    const unique = forms.filter((form, i) => forms.findIndex((f) => f.formKey === form.formKey) === i).slice(0, MAX_PAST_REQUEST_FORMS);
+    const finding = Promise.all(unique.map((form) => findPastRequests(memory, row, form, deadlineMs)));
+    const recall = await withDeadline(memory.recall(row.questionText, row.askedBy), deadlineMs, 'memory recall', signal);
+    // Each past-request query has its own deadline, started with the question's, so this wait is bounded too.
+    const found = await finding;
+    const past: MemoryHit[] = [];
+    unique.forEach((form, i) => {
+        let best: MemoryHit | null = null;
+        for (const hit of [...(found[i] ?? []), ...recall.hits]) {
+            if (hit.type === 'pref' && isPastRequest(hit.text, form)) best = newer(best, hit);
+        }
+        if (best && !past.some((hit) => hit.id === best?.id)) past.push(best);
+    });
     const rest = recall.hits.filter((hit) => !isPastRequest(hit.text));
     return { recall: { ...recall, hits: [...past, ...rest] }, pastRequests: past.length };
 }
 
 /**
  * Step 1: the person's memory for this question and this partner, with the newest past request of each allowed form
- * (`formTitles`). Null when memory is off, closed or failed. `allowed` reads the job's memory consent as the module
- * shows it now: it is checked again after every wait, since consent can be revoked while a job runs.
+ * (`forms`). Null when memory is off, closed or failed. `allowed` reads the job's memory consent as the module shows
+ * it now: it is checked again after every wait, since consent can be revoked while a job runs.
  */
 export async function recallMemory(
     deps: RetrievalDeps,
@@ -117,7 +134,7 @@ export async function recallMemory(
     row: AgentQueueRow,
     signal: AbortSignal,
     allowed: () => boolean = () => true,
-    formTitles: readonly string[] = [],
+    forms: readonly FormRef[] = [],
 ): Promise<Recall | null> {
     if (!row.memoryAllowed || !allowed()) {
         await events.instant('retrieve', 'ok', 'memory off', 0, { counts: { hitCount: 0, memoryAllowed: false } });
@@ -129,7 +146,7 @@ export async function recallMemory(
     }
     const step = await events.begin('retrieve', 'memory recall');
     try {
-        const recalled = allowed() ? await withDeadline(recallWithPastRequests(deps.memory, row, formTitles), mossDeadline(deps, 'recall'), 'memory recall', signal) : null;
+        const recalled = allowed() ? await recallWithPastRequests(deps.memory, row, forms, mossDeadline(deps, 'recall'), signal) : null;
         const recall = recalled?.recall ?? null;
         if (!recall || !allowed()) {
             // Revoked while the step started or while Moss answered: nothing from memory is used or shown.

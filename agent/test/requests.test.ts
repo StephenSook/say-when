@@ -32,7 +32,9 @@ const FIELDS = [
     { label: 'Details', value: SECRET.formValue, source: 'conversation' },
 ];
 const ERRAND = { formKey: 'care_team_request', formUrl: 'demo', formTitle: 'Care team request', fieldsJson: JSON.stringify(FIELDS) };
-const NOTE = `Past request (Care team request), sent Sat, Oct 24, 2:10 PM. Fields: {"What do you need?":"Meal or drink","Details":${JSON.stringify(SECRET.formValue)}}`;
+const NOTE = `Past request (Care team request, form care_team_request), sent Sat, Oct 24, 2:10 PM. Fields: {"What do you need?":"Meal or drink","Details":${JSON.stringify(SECRET.formValue)}}`;
+/** Another destination that shares the demo form's title (Codex round 1). */
+const TWIN = { ...DEMO_FORM, formKey: 'other_team_request', formUrl: 'https://forms.example.org/other' };
 
 /** A YES on an errand option: the module drafted it, the sidecar previews it, and it waits for the CONFIRM. */
 async function previewed(h: Harness, errand = ERRAND): Promise<bigint> {
@@ -54,16 +56,16 @@ describe('the past request note', () => {
         const note = pastRequestNote(DEMO_FORM, FIELDS, SENT_AT, 'America/Los_Angeles');
         assert.equal(note, NOTE);
         assert.ok(!note?.includes('Alex'), 'the fixed "from" value is not kept');
-        assert.equal(pastRequestQuery('Care team request'), 'Past request (Care team request)');
+        assert.equal(pastRequestQuery(DEMO_FORM), 'Past request (Care team request, form care_team_request)');
         assert.ok(isPastRequest(NOTE));
-        assert.ok(isPastRequest(NOTE, 'Care team request'));
-        assert.ok(!isPastRequest(NOTE, 'Care team'), 'another form title does not match');
+        assert.ok(isPastRequest(NOTE, DEMO_FORM));
+        assert.ok(!isPastRequest(NOTE, TWIN), 'a form with the same title and another key does not match');
         assert.ok(!isPastRequest('Sample note: prefers tea to coffee.'));
     });
 
     it('keeps lists and yes or no values as they were sent', () => {
         const note = pastRequestNote(DEMO_FORM, [{ label: 'Details', value: ['soup', 'tea'] }, { label: 'When?', value: true }], SENT_AT, 'UTC');
-        assert.equal(note, 'Past request (Care team request), sent Sat, Oct 24, 9:10 PM. Fields: {"Details":["soup","tea"],"When?":true}');
+        assert.equal(note, 'Past request (Care team request, form care_team_request), sent Sat, Oct 24, 9:10 PM. Fields: {"Details":["soup","tea"],"When?":true}');
     });
 
     it('keeps nothing when only fixed fields were sent, or when the note would be too long for Moss', () => {
@@ -103,6 +105,63 @@ describe('keeping a past request after a send', () => {
         h.db.revokeConsent('memory');
         h.errands.onSubmit = () => h.db.grantConsent('memory');
         await sent(h);
+        assert.equal(h.memory.notes.length, 0);
+    });
+
+    // Security review (consent at the CONFIRM): the consent must be shown to hold from before the CONFIRM to the
+    // write without a break, not only at the claim and the write.
+    it('writes nothing when memory consent is revoked and given again while the form is sent', async () => {
+        const h = start(harness({ forms: [DEMO_FORM], now: () => SENT_AT }));
+        h.errands.onSubmit = () => {
+            h.db.revokeConsent('memory');
+            h.db.grantConsent('memory');
+        };
+        await sent(h);
+        assert.equal(h.memory.notes.length, 0);
+    });
+
+    it('writes nothing when memory consent was revoked and given again between the preview and the CONFIRM', async () => {
+        const h = start(harness({ forms: [DEMO_FORM], now: () => SENT_AT }));
+        const errandId = await previewed(h);
+        h.db.revokeConsent('memory');
+        h.db.grantConsent('memory');
+        h.db.confirmErrand(errandId);
+        await waitFor(() => h.db.errands.get(errandId)?.status === 'submitted', 3_000, 'submitted');
+        await settle(30);
+        assert.equal(h.memory.notes.length, 0);
+    });
+
+    it('writes nothing when memory consent was given only after the CONFIRM, while the sidecar was disconnected', async () => {
+        const h = start(harness({ forms: [DEMO_FORM], now: () => SENT_AT }));
+        h.db.revokeConsent('memory');
+        const errandId = await previewed(h);
+        h.db.setConnected(false);
+        h.db.confirmErrand(errandId);
+        h.db.grantConsent('memory');
+        h.db.setConnected(true);
+        await waitFor(() => h.db.errands.get(errandId)?.status === 'submitted', 3_000, 'submitted');
+        await settle(30);
+        assert.equal(h.memory.notes.length, 0);
+    });
+
+    it('writes nothing when the session changed after the preview', async () => {
+        const h = start(harness({ forms: [DEMO_FORM], now: () => SENT_AT }));
+        const errandId = await previewed(h);
+        h.db.sessionId = 2n;
+        h.db.confirmErrand(errandId);
+        await waitFor(() => h.db.errands.get(errandId)?.status === 'submitted', 3_000, 'submitted');
+        await settle(30);
+        assert.equal(h.memory.notes.length, 0);
+    });
+
+    it('writes nothing after a lost connection between the preview and the write, even with consent on throughout', async () => {
+        const h = start(harness({ forms: [DEMO_FORM], now: () => SENT_AT }));
+        const errandId = await previewed(h);
+        h.db.setConnected(false);
+        h.db.setConnected(true);
+        h.db.confirmErrand(errandId);
+        await waitFor(() => h.db.errands.get(errandId)?.status === 'submitted', 3_000, 'submitted');
+        await settle(30);
         assert.equal(h.memory.notes.length, 0);
     });
 
@@ -160,7 +219,7 @@ const OLDER: MemoryHit = memoryHit(8, {
     partnerId: 'any',
     at: SENT_AT - 86_400_000,
     score: 0.95,
-    text: 'Past request (Care team request), sent Fri, Oct 23, 2:10 PM. Fields: {"Details":"OLDVALUE"}',
+    text: 'Past request (Care team request, form care_team_request), sent Fri, Oct 23, 2:10 PM. Fields: {"Details":"OLDVALUE"}',
     reply: null,
 });
 const SAME_AGAIN = 'Send the same lunch request as last time.';
@@ -194,7 +253,7 @@ describe('recalling past requests for the plan', () => {
         h.memory.recallResult = { hits: [OLDER, memoryHit(1)], instant: [`${SECRET.privateMemory} 1`], mossMs: 3, wallMs: 4 };
         h.api.reply(repeatPlan());
         await optionsJob(h);
-        assert.ok(h.memory.recalls.some((r) => r.question === 'Past request (Care team request)'), 'a past-request query by the form name');
+        assert.ok(h.memory.recalls.some((r) => r.question === 'Past request (Care team request, form care_team_request)'), 'a past-request query by the form name and key');
         const message = h.api.userMessage(0);
         assert.ok(message.includes('m1 (past request, saved Oct 24): '), message);
         assert.ok(message.includes('m2 (past reply'), 'the question recall follows');
@@ -202,6 +261,43 @@ describe('recalling past requests for the plan', () => {
         const recall = h.db.events.find((e) => e.detail === 'memory recall' && e.status === 'ok');
         assert.equal(JSON.parse(recall?.countsJson ?? '{}').pastRequests, 1);
         assert.ok(!(recall?.payloadJson ?? '').includes(SECRET.formValue), 'the note text stays private on the board');
+    });
+
+    // Codex round 1: the two queries rank by similarity and can return different notes; the newest of both wins.
+    it('takes the newest note of a form from either query', async () => {
+        const h = start(harness({ forms: [DEMO_FORM] }));
+        h.memory.pastRequestHits = [OLDER];
+        h.memory.recallResult = { hits: [NEWEST, memoryHit(1)], instant: [], mossMs: 3, wallMs: 4 };
+        h.api.reply(repeatPlan());
+        await optionsJob(h);
+        const message = h.api.userMessage(0);
+        assert.ok(message.includes('m1 (past request, saved Oct 24): '), message);
+        assert.ok(!message.includes('OLDVALUE'));
+        assert.equal(message.split('past request,').length - 1, 1, 'one note per form');
+    });
+
+    // Codex round 1: a past-request query that never answers must not cost the question's own recall.
+    it('keeps the question recall when a past-request query hangs', async () => {
+        const h = start(harness({ forms: [DEMO_FORM] }));
+        h.deps.retrieval.mossDeadlines = { recall: 150 };
+        h.memory.pastRequestHang = true;
+        h.api.reply({ answer_mode: 'pick', options: [reply({ text: 'Not now.', tone: 'calm' }), reply({ text: 'Maybe later.', tone: 'warm' })] });
+        await optionsJob(h);
+        const message = h.api.userMessage(0);
+        assert.ok(message.includes('m1 (past reply'), message);
+        const recall = h.db.events.find((e) => e.detail === 'memory recall' && e.status === 'ok');
+        assert.equal(JSON.parse(recall?.countsJson ?? '{}').pastRequests, 0);
+    });
+
+    // Codex round 1: two destinations can share a title; one's values must never fill the other.
+    it('never uses a note of another form that shares the title', async () => {
+        const h = start(harness({ forms: [TWIN] }));
+        h.memory.pastRequestHits = [NEWEST];
+        h.memory.recallResult = { hits: [NEWEST, memoryHit(1)], instant: [], mossMs: 3, wallMs: 4 };
+        h.api.reply({ answer_mode: 'pick', options: [reply({ text: 'Not now.', tone: 'calm' }), reply({ text: 'Maybe later.', tone: 'warm' })] });
+        await optionsJob(h);
+        assert.ok(!h.api.userMessage(0).includes(SECRET.formValue));
+        assert.ok(h.memory.recalls.some((r) => r.question === 'Past request (Care team request, form other_team_request)'));
     });
 
     it('publishes the memory-filled errand option with the note as its memory source', async () => {

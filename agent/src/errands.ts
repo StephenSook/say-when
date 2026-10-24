@@ -11,8 +11,9 @@
 //    trying again". The module's lease turns a sidecar that dies here into unknown_outcome too.
 // 4. A claim that provably never reached the module (the connection was down for every try) is tried again on a
 //    later look, at most MAX_CLAIM_TRIES rounds. A claim that may have landed is never sent again.
-// 5. Only after the Actor reports it submitted, and only when memory consent held at the CONFIRM and still holds in the
-//    same session right before the write, one private past request note goes into Moss (src/requests.ts), so the
+// 5. Only after the Actor reports it submitted, and only when memory consent held without a break from before the
+//    CONFIRM (the preview's mark) to right before the write, in one session, one private past request note goes into
+//    Moss (src/requests.ts MemoryWatch), so the
 //    next time the same form comes up it can be filled from last time. Never in the try sandbox. The note never
 //    changes the errand's result, and it never sends anything: a repeat still needs its own read-back and CONFIRM.
 
@@ -25,7 +26,7 @@ import { withDeadline } from './deadline.js';
 import { parseFields, type PreviewBook } from './jobs.js';
 import type { Logger } from './log.js';
 import type { ErrandPort, MemoryPort } from './ports.js';
-import { pastRequestNote } from './requests.js';
+import { pastRequestNote, type MemoryWatch } from './requests.js';
 import { MOSS_DEADLINES } from './retrieval.js';
 import type { AllowedForm, ErrandQueueRow, ReducerArgs } from './types.js';
 
@@ -102,6 +103,8 @@ export interface PastRequestDeps {
     now: () => number;
     /** The judge try sandbox (AGENT_TRY): no note is ever written, whatever the consent says. */
     sandbox: boolean;
+    /** The same watch the preview job marks with (JobDeps.memoryWatch). Null: no note is ever written. */
+    watch: MemoryWatch | null;
     /** How long the note write may take. Default MOSS_DEADLINES.writeBack. */
     deadlineMs?: number;
 }
@@ -259,9 +262,6 @@ export class ErrandRunner {
         if (!errands || !fields) return true;
         const claimed = await this.claim(row, key);
         if (!claimed.ok) return claimed.final;
-        // Memory consent at the CONFIRM, like a Remember job made when the reply was said: a consent given only after
-        // it does not reach back to this send.
-        const memoryAtConfirm = this.memorySession();
         const started = this.deps.clock();
         let completion: Completion;
         try {
@@ -274,33 +274,27 @@ export class ErrandRunner {
         const submitMs = this.deps.clock() - started;
         this.deps.log.info('errand submit finished', { errand: row.errandId, status: completion.status, code: completion.reasonCode || undefined, ms: Math.round(submitMs) });
         await this.complete(row, claimed.attempt, completion, submitMs);
-        if (completion.status === 'submitted') await this.keepPastRequest(row, fields, memoryAtConfirm);
+        if (completion.status === 'submitted') await this.keepPastRequest(row, fields);
         return true;
     }
 
-    /** The session whose memory consent holds now, as the module shows it; null when it is off or cannot be read. */
-    private memorySession(): bigint | null {
-        if (!this.deps.db.isCurrent()) return null;
-        const consent = this.deps.db.agentConsent();
-        return consent && consent.memoryAllowed && consent.sessionId !== 0n ? consent.sessionId : null;
-    }
-
     /** Step 5: one private note about the sent form. Never throws; the errand's result is already recorded. */
-    private async keepPastRequest(row: ErrandQueueRow, fields: FieldInput[], memoryAtConfirm: bigint | null): Promise<void> {
+    private async keepPastRequest(row: ErrandQueueRow, fields: FieldInput[]): Promise<void> {
         const deps = this.deps.pastRequests;
         if (!deps) return;
         const skip = (why: string) => this.deps.log.info('no past request kept', { errand: row.errandId, why });
         if (deps.sandbox) return skip('try_sandbox');
-        if (memoryAtConfirm === null) return skip('memory_off');
         const memory = deps.memory;
         if (!memory || !memory.isOpen()) return skip('moss_closed');
         const form = deps.forms.find((f) => f.formKey === row.formKey);
         if (!form) return skip('form_not_listed');
         const text = pastRequestNote(form, fields, deps.now(), deps.timeZone);
         if (!text) return skip('nothing_to_keep');
-        // Read again right before the write, like a Remember job: a revocation since the CONFIRM, or a new session,
-        // writes nothing.
-        if (this.memorySession() !== memoryAtConfirm) return skip('memory_off');
+        // Memory consent from before the CONFIRM (taken when the preview was attached) to now, without a break, in one
+        // session. A consent given only after the CONFIRM, or revoked and given again, does not reach back to this send.
+        // Read right before the write, with nothing that waits in between, like a Remember job.
+        const mark = this.deps.previews.get(row.errandId)?.memory ?? null;
+        if (!deps.watch || !deps.watch.heldSince(mark)) return skip('memory_off');
         try {
             const written = await withDeadline(memory.addNote({ text, shareable: false }), deps.deadlineMs ?? MOSS_DEADLINES.writeBack, 'past request');
             this.deps.log.info('past request kept', { errand: row.errandId, added: written.added, updated: written.updated });

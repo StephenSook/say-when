@@ -21,6 +21,7 @@ import { loadEnvFiles, readConfig, type ConfigResult } from './config.js';
 import { BINDINGS_DIR, BINDINGS_SDK, loadBuilder } from './db/bindings.js';
 import { SpacetimeAgentDb, TokenSaveError } from './db/spacetime-db.js';
 import { ErrandRunner } from './errands.js';
+import { MemoryWatch } from './requests.js';
 import { ConversationLog, PreviewBook, type JobDeps } from './jobs.js';
 import { consoleLogger, type Logger } from './log.js';
 import { Orchestrator } from './orchestrator.js';
@@ -151,6 +152,8 @@ async function run(result: ConfigResult, log: Logger): Promise<number> {
         return 1;
     }
 
+    // Memory consent marks for past requests (src/requests.ts): the preview marks, the errand runner checks.
+    const memoryWatch = new MemoryWatch(db);
     const deps: JobDeps = {
         db,
         planner: wired.planner,
@@ -173,6 +176,7 @@ async function run(result: ConfigResult, log: Logger): Promise<number> {
         timeZone: config.timeZone,
         maxOptions: config.maxOptions,
         memoryShareable: config.memoryShareable,
+        memoryWatch,
         now: Date.now,
         clock: () => performance.now(),
         requestId: () => `call-${randomUUID().replace(/-/g, '').slice(0, 24)}`,
@@ -187,7 +191,7 @@ async function run(result: ConfigResult, log: Logger): Promise<number> {
         log,
         clock: () => performance.now(),
         // Past requests (src/requests.ts): never in the judge try sandbox.
-        pastRequests: { memory: wired.memory, forms: wired.forms, timeZone: config.timeZone, now: Date.now, sandbox: config.sandbox !== null },
+        pastRequests: { memory: wired.memory, forms: wired.forms, timeZone: config.timeZone, now: Date.now, sandbox: config.sandbox !== null, watch: memoryWatch },
     });
     const meter = config.sandbox ? new SandboxMeter(config.sandbox) : null;
     if (meter) log.info('judge try sandbox caps are on', { dailyCents: Math.round(meter.limits.dailyUsd * 100), partnersPerHour: meter.limits.partnersPerHour });
