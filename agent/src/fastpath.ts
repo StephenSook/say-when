@@ -64,7 +64,7 @@ const REQUEST_START = /^(can|could|would|will) you\b/;
  * wants or is able to do. Anything else ("would you mind", "could you hand me", "can you please", "could you be more
  * specific", "would you be able to describe") reads as a request.
  */
-const REQUEST_SAFE: readonly string[] = ['hear', 'see', 'feel', 'like', 'want', 'need', 'understand', 'sleep', 'breathe'];
+const REQUEST_SAFE: readonly string[] = ['hear', 'see', 'feel', 'like', 'want', 'need', 'understand'];
 /**
  * An offer to act: "do you want (me) to ...", "would you like (me) to ...", "should I ...", "shall I ...", "can I ...",
  * and "able, willing, ready, going or trying to ..." ("Are you able to describe it?").
@@ -94,7 +94,9 @@ const DO_OR_MODAL: readonly string[] = ['do', 'does', 'did', 'can', 'could', 'wi
  * Anything else ("Did you finish the soup?", "Does your back hurt?", "Do you prefer the window seat?") goes to the
  * planner, which can still answer yes or no.
  */
-const MAIN_SAFE: readonly string[] = [...OFFER_SAFE, 'be', 'hurt', 'ache', 'agree', 'enjoy', 'love', 'care', 'understand'];
+// Wider than the request and offer lists: "Did you sleep well?" and "Did you eat lunch?" ask about the person, while
+// "Could you breathe in?" and "Can you eat the soup?" are caught as requests before this list is read.
+const MAIN_SAFE: readonly string[] = [...OFFER_SAFE, 'be', 'hurt', 'ache', 'agree', 'enjoy', 'love', 'care', 'understand', 'sleep', 'breathe', 'eat', 'drink', 'swallow'];
 const PRONOUN_VERB = /^[a-z]+ (?:you|i|we|it|he|she|they) ([a-z]+)/;
 /** After have, has and had: a pronoun subject and one of these plain participles ("Have you eaten yet?"). */
 const HAVE: readonly string[] = ['have', 'has', 'had'];
