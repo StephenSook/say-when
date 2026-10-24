@@ -78,7 +78,7 @@ export function Replies() {
           </h1>
           <p className={styles.subtitle}>{SCREEN_SUBTITLE}</p>
         </div>
-        {phone ? stopLine : null}
+        {stopLine}
       </header>
 
       {/* One polite line for screen readers: the newest pick, confirm, end or failure. */}
@@ -91,8 +91,6 @@ export function Replies() {
       ) : (
         <div ref={ref} className={styles.canvas} style={height ? { height } : undefined}>
           <ReplyGraph tree={tree} reduced={reduced} />
-          {/* Over the canvas, so it never costs the tree a row of height and is never framed out. */}
-          <div className={styles.stopOverlay}>{stopLine}</div>
         </div>
       )}
     </section>
