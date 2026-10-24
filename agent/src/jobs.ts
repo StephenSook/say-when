@@ -110,7 +110,7 @@ export interface JobDeps {
      */
     yesNoFast?: boolean;
     /**
-     * Draft first (AGENT_DRAFT_FIRST, on by default in the config): when a question will be searched, Claude's options
+     * Draft first (AGENT_DRAFT_FIRST, off by default in the config): when a question will be searched, Claude's options
      * from memory alone are published while the search runs, and the options with web results follow. Off when unset.
      */
     draftFirst?: boolean;
