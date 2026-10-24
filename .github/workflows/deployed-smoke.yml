@@ -37,7 +37,10 @@ jobs:
           cache: npm
           cache-dependency-path: scripts/package-lock.json
       - run: npm ci
-      - name: Install the Chromium that matches playwright 1.64.0
-        run: npx playwright install --with-deps chromium
+      # Only the headless shell, and no --with-deps: the runner image already carries the libraries Chrome needs, and
+      # on Oct 24 the apt step behind --with-deps took minutes per font package and ran a run into its time limit.
+      # If a library goes missing, the launch fails and the run says so.
+      - name: Install the Chromium headless shell that matches playwright 1.64.0
+        run: npx playwright install --only-shell chromium
       - name: Smoke test the deployed site
         run: npm run smoke
