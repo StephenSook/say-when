@@ -513,3 +513,23 @@ describe('boardRows: the live SpacetimeDB board as the dashboard rows', () => {
     assert.equal(rows.pipelineEvents[0]?.detail.error?.sentence, "This step's details could not be read.");
   });
 });
+
+describe('the phone when the memory recall fails', () => {
+  test('the lookup reads as done without the memory once options came, failed only while nothing else ran', () => {
+    const base = midScan().pipelineEvents;
+    const withRecallError = (extra: ReturnType<typeof event>[]) =>
+      partnerOf(boardRows(midScan({ pipelineEvents: [...base.slice(0, 1), ...extra, ...base.slice(1)] })));
+    const done = withRecallError([
+      event(45, '7:1:search:ok', 'search', 'ok', 'searched', 150, { countsJson: '{"rows":3}', actor: 'Agent' }),
+      event(46, '7:1:retrieve:error', 'retrieve', 'error', 'moss closed', 180, { actor: 'Agent' }),
+    ]);
+    const step = done.steps.find((s) => s.key === 'looked-up');
+    assert.equal(step?.status, 'done', 'options came, so the lookup did not fail the turn');
+    assert.equal(step?.statusWord, 'Done without the memory lookup');
+
+    const early = partnerOf(
+      boardRows(midScan({ pipelineEvents: [base[0]!, event(46, '7:1:retrieve:error', 'retrieve', 'error', 'moss closed', 180, { actor: 'Agent' })] })),
+    );
+    assert.equal(early.steps.find((s) => s.key === 'looked-up')?.status, 'failed', 'with nothing after it, the failure shows');
+  });
+});

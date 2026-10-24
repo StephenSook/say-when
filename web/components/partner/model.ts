@@ -576,7 +576,11 @@ function lookedUpStep(f: Facts): Step {
   const searchFailed = search?.status === 'error' && !searchSkipped;
   const later = f.plan !== null || f.speak !== null || f.lastPick !== null || f.reply !== null;
 
-  if (retrieve?.status === 'error') return { key, label, status: 'failed' };
+  // A failed memory recall does not stop the turn: once options came, the lookup is done without it, like a failed search.
+  if (retrieve?.status === 'error') {
+    if (later) return { key, label, status: 'done', statusWord: searchFailed ? 'Done without a lookup' : 'Done without the memory lookup' };
+    return f.newest === retrieve ? { key, label, status: 'failed' } : { key, label, status: 'working' };
+  }
   if (searchRunning || retrieve?.status === 'started') return { key, label, status: 'working' };
   if (retrieve?.status === 'ok') {
     const at = Math.max(retrieve.at, search?.at ?? 0);
