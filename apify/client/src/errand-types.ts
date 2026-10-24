@@ -1,0 +1,80 @@
+// Wire types of the form-errand Actor, copied from apify/form-errand/src/types.ts (everything except its
+// internal ErrandInput). `npm run typecheck` compares each one with the Actor's own type
+// (test/errand.test.ts), so a change on either side fails until both match again.
+
+/** A value to put in one form question. Arrays are for checkbox questions with several answers. */
+export type FieldValue = string | string[] | boolean;
+
+export interface FieldInput {
+    /** The question's visible label, for example "Who is this from?". */
+    label: string;
+    value: FieldValue;
+    /** Where the value came from, for example "memory" or "maps:<placeId>". Echoed back, never typed into the form. */
+    source?: string;
+}
+
+export type Mode = 'inspect' | 'preview' | 'submit';
+
+export type RefusalCode =
+    | 'bad_input'
+    | 'bad_url'
+    | 'load_failed'
+    | 'captcha'
+    | 'login'
+    | 'payment'
+    | 'upload'
+    | 'no_form'
+    | 'not_allowed'
+    | 'unmatched_fields'
+    | 'missing_required'
+    | 'not_confirmed'
+    | 'digest_mismatch'
+    | 'no_submit_button'
+    | 'no_confirmation';
+
+export interface Refusal {
+    code: RefusalCode;
+    /** One short sentence written to be spoken aloud. */
+    reason: string;
+}
+
+export type ErrandStatus = 'inspected' | 'previewed' | 'submitted' | 'duplicate' | 'refused' | 'failed';
+
+export interface ReadBackItem {
+    label: string;
+    /** The value read back off the live page after filling, not the value we were asked to type. */
+    value: string;
+    matchedBy: string;
+    source?: string;
+}
+
+export interface QuestionInfo {
+    label: string;
+    kind: 'text' | 'paragraph' | 'select' | 'checkbox' | 'choice' | 'checkboxes';
+    required: boolean;
+    options?: string[];
+}
+
+export interface ErrandResult {
+    status: ErrandStatus;
+    mode: Mode;
+    formUrl: string;
+    finalUrl: string | null;
+    formTitle: string | null;
+    /** True when the form is on the operator allowlist or carries the owner's opt-in marker. */
+    fillAllowed: boolean;
+    questions: QuestionInfo[];
+    readBack: ReadBackItem[];
+    /** Text for the earpiece, generated from the read-back values. */
+    readBackText: string | null;
+    previewDigest: string | null;
+    unmatched: string[];
+    missingRequired: string[];
+    refusal: Refusal | null;
+    confirmationText: string | null;
+    screenshotKey: string | null;
+    screenshotUrl: string | null;
+    screenshotBase64?: string;
+    timings: { loadMs: number | null; fillMs: number | null; submitMs: number | null; totalMs: number };
+    submittedAt: string | null;
+}

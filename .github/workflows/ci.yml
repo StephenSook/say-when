@@ -66,12 +66,40 @@ jobs:
       - run: npm run build
       - name: Tests (unit and real browser)
         run: |
-          npm test > test.log 2>&1
-          status=$?
+          # Capture the status without letting bash -e stop the step before the log prints.
+          status=0
+          npm test > test.log 2>&1 || status=$?
           cat test.log
           test "$status" -eq 0
           grep -qE '^# fail 0$' test.log
           # Floor on passing tests, so a run that finds no tests cannot pass.
           pass=$(awk '/^# pass/ {print $3}' test.log)
           echo "passing tests: $pass"
-          test "$pass" -ge 36
+          test "$pass" -ge 40
+
+  apify-client:
+    name: Apify client (search, places, errand)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apify/client
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apify/client/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - name: Tests
+        run: |
+          status=0
+          npm test > test.log 2>&1 || status=$?
+          cat test.log
+          test "$status" -eq 0
+          grep -qE '^# fail 0$' test.log
+          pass=$(awk '/^# pass/ {print $3}' test.log)
+          echo "passing tests: $pass"
+          test "$pass" -ge 125

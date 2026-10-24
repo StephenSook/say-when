@@ -1,0 +1,29 @@
+{
+    "name": "@say-when/apify-client",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "description": "Apify layer for the Say When agent sidecar: live web search, place search, and a client for the form-errand Actor.",
+    "engines": {
+        "node": ">=22"
+    },
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "default": "./dist/index.js"
+        }
+    },
+    "devDependencies": {
+        "@types/node": "^24.19.2",
+        "tsx": "^4.23.15",
+        "typescript": "~6.0.3"
+    },
+    "scripts": {
+        "build": "tsc",
+        "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
+        "test": "tsx --test test/*.test.ts"
+    },
+    "license": "MIT"
+}
