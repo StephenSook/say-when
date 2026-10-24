@@ -1,0 +1,5 @@
+# Raw headset recordings and models trained on them stay on the laptop (repo rule, see the root .gitignore).
+# Remove these lines only if the wearer agrees to publish their EEG.
+data/
+models/
+.venv/
