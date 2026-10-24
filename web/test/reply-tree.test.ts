@@ -97,14 +97,15 @@ describe('the Suggested replies tree over the sample replay', () => {
       notes.map((n) => (n.kind === 'child' ? n.title : '')),
       ['"Sample shared memory: Demo user likes quiet places with a ramp."', 'Private note'],
     );
-    assert.equal(node(tree, 'notes:hub')?.kind === 'hub' && (node(tree, 'notes:hub') as { meta: string }).meta, '2 saved notes · 0.08 s');
+    assert.equal(node(tree, 'notes:hub')?.kind === 'hub' && (node(tree, 'notes:hub') as { meta: string }).meta, '2 saved notes');
     const web = tree.nodes.filter((n) => (n.kind === 'child' || n.kind === 'more') && n.region === 'web');
     assert.equal(web.length, CHILD_SLOTS, 'six rows fill the three slots');
     assert.deepEqual(
       web.map((n) => (n.kind === 'child' || n.kind === 'more' ? `${n.title} (${n.meta})` : '')),
       ['Cafe on Bay St (Google Maps)', 'Thai kitchen on Lombard (Google Maps)', '+4 more (6 results in all)'],
     );
-    assert.equal((node(tree, 'web:hub') as { meta: string }).meta, '6 results from 2 searches · 1.8 s');
+    assert.equal((node(tree, 'web:hub') as { meta: string }).meta, '6 results');
+    assert.equal((node(tree, 'web:hub') as { detail: string }).detail, '6 results from 2 searches, 1.8 s');
   });
 
   test('up to four options, each with where it came from, and the one in the earpiece marked', () => {
@@ -333,7 +334,7 @@ describe('the Suggested replies tree on the live board', () => {
       both.nodes.filter((n) => n.kind === 'child' && n.region === 'web').map((n) => (n.kind === 'child' ? `${n.title} (${n.meta})` : '')),
       ['Smoke cafe (Google Maps)', 'Smoke guide (example.com)', 'Smoke list (example.org)'],
     );
-    assert.equal((node(both, 'web:hub') as { meta: string }).meta, '3 results from 2 searches · 1.4 s');
+    assert.equal((node(both, 'web:hub') as { detail: string }).detail, '3 results from 2 searches, 1.4 s');
   });
 
   test('sources in words: notes, the web by site, both, or drafted', () => {

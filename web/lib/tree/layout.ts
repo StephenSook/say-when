@@ -36,8 +36,8 @@ export const SIZE = {
   hub: { width: 428, height: 104 },
   child: { width: 400, height: 74 },
   draft: { width: 380, height: 156 },
-  option: { width: 500, height: 150 },
-  step: { width: 400, height: 124 },
+  option: { width: 500, height: 176 },
+  step: { width: 420, height: 164 },
 } as const;
 
 /** Child slots per region. More results fold into the last slot as "+N more". */
@@ -59,7 +59,7 @@ const DRAFT_X = 890;
 const OPTION_OFFSET = 440;
 const OPTION_GAP = 12;
 const OUTCOME_OFFSET = 580;
-const STEP_GAP = 18;
+const STEP_GAP = 16;
 
 const REGION_TOP: Readonly<Record<SlotRegion, number>> = { notes: 0, web: 388 };
 

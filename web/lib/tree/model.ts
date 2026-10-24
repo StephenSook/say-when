@@ -123,7 +123,10 @@ export interface HubNode extends NodeCommon {
   round: number;
   title: string;
   tool: string | null;
+  /** Short, for the card: "6 results". */
   meta: string | null;
+  /** Longer, for the tooltip and screen readers: "6 results from 2 searches, 1.8 s". */
+  detail: string | null;
   since: number | null;
 }
 
@@ -325,7 +328,7 @@ function timeWords(ms: number | null): string | null {
 
 function joinMeta(...parts: Array<string | null | undefined>): string | null {
   const kept = parts.filter((part): part is string => typeof part === 'string' && part !== '');
-  return kept.length > 0 ? kept.join(' · ') : null;
+  return kept.length > 0 ? kept.join(', ') : null;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -658,6 +661,7 @@ function notesRegion(ctx: Context, rows: readonly PipelineEvent[]): RegionBuild 
   }
   let { status, word } = liveStatus(run, ctx);
   let meta: string | null = null;
+  let detail: string | null = null;
   if (run.status === 'none') {
     if (menu) word = 'Not needed';
   } else if (status === 'working') {
@@ -671,7 +675,8 @@ function notesRegion(ctx: Context, rows: readonly PipelineEvent[]): RegionBuild 
     word = 'Off';
     meta = 'Saved notes are off.';
   } else {
-    meta = joinMeta(total === 0 ? 'No saved note matched' : formatCount(total, 'saved note'), timeWords(run.ms));
+    meta = total === 0 ? 'No saved note matched' : formatCount(total, 'saved note');
+    detail = joinMeta(meta, timeWords(run.ms));
   }
   const tool = 'Moss';
   const hub: HubNode = {
@@ -683,10 +688,11 @@ function notesRegion(ctx: Context, rows: readonly PipelineEvent[]): RegionBuild 
     title: JOB_TITLES.notes,
     tool,
     meta,
+    detail: detail ?? meta,
     since: status === 'working' ? run.from : null,
     status,
     word,
-    ariaLabel: aria(JOB_TITLES.notes, tool, word, meta),
+    ariaLabel: aria(JOB_TITLES.notes, tool, word, detail ?? meta),
     enterFrom: null,
     enterOrder: 0,
   };
@@ -738,6 +744,7 @@ function webRegion(ctx: Context, search: readonly PipelineEvent[], index: readon
   }
   let { status, word } = liveStatus(run, ctx);
   let meta: string | null = null;
+  let detail: string | null = null;
   if (run.status === 'none') {
     if (menu) word = 'Not needed';
   } else if (switchedOff && okCount === 0 && run.status !== 'working') {
@@ -756,8 +763,8 @@ function webRegion(ctx: Context, search: readonly PipelineEvent[], index: readon
     word = 'Not needed';
     meta = skipReason ? sentence(skipReason) : 'No outside facts were needed.';
   } else {
-    const counts = total === 0 ? 'No results' : formatCount(total, 'result');
-    meta = joinMeta(searches > 1 ? `${counts} from ${searches} searches` : counts, timeWords(run.ms));
+    meta = total === 0 ? 'No results' : formatCount(total, 'result');
+    detail = joinMeta(searches > 1 ? `${meta} from ${searches} searches` : meta, timeWords(run.ms));
   }
   const tool = index.length > 0 ? 'Apify and Moss' : 'Apify';
   const hub: HubNode = {
@@ -769,10 +776,11 @@ function webRegion(ctx: Context, search: readonly PipelineEvent[], index: readon
     title: JOB_TITLES.web,
     tool,
     meta,
+    detail: detail ?? meta,
     since: status === 'working' ? run.from : null,
     status,
     word,
-    ariaLabel: aria(JOB_TITLES.web, tool, word, meta),
+    ariaLabel: aria(JOB_TITLES.web, tool, word, detail ?? meta),
     enterFrom: null,
     enterOrder: 0,
   };
@@ -832,6 +840,7 @@ function draftHub(ctx: Context, round: Round, optionCount: number, menu: boolean
   const title = followUp ? 'Drafting follow-up options' : JOB_TITLES.draft;
   let { status, word } = liveStatus(run, ctx);
   let meta: string | null = null;
+  let detail: string | null = null;
   if (run.status === 'none') {
     if (optionCount > 0) {
       word = menu ? 'Not needed' : TREE_STATUS_WORDS.idle;
@@ -847,7 +856,8 @@ function draftHub(ctx: Context, round: Round, optionCount: number, menu: boolean
     const ok = [...round.plan].reverse().find((event) => event.status === 'ok') ?? null;
     const reported = ok ? num(loose(ok.detail).optionCount) : null;
     const count = reported ?? optionCount;
-    meta = joinMeta(formatCount(count, followUp ? 'follow-up option' : 'option'), timeWords(run.ms));
+    meta = formatCount(count, followUp ? 'follow-up option' : 'option');
+    detail = joinMeta(meta, timeWords(run.ms));
   }
   return {
     kind: 'hub',
@@ -858,10 +868,11 @@ function draftHub(ctx: Context, round: Round, optionCount: number, menu: boolean
     title,
     tool,
     meta,
+    detail: detail ?? meta,
     since: status === 'working' ? run.from : null,
     status,
     word,
-    ariaLabel: aria(title, tool, word, meta),
+    ariaLabel: aria(title, tool, word, detail ?? meta),
     enterFrom: null,
     enterOrder: 0,
   };
@@ -1128,6 +1139,7 @@ function idleTree(): ReplyTree {
     title: JOB_TITLES[region],
     tool: region === 'notes' ? 'Moss' : 'Apify',
     meta: null,
+    detail: null,
     since: null,
     status: 'idle',
     word: TREE_STATUS_WORDS.idle,
@@ -1144,6 +1156,7 @@ function idleTree(): ReplyTree {
     title: JOB_TITLES.draft,
     tool: null,
     meta: null,
+    detail: null,
     since: null,
     status: 'idle',
     word: TREE_STATUS_WORDS.idle,
