@@ -458,7 +458,8 @@ cmd_up() {
     echo "  health  $health_url"
     echo "  log     $log"
     echo "  stop    $0 --db $db stop"
-    echo "Next: pair the station, speaker and partner phone, then check: scripts/demo-owner.mjs --db $db state"
+    echo "Next: pair the station, speaker and partner phone (approve each code: node scripts/demo-owner.mjs --db $db approve <code>),"
+    echo "      then check: node scripts/demo-owner.mjs --db $db state   (docs/demo-runbook.md)"
 }
 
 case "$command" in
