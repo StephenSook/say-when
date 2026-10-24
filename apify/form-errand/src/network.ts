@@ -88,12 +88,22 @@ export class NetworkGuard {
     private violated = false;
     private readonly hosts = new Set<string>();
     private readonly addressChecks: Array<Promise<void>> = [];
+    private frozen = false;
 
     constructor(private readonly policy: HostPolicy) {}
 
+    /** While frozen, every new request is aborted, so nothing can load between a check and a screenshot. */
+    freeze(): void {
+        this.frozen = true;
+    }
+
+    thaw(): void {
+        this.frozen = false;
+    }
+
     async attach(context: BrowserContext): Promise<void> {
         await context.route('**/*', async (route) => {
-            if (await this.policy.allowed(route.request().url())) await route.continue();
+            if (!this.frozen && (await this.policy.allowed(route.request().url()))) await route.continue();
             else await route.abort('blockedbyclient');
         });
         // Forms do not need WebSockets, and page.route does not see them.

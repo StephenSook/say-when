@@ -227,9 +227,12 @@ export async function runErrand(input: ErrandInput, deps: ErrandDeps): Promise<E
         result.timings.fillMs = Date.now() - fillStart;
 
         const shoot = async (phase: 'PREVIEW' | 'CONFIRMATION'): Promise<void> => {
-            // Never capture a page that has reached a private address.
+            // Freeze the network so nothing loads between the check and the capture, then check again
+            // after capturing and discard the image if anything private was reached in between.
+            guard.freeze();
             if (!(await guard.clean(page))) return;
             const jpeg = await page.screenshot({ type: 'jpeg', quality: 70, fullPage: true });
+            if (!(await guard.clean(page))) return;
             const key = `SCREENSHOT-${phase}-${result.previewDigest ?? 'none'}`;
             result.screenshotKey = key;
             result.screenshotUrl = await deps.screenshots.save(key, jpeg).catch(() => null);
@@ -263,6 +266,8 @@ export async function runErrand(input: ErrandInput, deps: ErrandDeps): Promise<E
 
         const submitStart = Date.now();
         const before = new Set(await pageLines(page));
+        // Sending needs the network for the POST and the confirmation page; the guard still applies.
+        guard.thaw();
         let clicked = false;
         try {
             clicked = await clickSubmit(page, input.submitButtonText);
