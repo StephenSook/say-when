@@ -244,7 +244,8 @@ describe('searchPlaces', () => {
         );
         assert.equal(url.searchParams.get('timeout'), '120');
         assert.equal(url.searchParams.get('memory'), '4096');
-        assert.equal(url.searchParams.get('maxTotalChargeUsd'), '0.25');
+        // Apify's minimum: a cap of 0.25 came back HTTP 400 max-total-charge-usd-below-minimum in the Oct 24 live test.
+        assert.equal(url.searchParams.get('maxTotalChargeUsd'), '0.5');
         assert.deepEqual(url.searchParams.get('fields')?.split(','), [
             'title', 'address', 'location', 'totalScore', 'reviewsCount', 'wasOpenAtScrapeTime', 'permanentlyClosed',
             'temporarilyClosed', 'categoryName', 'phone', 'url', 'placeId', 'scrapedAt', 'additionalInfo',
@@ -400,8 +401,21 @@ describe('searchPlaces', () => {
         await assert.rejects(searchPlaces('lunch', { config, fetch, timeoutSecs: 300 }), RangeError);
         await assert.rejects(searchPlaces('lunch', { config, fetch, memoryMbytes: 3000 }), RangeError);
         await assert.rejects(searchPlaces('lunch', { config, fetch, maxChargeUsd: 0 }), RangeError);
+        // Under Apify's $0.50 minimum: refused here, before a request Apify would answer with HTTP 400.
+        await assert.rejects(searchPlaces('lunch', { config, fetch, maxChargeUsd: 0.25 }), /at least 0\.50/);
+        await assert.rejects(searchPlaces('lunch', { config, fetch, maxChargeUsd: 0.49 }), RangeError);
         await assert.rejects(searchPlaces('lunch', { config, fetch, maxChargeUsd: 50 }), RangeError);
         await assert.rejects(searchPlaces('lunch', { config, fetch, near: { lat: 200, lng: 0 } }), RangeError);
         assert.equal(calls.length, 0);
+    });
+
+    it('sends a charge cap the caller sets, from the $0.50 minimum up to 5', async () => {
+        const { fetch, calls } = fakeFetch(json([], 201), json([], 201));
+        await searchPlaces('lunch', { config, fetch, maxChargeUsd: 0.5 });
+        await searchPlaces('lunch', { config, fetch, maxChargeUsd: 5 });
+        assert.deepEqual(
+            calls.map((call) => new URL(call.url).searchParams.get('maxTotalChargeUsd')),
+            ['0.5', '5'],
+        );
     });
 });
