@@ -17,7 +17,7 @@ npm run bindings    # after every spacetime generate: copies spacetime/bindings/
 npm run cartesia    # after any change in cartesia/src: copies the browser code into lib/cartesia
 ```
 
-Routes: `/live`, `/agents`, `/conversation` (also `/`), and `/partner` for the phone. Keys 1, 2 and 3 switch the dashboard screens.
+Routes: `/live`, `/agents`, `/conversation` (also `/`), `/replies` (Suggested replies, the tree of saved notes, web and drafting that grows from the pipeline rows), and `/partner` for the phone. Keys 1, 2, 3 and 5 switch the dashboard screens (4 is reserved for `/brain`).
 
 ### Against the live database
 
@@ -91,6 +91,7 @@ Each screen has its own file pair. Change only yours; everything else is shared.
 | Live data | `components/screens/LiveData.tsx`, `LiveData.module.css` | docs/ui.md Screen 1, docs/mockups/live.html |
 | Agents | `components/screens/Agents.tsx`, `Agents.module.css` | docs/ui.md Screen 2, docs/mockups/agents.html |
 | Conversation | `components/screens/Conversation.tsx`, `Conversation.module.css` | docs/ui.md Screen 3, docs/mockups/conversation.html |
+| Suggested replies | `components/screens/Replies.tsx`, `components/replies/`, `lib/tree/` (model, layout, camera) | PLAN.md 5.10; tests in `test/reply-tree.test.ts` |
 | Partner phone | `components/screens/Partner.tsx`, `Partner.module.css` | docs/ui.md Screen 4, docs/mockups/partner.html |
 
 The dashboard screens render inside the shell's `<main>` behind `ConnectionGate`, so rows exist when they render; do not render another `<main>`. The phone view has no header and no gate: it draws its own top row and handles loading and offline itself.
