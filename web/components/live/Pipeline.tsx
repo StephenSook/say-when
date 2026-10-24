@@ -23,7 +23,7 @@ export function Pipeline({ cards }: { cards: readonly StageCard[] }) {
             <div className={styles.top}>
               {/* The visible time line carries the word, so the mark's own word is not read twice. */}
               <span aria-hidden="true" className={styles.mark}>
-                <StatusMark status={card.status} showWord={false} word={card.word} />
+                <StatusMark status={card.status} showWord={false} word={card.word} pick={card.stage === 'select'} />
               </span>
               <span className={styles.name}>{card.name}</span>
             </div>

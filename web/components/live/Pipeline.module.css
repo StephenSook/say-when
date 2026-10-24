@@ -185,6 +185,12 @@
   .name {
     font-size: clamp(15px, 1.4vw, var(--text-title));
   }
+
+  /* The cards are narrow here and the body is 18 px, so a payload gets a fourth line before it is cut. */
+  .payload {
+    -webkit-line-clamp: 4;
+    line-clamp: 4;
+  }
 }
 
 /* Under 1100 px: top to bottom, the counts on the links (docs/ui.md). */

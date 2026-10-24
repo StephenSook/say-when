@@ -5,13 +5,14 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { classifyQuestion, FormErrandClient, loadConfig as loadApifyConfig, searchPlaces, searchWeb, type ApifyConfig, type FetchLike } from '@say-when/apify-client';
 import { CallConfigError, dialerFromEnv, loadCallLists, type CallSnapshot } from '@say-when/cartesia/server';
-import { MemoryStore, MossRun, rankOptions, WebIndex } from '@say-when/moss';
+import { MemoryStore, MossRun, rankOptions, WebIndex, type MemoryItem } from '@say-when/moss';
 
 import type { AgentConfig } from './config.js';
 import { loadForms } from './forms.js';
 import type { Logger } from './log.js';
 import { ClaudePlanner } from './planner/claude.js';
 import type { DialerPort, ErrandPort, MemoryPort, SearchPort, WebIndexPort } from './ports.js';
+import { SAMPLE_NOTES } from './sandbox.js';
 import { errorTag, StartupError } from './startup.js';
 import type { AllowedForm, CallContact } from './types.js';
 
@@ -40,7 +41,21 @@ export function searchPort(config: ApifyConfig, timeoutMs: number, fetchFn?: Fet
     };
 }
 
-function memoryPort(run: MossRun, store: MemoryStore, reopen: boolean, log: Logger): MemoryPort {
+/**
+ * Adds the sandbox's sample notes (src/sandbox.ts) to an open Moss run. Ids come from the text, so adding them again
+ * after a reopen updates the same documents. A failure only means the try runs without them.
+ */
+export async function seedNotes(store: Pick<MemoryStore, 'add'>, notes: readonly MemoryItem[], log: Logger): Promise<void> {
+    if (notes.length === 0) return;
+    try {
+        const { added, updated } = await store.add(notes);
+        log.info('sample notes are in memory', { added, updated });
+    } catch (error) {
+        log.warn('the sample notes could not be added; the try runs without them', { code: (error as { code?: string }).code ?? 'error' });
+    }
+}
+
+function memoryPort(run: MossRun, store: MemoryStore, reopen: boolean, log: Logger, notes: readonly MemoryItem[]): MemoryPort {
     let reopening = false;
     return {
         isOpen() {
@@ -49,7 +64,10 @@ function memoryPort(run: MossRun, store: MemoryStore, reopen: boolean, log: Logg
                 log.info('reopening Moss after its idle close');
                 run.start()
                     .then(
-                        () => log.info('Moss is open again'),
+                        () => {
+                            log.info('Moss is open again');
+                            return seedNotes(store, notes, log);
+                        },
                         (error: unknown) => log.warn('Moss could not reopen', { code: (error as { code?: string }).code ?? 'error' }),
                     )
                     .finally(() => (reopening = false));
@@ -89,11 +107,13 @@ export async function wire(config: AgentConfig, env: Readonly<Record<string, str
         moss = new MossRun({ env });
         const store = new MemoryStore(moss);
         const index = new WebIndex(moss);
-        memory = memoryPort(moss, store, config.moss.reopen, log);
+        const notes = config.sandbox ? SAMPLE_NOTES : [];
+        memory = memoryPort(moss, store, config.moss.reopen, log, notes);
         web = index;
         try {
             const started = await moss.start();
             log.info('Moss is open', { restored: started.restored, firstRun: started.firstRun, ms: Math.round(started.openMs) });
+            await seedNotes(store, notes, log);
         } catch (error) {
             log.warn('Moss did not open; questions run without memory', { code: (error as { code?: string }).code ?? 'error' });
         }

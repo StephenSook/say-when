@@ -53,6 +53,16 @@
   color: var(--accent);
 }
 
+/* The person's pick: the same check in green, the one color every screen gives a pick. */
+.pick .mark {
+  background: var(--pick-soft);
+  color: var(--pick);
+}
+
+.pick .word {
+  color: var(--pick);
+}
+
 /* Refused and Stopped are on purpose and safe: muted, never red. */
 .refused .mark,
 .stopped .mark {

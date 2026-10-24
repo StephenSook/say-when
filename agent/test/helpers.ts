@@ -10,7 +10,7 @@ import { MemoryDb } from '../src/db/memory-db.js';
 import { ErrandRunner } from '../src/errands.js';
 import { ConversationLog, PreviewBook, type JobDeps } from '../src/jobs.js';
 import { recordingLogger, type RecordingLogger } from '../src/log.js';
-import { Orchestrator } from '../src/orchestrator.js';
+import { Orchestrator, type OrchestratorOptions } from '../src/orchestrator.js';
 import { ClaudePlanner, type MessagesApi } from '../src/planner/claude.js';
 import type { PlanReply } from '../src/planner/schema.js';
 import type { CallHandleLike, DialerPort, ErrandPort, MemoryPort, SearchPort, WebIndexPort } from '../src/ports.js';
@@ -507,6 +507,8 @@ export interface HarnessOptions {
     yesNoFast?: boolean;
     /** Draft first (JobDeps.draftFirst). Off by default here, like the fast path. */
     draftFirst?: boolean;
+    /** The judge try sandbox's admission check (src/sandbox.ts); none by default. */
+    admit?: OrchestratorOptions['admit'];
 }
 
 export function harness(options: HarnessOptions = {}): Harness {
@@ -564,7 +566,11 @@ export function harness(options: HarnessOptions = {}): Harness {
         ...(options.clockSkewMs !== undefined ? { clockSkewMs: options.clockSkewMs } : {}),
     });
     const errandRunner = new ErrandRunner({ db, errands: deps.errands, previews, log, clock, retryMs: 5 });
-    const orchestrator = new Orchestrator(deps, { errands: errandRunner, calls: callRunner }, { maxJobs: 3, abortGraceMs: options.abortGraceMs ?? 5_000 });
+    const orchestrator = new Orchestrator(
+        deps,
+        { errands: errandRunner, calls: callRunner },
+        { maxJobs: 3, abortGraceMs: options.abortGraceMs ?? 5_000, ...(options.admit ? { admit: options.admit } : {}) },
+    );
     return { db, api, planner, search, memory, web, errands, dialer, log, trace, deps, orchestrator, errandRunner, callRunner };
 }
 

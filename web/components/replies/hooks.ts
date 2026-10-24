@@ -21,9 +21,12 @@ export function useFrameValue<T>(value: T): T {
       setShown(latest.current);
     });
   }, [value]);
+  // Clearing the handle matters: React's dev double mount runs this cleanup and then the effect above again, and
+  // a cancelled handle left in place would make that effect wait forever (the screen froze on its first frame).
   useEffect(
     () => () => {
       if (pending.current !== null) cancelAnimationFrame(pending.current);
+      pending.current = null;
     },
     [],
   );

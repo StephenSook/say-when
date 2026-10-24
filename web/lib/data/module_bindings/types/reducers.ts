@@ -37,6 +37,7 @@ import RequestPairingReducer from "../request_pairing_reducer";
 import RevokeConsentReducer from "../revoke_consent_reducer";
 import RevokeDeviceReducer from "../revoke_device_reducer";
 import SetBoardSharingReducer from "../set_board_sharing_reducer";
+import SetSandboxReducer from "../set_sandbox_reducer";
 import SetTimingReducer from "../set_timing_reducer";
 import StartSessionReducer from "../start_session_reducer";
 
@@ -71,6 +72,7 @@ export type RequestPairingParams = __Infer<typeof RequestPairingReducer>;
 export type RevokeConsentParams = __Infer<typeof RevokeConsentReducer>;
 export type RevokeDeviceParams = __Infer<typeof RevokeDeviceReducer>;
 export type SetBoardSharingParams = __Infer<typeof SetBoardSharingReducer>;
+export type SetSandboxParams = __Infer<typeof SetSandboxReducer>;
 export type SetTimingParams = __Infer<typeof SetTimingReducer>;
 export type StartSessionParams = __Infer<typeof StartSessionReducer>;
 

@@ -31,6 +31,8 @@
   --accent: #c9a0f0; /* now: live, the scan cursor, done */
   --accent-soft: rgba(201, 160, 240, 0.16);
   --accent-line: rgba(201, 160, 240, 0.45);
+  --pick: #7be3a6; /* ours: the person's pick, green on every screen (Suggested replies set it first) */
+  --pick-soft: rgba(123, 227, 166, 0.14);
   --wait: #f2c46d; /* ours: waiting for the person's confirm */
   --wait-soft: rgba(242, 196, 109, 0.14);
   --error: #d98a8a; /* failed, offline, paused, headset off */
@@ -97,6 +99,28 @@
   :root {
     --text-lead: 22px;
     --text-hero: 28px;
+  }
+}
+
+/*
+ * Ours: the dashboards are read off a projector or a laptop across the judging table, so from
+ * 1024 px the small sizes grow (meta 16, body 18), and from 1680 px (a 1080p projector) everything
+ * but the options grows again and the page gets wider, so a 1920 screen is not two empty margins.
+ */
+@media (min-width: 1024px) {
+  :root {
+    --text-meta: 16px;
+    --text: 18px;
+  }
+}
+
+@media (min-width: 1680px) {
+  :root {
+    --text-meta: 18px;
+    --text: 20px;
+    --text-title: 24px;
+    --text-lead: 34px;
+    --page-max: 1680px;
   }
 }
 

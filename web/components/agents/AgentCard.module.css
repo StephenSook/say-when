@@ -64,10 +64,6 @@
   line-height: var(--leading);
 }
 
-.digest {
-  font-family: var(--font-mono);
-}
-
 /* The values read back off the page: label left, value right; stacked on a phone. */
 .values {
   display: grid;
