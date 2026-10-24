@@ -19,6 +19,8 @@ export type YesNoReason =
     | 'choice'
     | 'list'
     | 'wh_word'
+    | 'knowledge'
+    | 'open_ended'
     | 'errand_verb'
     | 'request'
     | 'statement'
@@ -64,8 +66,12 @@ const REQUEST_SAFE: readonly string[] = ['hear', 'see', 'feel', 'like', 'want', 
 const OFFER_WANT = /\b(?:want|wants|like|need|needs)(?: (?:me|us|him|her|them|someone|somebody))? to ([a-z]+)/;
 const OFFER_SELF = /^(?:should|shall|can|could|may|will) (?:i|we) ([a-z]+)/;
 const OFFER_SAFE: readonly string[] = [...REQUEST_SAFE, 'go', 'sit', 'rest', 'stay', 'wait', 'talk', 'listen', 'watch', 'read', 'walk', 'stand', 'lie', 'try', 'play'];
-/** A wh-question, also an embedded one ("Do you know where it is?"). */
-const WH_WORD = /\b(what|whats|when|where|which|who|whom|whose|why|how|whether)\b/;
+/** A wh-question, also an embedded one ("Do you know where it is?", "Do you know if it is open?"). */
+const WH_WORD = /\b(what|whats|when|where|which|who|whom|whose|why|how|whether|if)\b/;
+/** A question about what the person knows ("Do you know the doctor's name?"): it asks for the content, not a yes. */
+const KNOWLEDGE = /\b(know|knows|knew|remember|remembers|remembered|recall|recalls|recalled)\b/;
+/** A need left open ("Do you need anything?"): the planner can offer what it could be, errands included. */
+const OPEN_ENDED = /\b(anything|something|someone|somebody|anyone|anybody)\b/;
 /** A sentence break followed by more words: two questions, or a question and a statement. */
 const SENTENCE_BREAK = /[.?!;]\s+\S/;
 
@@ -90,6 +96,8 @@ export function classifyYesNo(question: string): YesNoVerdict {
     if (CHOICE.test(body)) return { yesNo: false, reason: 'choice' };
     if (LIST.test(body)) return { yesNo: false, reason: 'list' };
     if (WH_WORD.test(body)) return { yesNo: false, reason: 'wh_word' };
+    if (KNOWLEDGE.test(body)) return { yesNo: false, reason: 'knowledge' };
+    if (OPEN_ENDED.test(body)) return { yesNo: false, reason: 'open_ended' };
     if (ERRAND_VERB.test(body)) return { yesNo: false, reason: 'errand_verb' };
     if (REQUEST_START.test(body)) {
         const verb = /^[a-z]+ you ([a-z]+)/.exec(body)?.[1] ?? '';
