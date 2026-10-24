@@ -1,0 +1,103 @@
+/*
+ * Screen 2, Suggested replies. A compact title row, then the canvas from edge to edge of the window: on a
+ * projector every pixel of width goes to the tree. The tree's own styles are in components/replies.
+ */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+
+/* Wide screens: cancel the page's bottom padding, so the canvas ends at the window's edge and nothing scrolls. */
+.wide {
+  margin-bottom: calc(-1 * var(--s12));
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s6);
+  flex-wrap: wrap;
+}
+
+.titles {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2) var(--s6);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.title {
+  font-size: var(--text-lead);
+  line-height: var(--leading-tight);
+}
+
+.subtitle {
+  color: var(--fg-muted);
+  font-size: var(--text-title);
+}
+
+/* Always on screen: the way out of the list. Lit when STOP ended the turn. */
+.stop {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  min-height: 40px;
+  padding: 0 var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--control-bg);
+  font-size: var(--text-title);
+  white-space: nowrap;
+}
+
+.stopMark {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--fg-muted);
+  border-radius: 50%;
+  color: var(--fg-muted);
+}
+
+.stopUsed {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.stopUsed .stopMark {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.stopDetail {
+  color: var(--fg-muted);
+}
+
+/* Full bleed: out of the page's 1440 px column to the window's edges. */
+.canvas {
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
+  height: calc(100vh - 220px);
+  min-height: 360px;
+  border-top: 1px solid var(--divider);
+}
+
+@media (max-width: 720px) {
+  .head {
+    align-items: flex-start;
+  }
+
+  .subtitle {
+    font-size: var(--text);
+  }
+
+  .stop {
+    white-space: normal;
+    font-size: var(--text);
+  }
+}
