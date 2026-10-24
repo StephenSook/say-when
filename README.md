@@ -8,6 +8,8 @@ Anything that leaves the room, like sending a form or placing a phone call, is r
 
 Built at Cal Hacks 13, October 23 to 25, 2026.
 
+Live dashboards: [neurolingo-web.vercel.app](https://neurolingo-web.vercel.app) (Live data, Agents, Conversation and the partner phone, reading the demo database `say-when-demo`; empty until the demo session runs).
+
 ## How it works
 
 1. **Listen.** The partner's question becomes text (Cartesia Ink-2).
