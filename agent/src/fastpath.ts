@@ -26,6 +26,8 @@ export type YesNoReason =
     | 'request'
     | 'main_verb'
     | 'long'
+    | 'vocabulary'
+    | 'second_verb'
     | 'statement'
     | 'several_sentences';
 
@@ -47,7 +49,7 @@ const CHOICE = /\b(or|either|versus|vs|between|rather|choose|chooses|chose|chose
  * A list of alternatives: "mild/moderate/severe", "tea, coffee, juice", "tea & toast". Any comma, slash or ampersand
  * counts (also a comma that only names someone, "Are you okay, Sam?"): the planner can still answer yes or no.
  */
-const LIST = /[,/&]/;
+const LIST = /[,/&\-\u2010-\u2015]/;
 /**
  * Anything the planner could turn into an errand or a call option ("Can you send the care team a request?", "Do you
  * want to submit a care team request?", "Should I get the nurse?"). A stock Yes would only say "Yes." and do nothing,
@@ -107,6 +109,45 @@ const GERUND_SAFE: readonly string[] = ['feeling', 'coming', 'going', 'sleeping'
 const PARTICIPLE_SAFE: readonly string[] = ['eaten', 'slept', 'heard', 'seen', 'felt', 'been', 'had', 'rested', 'drunk', 'tried', 'enjoyed', 'liked', 'understood', 'come', 'gone', 'walked', 'met'];
 
 /**
+ * The closed list of words a fast question may use, and nothing else: the auxiliaries, pronouns and small function
+ * words, the plain verbs above, and words for how the person feels and what is around them. Any other word sends the
+ * question to the planner ("Can you come help me?"), which can still answer yes or no. After is, are, was and were a
+ * name is allowed too (a capitalized word that is not the first: "Is Sam here?", "Is the Berkeley Public Library
+ * open on Sunday?").
+ */
+const FUNCTION_WORDS = [
+    'i', 'you', 'we', 'it', 'he', 'she', 'they', 'me', 'us', 'him', 'her', 'them', 'my', 'your', 'our', 'his', 'its', 'their',
+    'this', 'that', 'these', 'those', 'the', 'a', 'an', 'some', 'any', 'more', 'less', 'much', 'too', 'very', 'so', 'still',
+    'yet', 'now', 'today', 'tonight', 'tomorrow', 'later', 'soon', 'again', 'already', 'here', 'there', 'outside', 'inside',
+    'home', 'well', 'really', 'enough', 'all', 'not', 'to', 'on', 'in', 'at', 'with', 'for', 'of', 'from', 'by', 'near',
+    'before', 'last', 'morning', 'afternoon', 'evening', 'night', 'minute', 'minutes', 'hour', 'week', 'day', 'right',
+];
+const STATE_WORDS = [
+    'tired', 'hungry', 'thirsty', 'cold', 'hot', 'warm', 'cool', 'okay', 'ok', 'alright', 'comfortable', 'uncomfortable',
+    'ready', 'sure', 'done', 'open', 'closed', 'happy', 'sad', 'sick', 'awake', 'asleep', 'fine', 'good', 'bad', 'better',
+    'worse', 'full', 'wet', 'dry', 'scared', 'afraid', 'bored', 'finished', 'busy', 'free', 'sleepy', 'nervous', 'worried',
+    'excited', 'safe', 'quiet', 'loud', 'bright', 'dark', 'fun', 'nice', 'late', 'early', 'able', 'in', 'pain',
+];
+const THING_WORDS = [
+    'water', 'tea', 'coffee', 'juice', 'milk', 'food', 'lunch', 'dinner', 'breakfast', 'snack', 'soup', 'music', 'tv',
+    'light', 'lights', 'window', 'blanket', 'pillow', 'chair', 'bed', 'room', 'medicine', 'pills', 'nap', 'break', 'bath',
+    'shower', 'head', 'arm', 'leg', 'legs', 'foot', 'feet', 'stomach', 'chest', 'eyes', 'glasses', 'screen', 'pharmacy',
+    'store', 'library', 'cafe', 'park', 'clinic', 'hospital', 'office', 'door', 'car', 'bus', 'shop', 'market',
+];
+const VOCABULARY: ReadonlySet<string> = new Set([
+    ...AUXILIARIES,
+    ...FUNCTION_WORDS,
+    ...STATE_WORDS,
+    ...THING_WORDS,
+    ...MAIN_SAFE,
+    ...GERUND_SAFE,
+    ...PARTICIPLE_SAFE,
+]);
+/** The plain verbs: after the main verb one may follow only right after "to" ("want to go", never "come read"). */
+const VERBS: ReadonlySet<string> = new Set(MAIN_SAFE);
+const NAME = /^[A-Z][a-z]*(?:'s)?$/;
+
+/**
  * True only for a question that begins with an auxiliary verb, offers no choice ("or", "between", "pick") and no list,
  * has no wh-word, asks nothing about what the person knows, leaves no need open, names no errand or call verb ("call",
  * "send", "submit", "get"), asks one thing, asks for no words ("describe", "say"), is not a request or an offer to act
@@ -116,11 +157,11 @@ const PARTICIPLE_SAFE: readonly string[] = ['eaten', 'slept', 'heard', 'seen', '
  * smoke tag.
  */
 export function classifyYesNo(question: string): YesNoVerdict {
-    const text = question
+    const cased = question
         .replace(/[‘’ʼ]/g, "'")
         .replace(/\s+/g, ' ')
-        .trim()
-        .toLowerCase();
+        .trim();
+    const text = cased.toLowerCase();
     if (text === '') return { yesNo: false, reason: 'empty' };
     if (text.includes(SMOKE_TAG)) return { yesNo: true, reason: 'smoke_tag' };
     // Opening quotes or punctuation do not count as the first word.
@@ -167,6 +208,24 @@ export function classifyYesNo(question: string): YesNoVerdict {
     if (HAVE.includes(first)) {
         const participle = PRONOUN_VERB.exec(body)?.[1];
         if (participle === undefined || !PARTICIPLE_SAFE.includes(participle)) return { yesNo: false, reason: 'main_verb' };
+    }
+    // The same words with their case, for names. Lowercasing keeps every length, so the positions match.
+    const casedWords = cased
+        .slice(text.length - body.length)
+        .slice(0, end.length)
+        .replace(/[?]+$/, '')
+        .split(' ')
+        .filter((word) => word !== '');
+    const mainVerbAt = DO_OR_MODAL.includes(first) || HAVE.includes(first) ? 2 : -1;
+    for (let i = 0; i < words.length; i++) {
+        const word = words[i] ?? '';
+        if (!VOCABULARY.has(word)) {
+            // Names only when the cased text lines up with the lowercased one (some letters change length).
+            const isName = BE.includes(first) && i > 0 && cased.length === text.length && NAME.test(casedWords[i] ?? '');
+            if (!isName) return { yesNo: false, reason: 'vocabulary' };
+            continue;
+        }
+        if (VERBS.has(word) && i !== mainVerbAt && words[i - 1] !== 'to') return { yesNo: false, reason: 'second_verb' };
     }
     return { yesNo: true, reason: 'auxiliary' };
 }

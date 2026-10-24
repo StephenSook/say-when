@@ -59,6 +59,7 @@ const POSITIVES = [
     'Can you see the screen from there?',
     'Are you feeling okay?',
     'Are you coming?',
+    'Is Sam here?',
     // Review round 2: offers to rest, go or sit stay fast.
     'Do you want to go outside?',
     'Would you like to rest now?',
@@ -126,6 +127,15 @@ const NEGATIVES: [string, string][] = [
     ['Is there a name you like for the baby?', 'open_ended'],
     ['Are there any questions?', 'open_ended'],
     ['Are you thinking of a word?', 'main_verb'],
+    // Review round 7 (Codex): a second bare verb ("come help", "come read") and hyphenated alternatives. The fast
+    // path now takes only words from a closed list (plus names after is, are, was, were), and a verb after the
+    // main one only right after "to".
+    ['Can you come help me?', 'vocabulary'],
+    ['Can you come read this?', 'second_verb'],
+    ['Is it okay to come read this?', 'second_verb'],
+    ['Is your pain mild-moderate-severe?', 'list'],
+    ['Can you hear Sam?', 'vocabulary'],
+    ['Is the soup spicy?', 'vocabulary'],
     ['Can you come up with one?', 'main_verb'],
     ['Is the big pharmacy near the old train station still open today?', 'long'],
     // Review round 3 (Codex): a list of alternatives, with commas or slashes, is a choice for the planner.
