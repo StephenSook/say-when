@@ -3,7 +3,7 @@
 > Living status doc for Stephen, Khadim, Shashank and Leon. Update it on every task change and push to `main`. This file is the single source of truth for who is working on what.
 
 **Project:** Screenless reply and errand assistant for people who cannot speak or use their hands, driven by four head-worn switch commands.
-**Team:** Stephen (frontend UI/UX, Apify, Moss, Cartesia), Khadim (frontend UI/UX), Shashank (SpacetimeDB, AI planner, hardware and EEG), Leon (user consult, consent, demo video)
+**Team:** Stephen (all UI/UX, Apify, Moss, Cartesia), Khadim (no rows assigned yet, see Q8), Shashank (SpacetimeDB, AI planner, hardware and EEG), Leon (user consult, consent, demo video)
 **Deadline:** Sunday Oct 25, 8:50 AM PDT submission. Judging 10:30 AM to 12:30 PM.
 **Repo:** https://github.com/StephenSook/say-when
 
@@ -31,12 +31,12 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⛔ blocked
 | 4.2 | Errand wiring: ERRAND, read-back, confirm_errand, submit | `agent/` | Shashank | ⬜ | 1.1, 4.1 | |
 | 4.3 | Care team request form (demo target) | external | Leon | ⬜ | - | Owned by the consenting caregiver |
 | 4.4 | Outbound call agent (Cartesia Managed Agents) | `cartesia/` | Stephen | 🟡 | 1.1, 4.2 | Stephen, since Oct 23 9:30pm PT. Consenting number only. Claude implementing |
-| 5.0 | UI reference: `docs/ui.md` with tokens, wireframes and mockups | `docs/` | Stephen | ✅ | - | Open `docs/mockups/index.html`. Stephen and Khadim build the UI from it |
-| 5.1 | Dashboard shell: Next.js, SpacetimeDB WebSocket subscriptions, layout | `web/` | Khadim | ⬜ | 1.1 | Must work on any laptop with no login. See D7 |
+| 5.0 | UI reference: `docs/ui.md` with tokens, wireframes and mockups | `docs/` | Stephen | ✅ | - | Open `docs/mockups/index.html`. Stephen builds the UI from it |
+| 5.1 | Dashboard shell: Next.js, SpacetimeDB WebSocket subscriptions, layout | `web/` | Stephen | ⬜ | 1.1 | Must work on any laptop with no login. See D7 |
 | 5.2 | Screen 1, Live data: each pipeline stage with its real payload as it flows | `web/` | Stephen | ⬜ | 5.1 | Reads `pipeline_event` |
 | 5.3 | Screen 2, Agents at work: form errand and phone call, step by step | `web/` | Stephen | ⬜ | 5.1, 4.1 | Reads `errand`, `call_request` |
-| 5.4 | Screen 3, Live conversation: question, options, pick, spoken reply | `web/` | Khadim | ⬜ | 5.1 | Reads `option`, command events |
-| 5.5 | Partner phone view | `web/` | Khadim | ⬜ | 5.1 | |
+| 5.4 | Screen 3, Live conversation: question, options, pick, spoken reply | `web/` | Stephen | ⬜ | 5.1 | Reads `option`, command events |
+| 5.5 | Partner phone view | `web/` | Stephen | ⬜ | 5.1 | |
 | 6.1 | Telemetry to Tiger Data (switch timing, latency) | `telemetry/` | Shashank | ⬜ | 2.1 | Telemetry only, no app state |
 | 7.1 | User consult and consent per surface | - | Leon | ⬜ | - | |
 | 7.2 | Demo script and video | `docs/` | Leon | ⬜ | 4.2 | |
@@ -108,9 +108,9 @@ Deterministic Playwright, not an LLM clicking. Preview by default, a form allowl
 
 **Locked Oct 23 by Stephen.**
 
-### D6: Stephen owns Apify, Moss and Cartesia
+### D6: Stephen owns Apify, Moss, Cartesia and all UI/UX
 
-Apify search, the form-errand Actor, Moss retrieval, and every Cartesia piece (Ink-2 speech to text, Sonic earpiece voice, pronunciation dictionary, and the outbound call agent) are Stephen's, alongside frontend work with Khadim. Shashank keeps SpacetimeDB, the headset and decoder, the option planner and Tiger telemetry.
+Apify search, the form-errand Actor, Moss retrieval, and every Cartesia piece (Ink-2 speech to text, Sonic earpiece voice, pronunciation dictionary, and the outbound call agent) are Stephen's, and so is all of the UI/UX (every dashboard screen and the partner phone view). Shashank keeps SpacetimeDB, the headset and decoder, the option planner and Tiger telemetry.
 
 **Locked Oct 23 by Stephen.**
 
@@ -126,9 +126,15 @@ An imagined fist squeeze can become the CALL request only if it passes the 40-tr
 
 **Proposed Oct 23. Needs a C3/C4 headset (Q1).**
 
+### D10: Cartesia uses its own library voices, no cloning, and as many of its features as fit
+
+A steady assistant voice for prompts and read-backs and a warm reply voice for options and spoken replies, both from Cartesia's library. On top: a pronunciation dictionary built from place and household names on every request, an emotion per option, speed set to the person's pace, word timestamps for the on-screen highlight, streaming contexts with cancel, cached stock phrases, Ink-2 with keyterms and turn detection, short-lived access tokens for every browser, and a Managed Agents outbound call. No voice cloning.
+
+**Locked Oct 23 by Stephen.**
+
 ### D7: Three live dashboard screens
 
-All three update over SpacetimeDB subscriptions, so every laptop shows the same thing at the same moment. Stephen and Khadim build the UI themselves. Every page stays very simple: one clear focus per screen, big labels, and nothing a judge has to decode. Style and layout follow `docs/ui.md`.
+All three update over SpacetimeDB subscriptions, so every laptop shows the same thing at the same moment. Stephen builds the UI. Every page stays very simple: one clear focus per screen, big labels, and nothing a judge has to decode. Style and layout follow `docs/ui.md`.
 
 1. **Live data.** The data actually flowing: the partner's words from Ink-2, the Apify rows that came back (with source and fetch time), the Moss hits, the options Claude drafted, the voice clip Sonic played, and how long each step took.
 2. **Agents at work.** The agents doing their jobs: the form-errand Actor's preview screenshot, the values it read back off the page, the digest, the confirm, and the confirmation text after submit. Then the call: who is being called, ringing, connected, the live transcript, and how it ended.
@@ -145,8 +151,9 @@ All three update over SpacetimeDB subscriptions, so every laptop shows the same 
 - [ ] **Q3:** Demo form: a Google Form owned by the caregiver, or our own page on the dashboard domain? Needs Leon and Stephen.
 - [ ] **Q4:** Can the free Cartesia phone number be set up without a card? Needs Shashank.
 - [ ] **Q5:** Who plays the caller's recipient, and is their consent written down? Needs Leon.
-- [ ] **Q6:** Voice-clone moment: the reply spoken in the wearer's own voice (Cartesia Instant Voice Clone, 10 to 60 s of audio). Needs the voice owner's explicit consent recorded first, a private voice, a synthetic-voice label, and likely the $5 Pro plan or the Cal Hacks promo. Needs Stephen to decide.
+- [x] **Q6:** Voice clone? Decided Oct 23 by Stephen: no cloning. See D10.
 - [ ] **Q7:** Pitch opening: lead with ALS and the recent implant stories (implants need brain surgery; Say When uses a headband and the muscles and eyes people keep). Every implant fact must be checked and cited before it goes in the script. Needs Leon and Stephen.
+- [ ] **Q8:** What does Khadim own now that all UI/UX moved to Stephen? Needs Stephen.
 
 ---
 

@@ -1,6 +1,6 @@
 # Say When UI spec
 
-For Stephen and Khadim. How the dashboard and the partner phone view should look and behave. It is modeled on tube's UI and cut down to what we need.
+For Stephen, who builds all of the UI. How the dashboard and the partner phone view should look and behave. It is modeled on tube's UI and cut down to what we need.
 
 **Rule zero:** each screen has one obvious focus, a few big labels, and nothing competing with them. If a screen needs a paragraph to explain itself, cut things from the screen.
 
@@ -338,7 +338,7 @@ Focus: the agent that is working gets the big card. The other agent is one line 
 - Loading: the status line.
 - Error: the failed step in `--error`, then "Nothing was sent." for an errand, or "The call ended: <reason>." for a call.
 
-### Screen 3: Live conversation (PLAN 5.4, Khadim)
+### Screen 3: Live conversation (PLAN 5.4, Stephen)
 
 Purpose: show the conversation itself: the question, each option as it is read, the pick and the spoken reply.
 
@@ -370,7 +370,7 @@ Focus: the option being read right now.
 - Error: "Could not draft options. Ask again." with the failed mark.
 - Paused or headset off: the list drops to 40% opacity and the cursor stops, under the shell banner.
 
-### Screen 4: Partner phone view (PLAN 5.5, Khadim)
+### Screen 4: Partner phone view (PLAN 5.5, Stephen)
 
 Purpose: let the partner ask a question from their phone and see where it is at a glance.
 
@@ -456,13 +456,13 @@ From switch-scanning software for people who cannot speak (TD Snap, Grid 3, Cboa
 
 ## Build order
 
-1. [ ] Khadim (5.1): Next.js app in `web/`, `app/globals.css` with the tokens above, Geist and Geist Mono through `next/font/google`.
-2. [ ] Khadim (5.1): `SpacetimeDBProvider`, the header and tabs, keys 1/2/3, the connection chip, the headset chip and banner.
-3. [ ] Both: the shared parts (TextLink, Row, StepList, Chip, Card, Bar, Spinner, StatusLine, PillInput, Dialog), one CSS Module each.
-4. [ ] Both: until PLAN 1.1 lands, build against a local fixture of rows, as tube does with `npm run dev:fixture`. Keep fixture code out of the deployed build; the judges' URL shows real rows only.
-5. [ ] Khadim (5.4): Live conversation.
+1. [ ] Stephen (5.1): Next.js app in `web/`, `app/globals.css` with the tokens above, Geist and Geist Mono through `next/font/google`.
+2. [ ] Stephen (5.1): `SpacetimeDBProvider`, the header and tabs, keys 1/2/3, the connection chip, the headset chip and banner.
+3. [ ] Stephen: the shared parts (TextLink, Row, StepList, Chip, Card, Bar, Spinner, StatusLine, PillInput, Dialog), one CSS Module each.
+4. [ ] Stephen: until PLAN 1.1 lands, build against a local fixture of rows, as tube does with `npm run dev:fixture`. Keep fixture code out of the deployed build; the judges' URL shows real rows only.
+5. [ ] Stephen (5.4): Live conversation.
 6. [ ] Stephen (5.2): Live data.
 7. [ ] Stephen (5.3): Agents at work.
-8. [ ] Khadim (5.5): Partner phone view.
-9. [ ] Both: every screen's empty, loading, reconnecting, error, paused and headset-off states.
-10. [ ] Both: check at 1440x900 and 390x844, keyboard only, reduced motion on, and on the demo laptop from across the table.
+8. [ ] Stephen (5.5): Partner phone view.
+9. [ ] Stephen: every screen's empty, loading, reconnecting, error, paused and headset-off states.
+10. [ ] Stephen: check at 1440x900 and 390x844, keyboard only, reduced motion on, and on the demo laptop from across the table.
