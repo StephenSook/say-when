@@ -3,7 +3,7 @@
 > Living status doc for Stephen, Khadim, Shashank and Leon. Update it on every task change and push to `main`. This file is the single source of truth for who is working on what.
 
 **Project:** Screenless reply and errand assistant for people who cannot speak or use their hands, driven by four head-worn switch commands.
-**Team:** Stephen (SpacetimeDB, all UI/UX, Apify, Moss, Cartesia), Khadim (no rows assigned yet, see Q8), Shashank (headset and decoder, AI planner, Tiger telemetry), Leon (user consult, consent, demo video)
+**Team:** Stephen (the whole backend: SpacetimeDB, the agent sidecar and Claude planner, errand and call wiring, telemetry; all UI/UX; Apify, Moss, Cartesia), Khadim (no rows assigned yet, see Q8), Shashank (headset, decoder, calibration, brain test), Leon (user consult, consent, demo video)
 **Deadline:** Sunday Oct 25, 8:50 AM PDT submission. Judging 10:30 AM to 12:30 PM.
 **Repo:** https://github.com/StephenSook/say-when
 
@@ -25,10 +25,10 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⛔ blocked
 | 3.1 | Partner speech to text (Cartesia Ink-2) | `cartesia/` | Stephen | ✅ | - | Built and tested offline (117 tests in `cartesia/`). Live smoke test pending |
 | 3.2 | Apify search and scrape client (RAG Web Browser, Google Maps) | `apify/client/` | Stephen | ✅ | - | Built, 166 tests, Codex round 1 fixed (4891a05) |
 | 3.3 | Moss retrieval over Apify results and memory | `moss/` | Stephen | ✅ | 3.2 | Built, 75 tests, six Codex rounds (last two clean). Memory first; text private unless shareable. First real Moss run pending |
-| 3.4 | Option planner (Claude, up to four options) | `agent/` | Shashank | 🟡 | 3.2, 3.3 | Oct 24 12:45am PT: Claude is building a reference sidecar in `agent/` overnight against `docs/spacetime.md`, so the headset work is not blocked on it. Shashank still owns the row and decides whether to use it. Skip the web search when no outside facts are needed (D8) |
+| 3.4 | Option planner (Claude, up to four options) | `agent/` | Stephen | 🟡 | 3.2, 3.3 | Stephen, since Oct 24 12:45am PT (D14). Claude building the sidecar in `agent/` against `docs/spacetime.md`. Skip the web search when no outside facts are needed (D8) |
 | 3.5 | Earpiece voice (Cartesia Sonic, pronunciation dictionary) | `cartesia/` | Stephen | ✅ | 3.4 | Built and tested offline. Nobody has heard Sonic say "NeuroLingo" yet |
 | 4.1 | Form-errand Apify Actor: preview, read back, submit | `apify/form-errand/` | Stephen | ✅ | - | Public on the Apify Store: https://apify.com/stephensookra/confirm-gated-form-errand (build 0.1.3, includes the round 1 fixes). Verified on the platform with 0.1.3: preview, submit, and a repeat submit refused as a duplicate |
-| 4.2 | Errand wiring: errand option or idle menu, read-back, CONFIRM, submit | `agent/` | Shashank | 🟡 | 1.1, 4.1 | Oct 24 12:45am PT: part of the reference sidecar Claude is building (see 3.4). Errands and calls are options, not gestures (D11) |
+| 4.2 | Errand wiring: errand option or idle menu, read-back, CONFIRM, submit | `agent/` | Stephen | 🟡 | 1.1, 4.1 | Stephen, since Oct 24 12:45am PT (D14). Part of the sidecar Claude is building (see 3.4). Errands and calls are options, not gestures (D11) |
 | 4.3 | Care team request form (demo target) | external | Leon | ⬜ | - | Owned by the consenting caregiver |
 | 4.4 | Outbound call agent (Cartesia Managed Agents) | `cartesia/` | Stephen | 🟡 | 1.1, 4.2 | Code built and tested offline. Still needed: create the agent from `cartesia/agent/*.txt`, consent re-confirmed under the NeuroLingo name (D13), one live test call to a consenting number |
 | 5.0 | UI reference: `docs/ui.md` with tokens, wireframes and mockups | `docs/` | Stephen | ✅ | - | Open `docs/mockups/index.html`. Stephen builds the UI from it |
@@ -37,7 +37,7 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⛔ blocked
 | 5.3 | Screen 2, Agents at work: form errand and phone call, step by step | `web/` | Stephen | 🟡 | 5.1, 4.1 | Stephen, since Oct 23 10:20pm PT. Claude building. Reads `errand`, `call_request` |
 | 5.4 | Screen 3, Live conversation: question, options, pick, spoken reply | `web/` | Stephen | 🟡 | 5.1 | Stephen, since Oct 23 10:20pm PT. Claude building. Reads `option`, command events |
 | 5.5 | Partner phone view | `web/` | Stephen | 🟡 | 5.1 | Stephen, since Oct 23 10:20pm PT. Claude building |
-| 6.1 | Telemetry to Tiger Data (switch timing, latency) | `telemetry/` | Shashank | ⬜ | 2.1 | Telemetry only, no app state |
+| 6.1 | Telemetry to Tiger Data (switch timing, latency) | `telemetry/` | Stephen | ⬜ | 2.1 | Backend, so Stephen's (D14); the decoder only calls the writer. Telemetry only, no app state |
 | 7.1 | User consult and consent per surface | - | Leon | ⬜ | - | |
 | 7.2 | Demo script and video | `docs/` | Leon | ⬜ | 4.2 | |
 | 7.3 | Devpost writeup | - | Stephen | ⬜ | 7.2 | |
@@ -159,6 +159,12 @@ SpacetimeDB is the whole live backend, not a store behind an API:
 6. **A public pipeline table drives the live dashboards** on any laptop, and an event table carries chimes and toasts.
 
 **Locked Oct 23 by Stephen. Design detail in `docs/spacetime.md`.**
+
+### D14: Stephen's side owns the whole backend
+
+Stephen (with Claude) builds and runs all of the backend: the SpacetimeDB module, the agent sidecar and the Claude option planner, the errand and call wiring, and the Tiger Data telemetry writer, along with the UI and the Apify, Moss and Cartesia packages. Shashank owns the headset: the reader, the four-command decoder, calibration and the brain test. The decoder talks to the backend only through the SpacetimeDB contract in `docs/spacetime.md`.
+
+**Locked Oct 24 by Stephen.**
 
 ### D13: The product is called NeuroLingo
 
