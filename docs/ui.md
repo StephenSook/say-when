@@ -174,7 +174,7 @@ What we changed, and why:
 - Tube's `--faint` (`#5c5a58`, 2.97:1) is gone. All secondary text uses `--fg-muted` (5.7:1).
 - `--focus` and a real outline are new. Tube's rows hide the outline and show focus as a 5% fill.
 - Geist Mono is new, for digests and ids. Tube has no mono face.
-- One accent, used the way the archive uses lilac: `--accent` means "happening now" (the scan cursor, the running step, Live) and `--error` means "stopped or failed" (PAUSE, HEADSET-OFF, a failed step). NO is a normal command and stays white. The cube's ten track colors in `scene/space.ts` (`#dcf26a`, `#ff9ed2`, `#6ef0ff`, `#8ff5c2`, `#c6b3ff`, `#ffc98a`, `#7cc8ff`, `#f2f58a`, `#ff9a8a`, `#86f7e3`) are left out on purpose.
+- One accent, used the way the archive uses lilac: `--accent` means "happening now" (the scan cursor, the running step, Live) and `--error` means "stopped or failed" (STOP, HEADSET-OFF, a failed step). NO is a normal command and stays white. The cube's ten track colors in `scene/space.ts` (`#dcf26a`, `#ff9ed2`, `#6ef0ff`, `#8ff5c2`, `#c6b3ff`, `#ffc98a`, `#7cc8ff`, `#f2f58a`, `#ff9a8a`, `#86f7e3`) are left out on purpose.
 
 ## Patterns from live dashboards
 
@@ -202,7 +202,7 @@ Use exactly these words everywhere: Live data, Agents, Conversation and the phon
 | Waiting for confirm | read-back done, confirm window open | hourglass, plus a countdown bar | `--wait` |
 | Done | finished with a result | check | `--accent` |
 | Refused | a safety rule said no on purpose (CAPTCHA, login, not opted in) | no-entry sign plus the reason | muted text, not red |
-| Stopped | NO, PAUSE, headset off, or the window ran out; nothing sent | pause or X plus the reason | muted text, not red |
+| Stopped | NO, STOP, headset off, or the window ran out; nothing sent | pause or X plus the reason | muted text, not red |
 | Failed | something broke | X in a circle plus the reason | `--error` |
 
 - `pipeline_event.status`: `started` is Working, `ok` is Done, `error` is Failed.
@@ -239,7 +239,7 @@ Wireframe legend: `[v]` done, `[*]` running, `[ ]` not yet, `[x]` failed, `|` th
 | Reconnecting | not active, rows still shown | spinner, "Reconnecting" | content at 60% opacity, one line: "Showing the last known state" |
 | Offline | not active for 10 s | "Offline" in `--error` | the line becomes "Not connected. Check the network." |
 
-- Headset chip: "Headset on" in `--fg-muted` by default. On a PAUSE or HEADSET_OFF command event it turns `--error` and a full-width banner appears under the header: "Paused. Nothing will be sent." or "Headset off. Nothing will be sent." Both cancel anything pending, so the room must see it.
+- Headset chip: "Headset on" in `--fg-muted` by default. On a STOP or HEADSET_OFF command event it turns `--error` and a full-width banner appears under the header: "Paused. Nothing will be sent." or "Headset off. Nothing will be sent." Both cancel anything pending, so the room must see it.
 - Under 720 px: name and chips on one row, tabs on a second row.
 
 Shared parts. Build each once and use it everywhere:
@@ -306,11 +306,11 @@ Purpose: show the form agent and the call agent doing their jobs step by step, s
 Focus: the agent that is working gets the big card. The other agent is one line at the bottom.
 
 ```
- Form errand  <form name>                                    Waiting for SELECT
+ Form errand  <form name>                                    Waiting for CONFIRM
  +------------------------------+
  |                              |   [v] Preview made                  10:42:05
  |      preview screenshot      |   [v] Read back to the person       10:42:09
- |      (click to enlarge)      |   [*] Waiting for a fresh SELECT
+ |      (click to enlarge)      |   [*] Waiting for a double clench
  |                              |       ==============--------   6 s left
  +------------------------------+   [ ] Sent
  Read back   "<read_back_text>"
@@ -329,12 +329,12 @@ Focus: the agent that is working gets the big card. The other agent is one line 
 
 - Parts: card with the preview screenshot (a click opens the dialog), step list, rows for the transcript, digest in `--font-mono`.
 - Rows: `errand` (`form`, `status`, `preview_digest`, `read_back_text`, `confirmation_text`, `screenshot_url`), `call_request` (`contact`, `script_digest`, `status`), and the command event that released or stopped each one.
-- Errand steps: Preview made (`screenshot_url` set), Read back (`read_back_text` set), Waiting for a fresh SELECT (row awaits confirmation), Sent (`confirmation_text` set). A NO, a timeout, PAUSE or HEADSET-OFF fails the waiting step with "Not sent: <reason>".
+- Errand steps: Preview made (`screenshot_url` set), Read back (`read_back_text` set), Waiting for CONFIRM, a double jaw clench (row awaits confirmation), Sent (`confirmation_text` set). A NO, a timeout, PAUSE or HEADSET-OFF fails the waiting step with "Not sent: <reason>".
 - Call steps: Prepared (`script_digest` set), Ringing, Connected, Ended, from `status`.
 - The countdown bar shows only if the row says when the confirm window closes. That field is not in the draft contract.
 - Show the contact's name only. Never show a phone number on a projected screen. Digest: first 8 characters, the full value in a tooltip.
 - Live: marks update as fields fill in. The screenshot fades in when it loads (tube's archive thumbnails fade in over 250 ms). Transcript lines enter at the bottom (240 ms). The label at top right is always the current state in words.
-- Empty: "No errand or call yet. ERRAND or CALL on the headset prepares one. Nothing is sent without a fresh SELECT."
+- Empty: "No errand or call yet. Errands and calls are offered as options, or from the person's menu. Nothing is sent without a double jaw clench."
 - Loading: the status line.
 - Error: the failed step in `--error`, then "Nothing was sent." for an errand, or "The call ended: <reason>." for a call.
 
@@ -353,17 +353,17 @@ Focus: the option being read right now.
     3   <option text>                                 Errand
     4   <option text>                                 Call
 
-          ( SELECT )    ( NO )    ( ERRAND )    ( CALL )
+          ( YES )    ( NO )    ( CONFIRM )    ( STOP )
 
  Spoken reply   "<reply text>"
 ```
 
-- See `docs/mockups/conversation.html`. Under the current option: "In the earpiece now" with the word being read marked (Cartesia word timestamps), and a time-left bar that starts only after the clip ends, because the confirm window opens after the audio. Below the list: "NO means none of these. Silence means nothing happens." and "Pass 1 of 2". At the bottom: "Said out loud" with the reply, which appears only after SELECT.
+- See `docs/mockups/conversation.html`. Under the current option: "In the earpiece now" with the word being read marked (Cartesia word timestamps), and a time-left bar that starts only after the clip ends, because the confirm window opens after the audio. Below the list: "NO means none of these. Silence means nothing happens." and "Pass 1 of 2". At the bottom: "Said out loud" with the reply, which appears only after YES.
 - Parts: rows at `--text-hero`, chips, the status line.
 - All options are the same size, so nothing jumps. The current one is `--fg`, weight 500, with a 4 px `--accent` bar and `--active` fill. The others are `--fg-muted`. A chip says "Errand" or "Call" when `kind` is not `reply`. Sources stay off this screen; they belong to Live data.
 - Pick: the picked option keeps its bar and gains "Picked" in `--accent`. The cursor stops and the reply line appears.
 - Command strip: four chips at the bottom center, where tube puts its search pill. When a command event arrives, its chip lights for 1.2 s (`--accent` border, `--accent-soft` fill). It is a legend and a live echo of the headset.
-- Rows: `option` for the current `question_id` and latest `version`, in `rank` order. The cursor comes from the scan clock row (name pending) or the latest `speak` row in `pipeline_event`. The pick is the latest SELECT command event. The reply text source is pending.
+- Rows: `option` for the current `question_id` and latest `version`, in `rank` order. The cursor comes from the scan clock row (name pending) or the latest `speak` row in `pipeline_event`. The pick is the latest YES command event. The reply text source is pending.
 - Live: the bar moves to the next option in 160 ms. A new `version` of the options replaces the list with a 150 ms fade (tube re-keys its results body on each search and fades it in).
 - Empty: "Waiting for the partner to ask something." at `--text-lead`.
 - Loading: the status line. While Plan runs: the question, then a spinner and "Drafting options" (tube shows "Searching" while a query runs).
@@ -396,7 +396,7 @@ Focus: one status sentence at the top, then the reply.
 
 - See `docs/mockups/partner.html`. The main action is one large "Hold to ask" button with a live mic level: Cartesia Ink-2 listens only while it is held, which also keeps speech to text from billing silence. Under the status sentence: "Please wait. They are listening to the options." The typed question below is a fallback.
 - Parts: status line (large), step list, pill input.
-- Steps in human words, the way tube names its stages ("Preparing video", "Finding cars and people" in `videos.ts`): Heard you (Listen ok), Looked it up (Search and Retrieve ok), Reading options (Speak started), Picked (SELECT on an option).
+- Steps in human words, the way tube names its stages ("Preparing video", "Finding cars and people" in `videos.ts`): Heard you (Listen ok), Looked it up (Search and Retrieve ok), Reading options (Speak started), Picked (YES on an option).
 - Input: 56 px pill, 16 px text (iOS zooms into inputs under 16 px; tube's pill input is 14 px), "Send" as a text button inside the pill.
 - Rows: `pipeline_event`, `option`, command events. Sending needs a reducer for a typed question, which is not in the draft contracts. Until it exists, ship this view read-only and let the partner ask out loud.
 - Layout: one column, `--gutter` on each side, max width 480 px, centered. No sideways scroll at 390 px. Check it, because tube's `/app` fails this.
@@ -409,12 +409,12 @@ Focus: one status sentence at the top, then the reply.
 
 1. `pipeline_event` has no question id. Add `question_id`, or the UI treats each Listen start as a new question.
 2. The shape of `detail` for each stage. A JSON string per stage is simplest.
-3. The command event table name, and how PAUSE and HEADSET-OFF clear.
+3. The command event table name, and how STOP and HEADSET-OFF clear.
 4. Where the scan cursor lives, so Conversation knows which option is being read.
 5. The values of `errand.status` and `call_request.status`, and whether an errand carries the time its confirm window closes.
 6. Where call transcript lines and the spoken reply text live.
 7. A reducer for a typed question from the phone.
-8. A reason field on errand and call rows, so the screens can tell Refused (a safety rule) from Stopped (NO, PAUSE, headset off, or the window ran out) from Failed.
+8. A reason field on errand and call rows, so the screens can tell Refused (a safety rule) from Stopped (NO, STOP, headset off, or the window ran out) from Failed.
 9. Our own Ringing and Connected call events, since Cartesia's call status has only created, started, completed and failed.
 
 ## Motion
@@ -452,7 +452,7 @@ From switch-scanning software for people who cannot speak (TD Snap, Grid 3, Cboa
 - Never auto-select when time runs out (Apple's single-switch step scanning does; we must not). Silence means no action.
 - Make the cursor impossible to miss and not color-only: a 4 px outline, a background tint, and the words "In the earpiece now".
 - Show ignored signals (repeats inside the refractory time) in the event feed, like Grid 3's switch tester, so the room can see the debounce working.
-- Keep "NO means none of these" on screen. AI-drafted options are a form of partner-assisted scanning, which AAC guides call limiting when there is no way out of the list.
+- Keep "STOP means none of these" on screen. AI-drafted options are a form of partner-assisted scanning, which AAC guides call limiting when there is no way out of the list.
 
 ## Build order
 
