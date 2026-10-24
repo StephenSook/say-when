@@ -58,7 +58,7 @@ Pairing survives a reload. The sidecar's own pairing and the consent rows were d
 **9:15. Set up the station.**
 
 1. Input mode: **Headset** when the decoder shows "Decoder healthy", else **Keyboard test**.
-2. Start audio, wait for "Phrases ready 34 of 34". The first load voices them (about 11 s, about 900 voice credits); a reload plays them from the browser in about 0.2 s and voices nothing (measured Oct 24 on a local build; see "Before the event").
+2. Start audio, wait for "Phrases ready 34 of 34". The first load voices them (about 11 s, about 900 voice credits); a reload plays them from the browser in about 0.2 s and voices nothing (measured Oct 24 on a local build; see "Before the event"). A reload still voices the last question's options again (3 requests in the rehearsal). Use one Chrome profile for the station all day, so its stored phrases stay.
 3. Start session. The label becomes `headset-demo` or `keyboard-test`.
 4. Speaker: Start room voice, then Test voice to set the volume.
 
@@ -85,6 +85,30 @@ Put `/stage` on the projector.
 
 If a question gets no errand option, ask again in plainer words ("Please send the care team a lunch request."). The demo form is the Actor's built-in one and sends nothing anywhere.
 
+### What the rehearsal measured (Oct 24, 4:40 PM, `say-when-dev`)
+
+One voiced run of this script on `say-when-dev`, session 26: keyboard input, made-up content, calls off, the real sidecar started by `scripts/demo-up.sh`, the station, partner and speaker pages in a headless Chromium against a production build. One run each, so treat the numbers as rough; the web search time varies most.
+
+| Step | Measured |
+|---|---|
+| `demo-up.sh pair` (a fresh agent identity, approved by the script) | 6 s |
+| `demo-up.sh up` to connected and paired, then warm | 3 s, then warm 4 to 18 s (the Actor's cold start) |
+| Pair the station, partner and speaker (`demo-owner.mjs approve`) | 1.8 to 2.4 s each |
+| Station ready to start (phrases voiced on a fresh profile) | about 13 s |
+| "Are you tired?" to the first read | 0.6 s (the stock Yes and No; no search, no Claude) |
+| YES to back to idle | 1.7 s (the 1.5 s cancel window, then the room voice) |
+| Open question to the first read | 26.5 s (web search 17.0 s, web index 0.5 s, Claude 5.9 s, voicing 1.6 s) |
+| Lunch request to the first read | 8.0 s (no search; Claude 5.2 s) |
+| YES on the errand to the read-back starting | 7.9 s (the Actor's preview 5.2 s) |
+| CONFIRM to Sent | 4.8 s |
+| Station reload mid-session to running again | 5.6 s, no phrase voiced again |
+| "Same lunch request as last time?" to the first read | 8.2 s; the errand option came from the past request (`provenance memory`, `pastRequests 1`) |
+| Its read-back, then CONFIRM to Sent | 6.0 s after the pick, Sent 4.0 s after CONFIRM |
+| STOP while idle, then YES | paused, then resumed |
+| `/stage`, `/replies`, `/conversation`, `/live`, `/agents`, `/brain` | each Live with no page error, at the start and the end |
+
+The whole run made 52 voice requests (34 stock phrases, the options, the read-backs and the replies). Not run in this rehearsal: the headset decoder, voice asking from a real phone, and a call (calls stayed off; a separate live call test on `say-when-dev` the same afternoon dialed, rang and connected).
+
 ## If something goes wrong
 
 | Problem | What to do |
@@ -98,6 +122,7 @@ If a question gets no errand option, ask again in plainer words ("Please send th
 | Paused by a helper | Only the owner resumes: `spacetime call --no-config --server maincloud say-when-demo operator_resume`. |
 | The scan looks stuck | End session on the station (or `node scripts/demo-owner.mjs --db say-when-demo end-session`), then Start session. |
 | The sidecar misbehaves | `scripts/demo-up.sh --db say-when-demo stop`, then the start command again (about 10 s). |
+| `/live` says "Moss paused: usage limit reached" | Memory is off: answers still come, but "same as last time" cannot. Skip that step. Moss bills open session minutes, and `demo-up.sh` reopens Moss on the next question after a 3-minute idle close (`AGENT_MOSS_REOPEN=on`); never add a card (moss/README.md). |
 | The contact is on hold after a call | Check with the person first, then `cd cartesia && npm run call:clear-hold -- --contact stephen --reason "<why it is safe>"`. |
 
 ## Reset between judges
