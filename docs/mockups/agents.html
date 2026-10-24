@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agents at work, Say When mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500&family=Geist+Mono&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="tokens.css">
+<style>
+  .lede { display: flex; align-items: center; gap: var(--s3); }
+  .agents { margin-top: var(--s8); display: grid; grid-template-columns: 1.15fr 1fr; gap: var(--s6); align-items: start; }
+  .agent-head { display: flex; justify-content: space-between; align-items: baseline; gap: var(--s4); margin-bottom: var(--s4); }
+  .agent-head h2 { margin: 0; font-size: var(--text-title); font-weight: 500; }
+  .state { display: inline-flex; align-items: center; gap: var(--s2); font-size: var(--text-meta); padding: var(--s1) var(--s3); border-radius: var(--radius-pill); }
+  .state.is-wait { color: var(--wait); background: var(--wait-soft); }
+  .state.is-now { color: var(--accent); background: var(--accent-soft); }
+
+  .steps { list-style: none; margin: 0; padding: 0; }
+  .steps > li { display: grid; grid-template-columns: 20px 1fr auto; gap: var(--s3); align-items: start; padding: var(--s2) 0; }
+  .steps .when { font-size: var(--text-meta); color: var(--fg-muted); }
+  .steps .is-todo { color: var(--fg-muted); }
+  .steps .is-wait { color: var(--wait); }
+  .detail { grid-column: 2 / 4; font-size: var(--text-meta); color: var(--fg-muted); }
+  .values { display: grid; grid-template-columns: auto 1fr; gap: var(--s1) var(--s4); margin: var(--s2) 0 0; }
+  .values dt { color: var(--fg-muted); }
+  .values dd { margin: 0; color: var(--fg); }
+  .countdown { grid-column: 2 / 4; display: grid; grid-template-columns: 1fr auto; gap: var(--s3); align-items: center; }
+
+  .preview { margin-top: var(--s4); border-radius: var(--radius-card); background: #f4f4f6; padding: var(--s4); position: relative; }
+  .preview .tag {
+    position: absolute; top: var(--s3); right: var(--s3); font-size: 12px; font-weight: 500;
+    background: var(--bg); color: var(--wait); border-radius: var(--radius-pill); padding: 2px var(--s2);
+  }
+  .preview .f-title { color: #1b1b1f; font-weight: 500; font-size: 18px; margin-bottom: var(--s3); }
+  .preview .f-label { color: #4a4a52; font-size: 12px; margin-top: var(--s2); }
+  .preview .f-box { height: 22px; border: 1px solid #b9b9c2; border-radius: 4px; background: #fff; color: #1b1b1f; font-size: 12px; padding: 2px 6px; }
+
+  .transcript { margin-top: var(--s4); border-top: 1px solid var(--divider); padding-top: var(--s3); }
+  .transcript-head { display: flex; justify-content: space-between; font-size: var(--text-meta); color: var(--fg-muted); }
+  .line { margin: var(--s2) 0; }
+  .line .who { font-size: var(--text-meta); color: var(--fg-muted); display: block; }
+  .line.them { text-align: right; }
+  .muted-card { opacity: 0.55; }
+
+  @media (max-width: 1000px) { .agents { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header class="shell-header">
+  <span class="brand">Say When</span>
+  <nav class="tabs" aria-label="Screens">
+    <a href="live.html">Live data</a>
+    <a href="agents.html" aria-current="page">Agents</a>
+    <a href="conversation.html">Conversation</a>
+  </nav>
+  <div class="chips">
+    <span class="chip is-live"><span class="dot"></span>Live</span>
+    <span class="chip">Headset on</span>
+  </div>
+</header>
+
+<main class="page">
+  <div class="lede" role="status">
+    <span class="mark mark-wait"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 1.5h6M3 10.5h6M3.5 1.5 8.5 10.5M8.5 1.5 3.5 10.5"/></svg></span>
+    <h1 class="headline">Waiting for the person to confirm. Nothing has been sent.</h1>
+  </div>
+
+  <section class="agents">
+    <article class="card">
+      <div class="agent-head">
+        <h2>Form errand: Care team request</h2>
+        <span class="state is-wait num">Waiting for confirm, 6 s left</span>
+      </div>
+      <ol class="steps">
+        <li><span class="mark mark-done"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6.2 5 8.5 9.5 3.5"/></svg></span><span>Asked by ERRAND</span><span class="when num">12:41:02</span></li>
+        <li><span class="mark mark-done"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6.2 5 8.5 9.5 3.5"/></svg></span><span>Form filled in a browser, not sent</span><span class="when num">1.8 s</span></li>
+        <li>
+          <span class="mark mark-done"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6.2 5 8.5 9.5 3.5"/></svg></span><span>Values read back off the page</span><span class="when num">12:41:05</span>
+          <dl class="values detail">
+            <dt>Who is this from?</dt><dd>Demo user</dd>
+            <dt>What do you need?</dt><dd>Meal or drink</dd>
+            <dt>When?</dt><dd>7 pm tonight</dd>
+          </dl>
+        </li>
+        <li><span class="mark mark-done"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6.2 5 8.5 9.5 3.5"/></svg></span><span>Read aloud to the person, digest <span class="mono">3172ba2e</span></span><span class="when num">12:41:09</span></li>
+        <li>
+          <span class="mark mark-wait"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 1.5h6M3 10.5h6M3.5 1.5 8.5 10.5M8.5 1.5 3.5 10.5"/></svg></span><span class="is-wait">Waiting for a fresh SELECT</span><span class="when"></span>
+          <div class="countdown"><div class="bar is-wait" role="progressbar" aria-valuenow="6" aria-valuemin="0" aria-valuemax="8" aria-label="Seconds left"><span style="width: 75%"></span></div><span class="when num">6 s left</span></div>
+        </li>
+        <li><span class="mark mark-todo"></span><span class="is-todo">Sent, with the form's confirmation</span><span class="when"></span></li>
+      </ol>
+      <div class="preview" aria-label="Screenshot of the filled form">
+        <span class="tag">Preview, not sent</span>
+        <div class="f-title">Care team request</div>
+        <div class="f-label">Who is this from?</div><div class="f-box">Demo user</div>
+        <div class="f-label">What do you need?</div><div class="f-box">Meal or drink</div>
+        <div class="f-label">When?</div><div class="f-box">7 pm tonight</div>
+      </div>
+    </article>
+
+    <article class="card muted-card">
+      <div class="agent-head">
+        <h2>Phone call: caregiver</h2>
+        <span class="state">Not started</span>
+      </div>
+      <ol class="steps">
+        <li><span class="mark mark-todo"></span><span class="is-todo">Script read back to the person</span><span class="when"></span></li>
+        <li><span class="mark mark-todo"></span><span class="is-todo">Confirmed with SELECT</span><span class="when"></span></li>
+        <li><span class="mark mark-todo"></span><span class="is-todo">Ringing</span><span class="when"></span></li>
+        <li><span class="mark mark-todo"></span><span class="is-todo">Connected</span><span class="when"></span></li>
+        <li><span class="mark mark-todo"></span><span class="is-todo">Ended, with the reason</span><span class="when"></span></li>
+      </ol>
+      <div class="transcript">
+        <div class="transcript-head"><span>Live transcript</span><span>Consent on file</span></div>
+        <p class="line"><span class="who">Assistant</span>"Hi, this is an automated assistant with an AI-generated voice, calling for Demo user."</p>
+        <p class="line them"><span class="who">Caregiver</span>"Hi, sure, go ahead."</p>
+      </div>
+    </article>
+  </section>
+
+  <p class="sample-note">Design mockup with sample content. The real screen reads the errand and call rows from SpacetimeDB. Show the contact's name only, never a phone number.</p>
+</main>
+</body>
+</html>

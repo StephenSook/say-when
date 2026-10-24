@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Partner phone, Say When mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500&family=Geist+Mono&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="tokens.css">
+<style>
+  .phone { max-width: 420px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; padding: var(--s4) var(--gutter) var(--s6); }
+  .phone-top { display: flex; justify-content: space-between; align-items: center; }
+  .status { font-size: var(--text-lead); line-height: var(--leading-tight); font-weight: 500; margin: var(--s8) 0 var(--s2); }
+  .hint { color: var(--fg-muted); margin: 0 0 var(--s6); }
+  .you { font-size: var(--text-meta); color: var(--fg-muted); margin: 0; }
+  .q { font-size: var(--text-title); margin: var(--s1) 0 var(--s6); }
+  .steps { list-style: none; margin: 0; padding: 0; }
+  .steps li { display: grid; grid-template-columns: 20px 1fr auto; gap: var(--s3); align-items: center; padding: var(--s2) 0; }
+  .steps .when { font-size: var(--text-meta); color: var(--fg-muted); }
+  .steps .is-todo { color: var(--fg-muted); }
+  .answer { margin-top: var(--s6); border-top: 1px solid var(--divider); padding-top: var(--s4); }
+  .answer .text { font-size: var(--text-lead); color: var(--fg-muted); line-height: var(--leading-tight); }
+  .ask {
+    margin-top: auto; height: 64px; border-radius: var(--radius-pill); border: 1px solid var(--accent-line);
+    background: var(--accent-soft); color: var(--fg); font: 500 var(--text-title) var(--font-sans); width: 100%;
+    display: flex; align-items: center; justify-content: center; gap: var(--s3);
+  }
+  .level { display: inline-flex; gap: 3px; align-items: center; height: 20px; }
+  .level i { width: 3px; border-radius: 2px; background: var(--accent); display: block; }
+  .ask-note { text-align: center; font-size: var(--text-meta); color: var(--fg-muted); margin: var(--s2) 0 0; }
+</style>
+</head>
+<body>
+<main class="phone">
+  <div class="phone-top">
+    <span class="brand">Say When</span>
+    <span class="chip is-live"><span class="dot"></span>Live</span>
+  </div>
+
+  <p class="status" role="status">They are choosing, option 2 of 4.</p>
+  <p class="hint">Please wait. They are listening to the options.</p>
+
+  <p class="you">You asked</p>
+  <p class="q">"Where can we get dinner near the hospital tonight?"</p>
+
+  <ol class="steps">
+    <li><span class="mark mark-done"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6.2 5 8.5 9.5 3.5"/></svg></span><span>Heard you</span><span class="when num">12:41:03</span></li>
+    <li><span class="mark mark-done"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6.2 5 8.5 9.5 3.5"/></svg></span><span>Looked it up</span><span class="when num">12:41:05</span></li>
+    <li><span class="spinner" aria-hidden="true"></span><span>Reading options</span><span class="when"></span></li>
+    <li><span class="mark mark-todo"></span><span class="is-todo">Answer</span><span class="when"></span></li>
+  </ol>
+
+  <div class="answer">
+    <p class="you">Their answer</p>
+    <p class="text">Shows here once they pick.</p>
+  </div>
+
+  <button class="ask" type="button" aria-describedby="ask-note">
+    <span class="level" aria-hidden="true"><i style="height: 8px"></i><i style="height: 16px"></i><i style="height: 11px"></i><i style="height: 18px"></i><i style="height: 7px"></i></span>
+    Hold to ask
+  </button>
+  <p class="ask-note" id="ask-note">Listening only while you hold. Speech to text by Cartesia Ink-2.</p>
+
+  <p class="sample-note">Design mockup with sample content.</p>
+</main>
+</body>
+</html>

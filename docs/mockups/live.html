@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live data, Say When mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500&family=Geist+Mono&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="tokens.css">
+<style>
+  .question { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--s8); }
+  .question .headline { max-width: 34ch; }
+  .ttfo { text-align: right; }
+  .ttfo .big { display: block; font-size: 48px; line-height: 1; font-weight: 500; }
+
+  .pipeline {
+    margin: var(--s12) 0 var(--s8); padding: 0; list-style: none;
+    display: grid; grid-template-columns: repeat(5, minmax(0, 1fr) 76px) minmax(0, 1fr); align-items: start;
+  }
+  .stage { padding: var(--s4); border-radius: var(--radius-card); color: var(--fg-muted); }
+  .stage-top { display: flex; align-items: center; gap: var(--s2); }
+  .stage-name { font-size: var(--text-title); font-weight: 500; }
+  .stage-tool { font-size: var(--text-meta); margin: var(--s1) 0 var(--s3); }
+  .stage-payload { color: var(--fg); min-height: 3em; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .stage-time { margin-top: var(--s2); font-size: var(--text-meta); }
+  .stage.is-done .stage-name { color: var(--fg); }
+  .stage.is-now { background: var(--active); box-shadow: inset 0 0 0 2px var(--accent-line); }
+  .stage.is-now .stage-name, .stage.is-now .stage-time { color: var(--fg); }
+  .stage.is-todo .stage-payload { color: var(--fg-muted); }
+  .link { position: relative; height: 100%; min-height: 40px; }
+  .link::before {
+    content: ''; position: absolute; left: 6px; right: 10px; top: 25px; height: 1px; background: var(--line);
+  }
+  .link::after {
+    content: ''; position: absolute; right: 6px; top: 21px; border: 4px solid transparent; border-left: 6px solid var(--fg-muted);
+  }
+  .link-label { position: absolute; left: 0; right: 0; top: 0; text-align: center; font-size: var(--text-meta); color: var(--fg-muted); }
+  .link.is-done .link-label { color: var(--fg); }
+
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s6); }
+  .panel-title { display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 var(--s3); font-size: var(--text-title); font-weight: 500; }
+  .panel-title span { font-size: var(--text-meta); font-weight: 400; color: var(--fg-muted); }
+  .rows { list-style: none; margin: 0; padding: 0; }
+  .rows li { display: grid; grid-template-columns: 1fr auto; gap: var(--s1) var(--s4); padding: var(--s3) var(--s2); border-top: 1px solid var(--divider); }
+  .rows .meta { font-size: var(--text-meta); color: var(--fg-muted); }
+  .rows .right { text-align: right; }
+
+  .events { margin-top: var(--s8); }
+  .events-head { display: flex; gap: var(--s4); align-items: baseline; font-size: var(--text-meta); color: var(--fg-muted); }
+  .events-head button { font: inherit; color: var(--fg-muted); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; }
+  .events table { border-collapse: collapse; font-size: var(--text-meta); margin-top: var(--s2); }
+  .events td { padding: var(--s1) var(--s8) var(--s1) 0; color: var(--fg-muted); }
+  .events td.ok { color: var(--accent); }
+
+  @media (max-width: 1100px) {
+    .pipeline { grid-template-columns: 1fr; gap: var(--s2); }
+    .link { min-height: 28px; }
+    .link::before { left: 24px; right: auto; top: 0; bottom: 0; width: 1px; height: auto; }
+    .link::after { display: none; }
+    .link-label { left: 40px; right: auto; top: 4px; text-align: left; }
+    .split { grid-template-columns: 1fr; }
+    .question { flex-direction: column; align-items: flex-start; }
+    .ttfo { text-align: left; }
+  }
+</style>
+</head>
+<body>
+<header class="shell-header">
+  <span class="brand">Say When</span>
+  <nav class="tabs" aria-label="Screens">
+    <a href="live.html" aria-current="page">Live data</a>
+    <a href="agents.html">Agents</a>
+    <a href="conversation.html">Conversation</a>
+  </nav>
+  <div class="chips">
+    <span class="chip is-live"><span class="dot"></span>Live</span>
+    <span class="chip">Headset on</span>
+  </div>
+</header>
+
+<main class="page">
+  <section class="question">
+    <div>
+      <p class="eyebrow">Question 7, asked by the partner</p>
+      <h1 class="headline">"Where can we get dinner near the hospital tonight?"</h1>
+    </div>
+    <div class="ttfo" role="status">
+      <span class="big num">2.9 s</span>
+      <span class="muted">to the first option</span>
+    </div>
+  </section>
+
+  <ol class="pipeline" aria-label="Pipeline for this question">
+    <li class="stage is-done">
+      <div class="stage-top"><span class="mark mark-done"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6.2 5 8.5 9.5 3.5"/></svg></span><span class="stage-name">Heard</span></div>
+      <div class="stage-tool">Cartesia Ink-2</div>
+      <div class="stage-payload">"Where can we get dinner near the hospital tonight?"</div>
+      <div class="stage-time num">0.4 s</div>
+    </li>
+    <li class="link is-done" aria-hidden="true"><span class="link-label">10 words</span></li>
+    <li class="stage is-done">
+      <div class="stage-top"><span class="mark mark-done"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6.2 5 8.5 9.5 3.5"/></svg></span><span class="stage-name">Searched</span></div>
+      <div class="stage-tool">Apify, Google Maps and web</div>
+      <div class="stage-payload">Cafe on Bay St, 0.3 mi, open till 10 pm</div>
+      <div class="stage-time num">1.8 s</div>
+    </li>
+    <li class="link is-done" aria-hidden="true"><span class="link-label">6 rows</span></li>
+    <li class="stage is-done">
+      <div class="stage-top"><span class="mark mark-done"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6.2 5 8.5 9.5 3.5"/></svg></span><span class="stage-name">Recalled</span></div>
+      <div class="stage-tool">Moss, memory and web</div>
+      <div class="stage-payload">"Likes Thai food, avoids loud places"</div>
+      <div class="stage-time num">0.08 s</div>
+    </li>
+    <li class="link is-done" aria-hidden="true"><span class="link-label">4 hits</span></li>
+    <li class="stage is-now" aria-current="step">
+      <div class="stage-top"><span class="spinner" aria-hidden="true"></span><span class="stage-name">Drafting</span></div>
+      <div class="stage-tool">Claude</div>
+      <div class="stage-payload">Writing up to four options</div>
+      <div class="stage-time num">0.6 s so far</div>
+    </li>
+    <li class="link" aria-hidden="true"><span class="link-label">&nbsp;</span></li>
+    <li class="stage is-todo">
+      <div class="stage-top"><span class="mark mark-todo"></span><span class="stage-name">Speaking</span></div>
+      <div class="stage-tool">Cartesia Sonic, into the earpiece</div>
+      <div class="stage-payload">Not started</div>
+    </li>
+    <li class="link" aria-hidden="true"><span class="link-label">&nbsp;</span></li>
+    <li class="stage is-todo">
+      <div class="stage-top"><span class="mark mark-todo"></span><span class="stage-name">Picked</span></div>
+      <div class="stage-tool">Headset</div>
+      <div class="stage-payload">Not started</div>
+    </li>
+  </ol>
+
+  <section class="split">
+    <div>
+      <h2 class="panel-title">Apify found <span>6 rows from 2 searches</span></h2>
+      <ul class="rows">
+        <li><span>Cafe on Bay St, 0.3 mi, open till 10 pm</span><span class="meta right num">fetched 12:40:58</span><span class="meta">Google Maps, wheelchair entrance listed</span></li>
+        <li><span>Thai kitchen on Lombard, 0.5 mi, open till 9 pm</span><span class="meta right num">fetched 12:40:58</span><span class="meta">Google Maps</span></li>
+        <li><span>Late dinner spots near the medical center</span><span class="meta right num">fetched 12:40:59</span><span class="meta">example-news.com</span></li>
+      </ul>
+    </div>
+    <div>
+      <h2 class="panel-title">Moss recalled <span>4 hits in 80 ms</span></h2>
+      <ul class="rows">
+        <li><span>"Likes Thai food, avoids loud places"</span><span class="meta right num">0.82</span><span class="meta">memory, saved Oct 12</span></li>
+        <li><span>"Yes, the quiet cafe was nice last time"</span><span class="meta right num">0.71</span><span class="meta">memory, a past reply to this partner</span></li>
+        <li><span>Thai kitchen on Lombard, 0.5 mi</span><span class="meta right num">0.64</span><span class="meta">web, fetched 12:40:58</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="events" aria-label="Raw events">
+    <div class="events-head"><span>Events, newest first</span><button type="button">Pause</button></div>
+    <table>
+      <tbody>
+        <tr><td class="num">12:41:06</td><td>retrieve</td><td class="ok">ok</td><td class="num">81 ms</td><td>4 hits</td></tr>
+        <tr><td class="num">12:41:05</td><td>search</td><td class="ok">ok</td><td class="num">1,104 ms</td><td>6 rows</td></tr>
+        <tr><td class="num">12:41:03</td><td>listen</td><td class="ok">ok</td><td class="num">412 ms</td><td>10 words</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <p class="sample-note">Design mockup with sample content. The real screen reads live rows from SpacetimeDB.</p>
+</main>
+</body>
+</html>

@@ -30,7 +30,7 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⛔ blocked
 | 4.2 | Errand wiring: ERRAND, read-back, confirm_errand, submit | `agent/` | Shashank | ⬜ | 1.1, 4.1 | |
 | 4.3 | Care team request form (demo target) | external | Leon | ⬜ | - | Owned by the consenting caregiver |
 | 4.4 | Outbound call agent (Cartesia Managed Agents) | `cartesia/` | Stephen | 🟡 | 1.1, 4.2 | Stephen, since Oct 23 9:30pm PT. Consenting number only. Claude implementing |
-| 5.0 | UI reference: `docs/ui.md` with tokens, wireframes and mockups | `docs/` | Stephen | 🟡 | - | Stephen, since Oct 23 9:10pm PT. Research done by Claude; Stephen and Khadim build the UI |
+| 5.0 | UI reference: `docs/ui.md` with tokens, wireframes and mockups | `docs/` | Stephen | ✅ | - | Open `docs/mockups/index.html`. Stephen and Khadim build the UI from it |
 | 5.1 | Dashboard shell: Next.js, SpacetimeDB WebSocket subscriptions, layout | `web/` | Khadim | ⬜ | 1.1 | Must work on any laptop with no login. See D7 |
 | 5.2 | Screen 1, Live data: each pipeline stage with its real payload as it flows | `web/` | Stephen | ⬜ | 5.1 | Reads `pipeline_event` |
 | 5.3 | Screen 2, Agents at work: form errand and phone call, step by step | `web/` | Stephen | ⬜ | 5.1, 4.1 | Reads `errand`, `call_request` |

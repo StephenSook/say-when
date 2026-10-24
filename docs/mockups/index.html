@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Say When mockups</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500&family=Geist+Mono&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="tokens.css">
+<style>
+  .list { list-style: none; padding: 0; margin: var(--s8) 0 0; max-width: 640px; }
+  .list li { border-top: 1px solid var(--divider); padding: var(--s4) 0; }
+  .list a { font-size: var(--text-title); font-weight: 500; text-decoration: none; }
+  .list a:hover { color: var(--accent); }
+  .list p { margin: var(--s1) 0 0; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+<main class="page">
+  <h1 class="headline">Say When screens</h1>
+  <p class="muted">Static mockups with sample content. Tokens are in tokens.css; the spec is docs/ui.md.</p>
+  <ul class="list">
+    <li><a href="live.html">Live data</a><p>The data flowing through each step: words, Apify rows, Moss hits, options, timings.</p></li>
+    <li><a href="agents.html">Agents at work</a><p>The form agent and the call agent, step by step. Nothing leaves without a fresh confirm.</p></li>
+    <li><a href="conversation.html">Live conversation</a><p>The question, the option being read, the pick, and what was said out loud.</p></li>
+    <li><a href="partner.html">Partner phone</a><p>Hold to ask, then one status sentence and the answer.</p></li>
+  </ul>
+</main>
+</body>
+</html>

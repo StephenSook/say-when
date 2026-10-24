@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live conversation, Say When mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500&family=Geist+Mono&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="tokens.css">
+<style>
+  .page { max-width: 1200px; }
+  .asked { font-size: var(--text-lead); line-height: var(--leading-tight); margin: 0 0 var(--s8); max-width: 40ch; }
+
+  .options { list-style: none; margin: 0; padding: 0; }
+  .option {
+    display: grid; grid-template-columns: 48px 1fr auto; gap: var(--s4); align-items: baseline;
+    padding: var(--s4) var(--s6); border-radius: var(--radius-panel); margin-bottom: var(--s2);
+    font-size: var(--text-hero); line-height: var(--leading-tight); color: var(--fg-muted);
+    border: 4px solid transparent;
+  }
+  .option .n { font-size: var(--text-title); color: var(--fg-muted); }
+  .option .kind { font-size: var(--text-meta); border: 1px solid var(--line); border-radius: var(--radius-pill); padding: 2px var(--s3); color: var(--fg-muted); align-self: center; }
+  .option.is-now { color: var(--fg); background: var(--active); border-color: var(--accent); }
+  .option.is-now .n { color: var(--accent); }
+  .ear { grid-column: 2 / 4; display: grid; grid-template-columns: 1fr 160px auto; gap: var(--s4); align-items: center; font-size: var(--text-meta); color: var(--fg-muted); margin-top: var(--s3); }
+  .ear mark { background: var(--accent-soft); color: var(--fg); border-radius: 3px; padding: 0 2px; }
+
+  .scan-foot { display: flex; justify-content: space-between; gap: var(--s4); font-size: var(--text-meta); color: var(--fg-muted); padding: var(--s2) var(--s6) 0; }
+
+  .commands { display: flex; justify-content: center; gap: var(--s3); margin: var(--s12) 0 var(--s8); flex-wrap: wrap; }
+  .commands .chip { height: 40px; padding: 0 var(--s4); font-size: var(--text); }
+  .commands .chip.is-lit { border-color: var(--accent); background: var(--accent-soft); color: var(--fg); }
+
+  .aloud { border-top: 1px solid var(--divider); padding-top: var(--s4); display: grid; grid-template-columns: auto 1fr; gap: var(--s4); align-items: baseline; }
+  .aloud .label { font-size: var(--text-meta); color: var(--fg-muted); }
+  .aloud .text { font-size: var(--text-lead); color: var(--fg-muted); }
+
+  @media (max-width: 720px) {
+    .option { grid-template-columns: 28px 1fr; padding: var(--s3) var(--s4); }
+    .option .kind { grid-column: 2; justify-self: start; margin-top: var(--s2); }
+    .ear { grid-column: 1 / -1; grid-template-columns: 1fr auto; }
+    .ear > span:first-child { grid-column: 1 / -1; }
+    .scan-foot { flex-direction: column; padding: var(--s2) var(--s4) 0; }
+    .aloud { grid-template-columns: 1fr; gap: var(--s1); }
+  }
+</style>
+</head>
+<body>
+<header class="shell-header">
+  <span class="brand">Say When</span>
+  <nav class="tabs" aria-label="Screens">
+    <a href="live.html">Live data</a>
+    <a href="agents.html">Agents</a>
+    <a href="conversation.html" aria-current="page">Conversation</a>
+  </nav>
+  <div class="chips">
+    <span class="chip is-live"><span class="dot"></span>Live</span>
+    <span class="chip">Headset on</span>
+  </div>
+</header>
+
+<main class="page">
+  <p class="eyebrow">The partner asked</p>
+  <p class="asked">"Where can we get dinner near the hospital tonight?"</p>
+
+  <ol class="options" aria-label="Options, read one at a time">
+    <li class="option"><span class="n">1</span><span>The Thai place on Lombard, it's quiet.</span><span class="kind">Reply</span></li>
+    <li class="option is-now" aria-current="true">
+      <span class="n">2</span><span>The cafe on Bay St, it has a ramp.</span><span class="kind">Reply</span>
+      <div class="ear">
+        <span>In the earpiece now: "The cafe on <mark>Bay</mark> St, it has a ramp."</span>
+        <div class="bar" role="progressbar" aria-valuenow="2" aria-valuemin="0" aria-valuemax="4" aria-label="Time left on this option"><span style="width: 55%"></span></div>
+        <span class="num">2.1 s left</span>
+      </div>
+    </li>
+    <li class="option"><span class="n">3</span><span>Send this plan to my care team.</span><span class="kind">Errand</span></li>
+    <li class="option"><span class="n">4</span><span>Something else.</span><span class="kind">Reply</span></li>
+  </ol>
+  <div class="scan-foot"><span>NO means none of these. Silence means nothing happens.</span><span class="num">Pass 1 of 2</span></div>
+
+  <div class="commands" aria-label="Last headset signal">
+    <span class="chip">SELECT</span>
+    <span class="chip is-lit">NO</span>
+    <span class="chip">ERRAND</span>
+    <span class="chip">CALL</span>
+  </div>
+
+  <div class="aloud">
+    <span class="label">Said out loud</span>
+    <span class="text">Nothing yet. A reply is spoken only after SELECT.</span>
+  </div>
+
+  <p class="sample-note">Design mockup with sample content. The real screen reads options, the scan cursor and headset commands from SpacetimeDB.</p>
+</main>
+</body>
+</html>

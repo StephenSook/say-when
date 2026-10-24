@@ -1,0 +1,130 @@
+/* Say When design tokens. Values measured from tube unless marked "ours". Copy into web/app/globals.css. */
+:root {
+  color-scheme: dark;
+
+  /* Surfaces */
+  --bg: #050505;
+  --surface: rgba(5, 5, 5, 0.72);
+  --card: #0e0e0f;
+  --card-border: #3a3a3c;
+  --control-bg: #0a0a0a;
+
+  /* Text */
+  --fg: rgba(255, 255, 255, 0.88);           /* 15.6:1 */
+  --fg-muted: rgba(255, 255, 255, 0.52);     /* 5.7:1 */
+
+  /* Lines: decoration only, never the only sign of state */
+  --line: rgba(255, 255, 255, 0.14);
+  --divider: rgba(255, 255, 255, 0.07);
+  --hover: rgba(255, 255, 255, 0.05);
+  --active: rgba(255, 255, 255, 0.09);
+
+  /* State. Every state also has an icon and a word. */
+  --accent: #c9a0f0;                         /* now: live, the scan cursor, done */
+  --accent-soft: rgba(201, 160, 240, 0.16);
+  --accent-line: rgba(201, 160, 240, 0.45);
+  --wait: #f2c46d;                           /* ours: waiting for the person's confirm */
+  --wait-soft: rgba(242, 196, 109, 0.14);
+  --error: #d98a8a;                          /* failed */
+  --error-soft: rgba(217, 138, 138, 0.14);
+  --focus: rgba(255, 255, 255, 0.88);
+
+  /* Type */
+  --font-sans: 'Geist', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, monospace;
+  --leading: 1.45;
+  --leading-tight: 1.2;
+  --text-meta: 14px;
+  --text: 16px;
+  --text-title: 20px;
+  --text-lead: 28px;
+  --text-hero: clamp(28px, 2.6vw, 40px);
+
+  /* Space */
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s6: 24px; --s8: 32px; --s12: 48px;
+
+  /* Radius */
+  --radius: 6px;
+  --radius-card: 8px;
+  --radius-panel: 10px;
+  --radius-pill: 999px;
+
+  --shadow-card: 0 16px 48px rgba(0, 0, 0, 0.6);
+  --gutter: 16px;
+  --header-h: 56px;
+
+  --dur-fast: 150ms;
+  --dur-row: 240ms;
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+@media (max-width: 720px) {
+  :root { --text-lead: 22px; --text-hero: 26px; }
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); }
+body { font: 400 var(--text) / var(--leading) var(--font-sans); -webkit-font-smoothing: antialiased; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.num { font-variant-numeric: tabular-nums; }
+.muted { color: var(--fg-muted); }
+.mono { font-family: var(--font-mono); }
+a { color: inherit; }
+
+/* Shell */
+.shell-header {
+  height: var(--header-h); display: flex; align-items: center; gap: var(--s8);
+  padding: 0 var(--s6); border-bottom: 1px solid var(--divider);
+}
+.brand { font-size: var(--text-title); font-weight: 500; }
+.tabs { display: flex; gap: var(--s6); }
+.tabs a { text-decoration: none; color: var(--fg-muted); padding: var(--s2) 0; border-bottom: 2px solid transparent; }
+.tabs a[aria-current='page'] { color: var(--fg); font-weight: 500; border-bottom-color: var(--fg); }
+.chips { margin-left: auto; display: flex; gap: var(--s2); }
+
+.chip {
+  display: inline-flex; align-items: center; gap: var(--s2); height: 32px; padding: 0 var(--s3);
+  border: 1px solid var(--line); border-radius: var(--radius-pill); background: var(--control-bg);
+  font-size: var(--text-meta); white-space: nowrap;
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.chip.is-live .dot { box-shadow: 0 0 0 4px var(--accent-soft); }
+
+.page { padding: var(--s8) var(--s6) var(--s12); max-width: 1440px; margin: 0 auto; }
+.headline { font-size: var(--text-lead); line-height: var(--leading-tight); font-weight: 500; margin: 0; }
+.eyebrow { font-size: var(--text-meta); color: var(--fg-muted); margin: 0 0 var(--s2); }
+.sample-note { margin-top: var(--s12); font-size: var(--text-meta); color: var(--fg-muted); border-top: 1px solid var(--divider); padding-top: var(--s4); }
+
+/* Status marks: icon + word, color second */
+.mark { width: 20px; height: 20px; flex: none; display: inline-grid; place-items: center; border-radius: 50%; }
+.mark svg { width: 12px; height: 12px; }
+.mark-done { background: var(--accent-soft); color: var(--accent); }
+.mark-todo { border: 1px solid rgba(255, 255, 255, 0.24); }
+.mark-wait { background: var(--wait-soft); color: var(--wait); }
+.mark-fail { background: var(--error-soft); color: var(--error); }
+.mark-stop { border: 1px solid var(--fg-muted); color: var(--fg-muted); }
+.spinner {
+  width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid var(--line); border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.bar { height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.1); overflow: hidden; }
+.bar > span { display: block; height: 100%; background: var(--accent); }
+.bar.is-wait > span { background: var(--wait); }
+
+.card {
+  background: var(--card); border: 1px solid var(--card-border); border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-card); padding: var(--s6);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+  .spinner { animation: spin 0.8s linear infinite !important; }
+}
+
+@media (max-width: 720px) {
+  .shell-header { flex-wrap: wrap; height: auto; padding: var(--s3) var(--gutter); gap: var(--s3); }
+  .tabs { order: 3; width: 100%; }
+  .page { padding: var(--s6) var(--gutter) var(--s12); }
+}
