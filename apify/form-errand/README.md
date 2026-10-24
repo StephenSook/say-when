@@ -30,7 +30,7 @@ across the street, plus a note saying how it was sent. When: 12:30 today. How ur
 Filling and sending need the form owner's consent, or the operator's:
 
 - **Owner opt-in.** Put `form-errand:allow` anywhere in the form's description (in Google Forms, edit the description under the title), or add `<meta name="form-errand" content="allow">` to your own page.
-- **Operator allowlist.** Whoever runs a copy of this Actor can list form address prefixes in the `ALLOWED_FORM_PREFIXES` environment variable, separated by commas. A prefix matches only at a path boundary.
+- **Operator allowlist.** Whoever runs a copy of this Actor can list form address prefixes in the `ALLOWED_FORM_PREFIXES` environment variable, separated by commas. Addresses are parsed before matching, the origin must match exactly, and the path must sit at or below the prefix. The check runs on the page you land on after any redirects.
 
 Any other form can be inspected, but not filled or sent.
 
@@ -44,7 +44,7 @@ Each refusal comes back as a code plus one short sentence written to be spoken a
 | `login` | The page asks for a password or sends you to a sign-in page. |
 | `payment` | The page asks for card details or loads a payment widget. |
 | `upload` | The page asks for a file upload. |
-| `bad_url` | The address is not HTTPS, or has credentials in it. |
+| `bad_url` | The address is not HTTPS, has credentials in it, or the page (or a redirect) reaches a private network address. |
 | `not_allowed` | The form has not opted in and is not on the allowlist. |
 | `unmatched_fields` | An answer did not match a question. Nothing partial is ever sent. |
 | `missing_required` | A required question is still empty. |
@@ -62,7 +62,7 @@ Each refusal comes back as a code plus one short sentence written to be spoken a
 | `confirm` | boolean | `false` | Submit only. |
 | `confirmDigest` | string | | Submit only. The `previewDigest` the person confirmed. |
 | `submitButtonText` | string | `Submit` | Visible name of the send button. |
-| `confirmationPattern` | string | `recorded\|received\|thank\|submitted\|sent` | Regular expression for the confirmation page. |
+| `confirmationPhrases` | list of strings | `recorded`, `received`, `thank`, `submitted`, `sent` | Plain phrases for the confirmation page, matched without regard to case. Never a regular expression. |
 | `disclosureText` | string | `Sent with an assistive switch after a spoken read-back and a confirm.` | Added to one paragraph answer so the recipient knows how it was sent. Empty turns it off. |
 | `disclosureField` | string | last paragraph question | Which paragraph question gets the note. |
 | `includeScreenshot` | boolean | `true` | Standby only: return the screenshot inline as base64. |

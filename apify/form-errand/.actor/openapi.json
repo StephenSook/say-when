@@ -9,7 +9,11 @@
         "/": {
             "get": {
                 "summary": "Describe the endpoints",
-                "responses": { "200": { "description": "Endpoint list" } }
+                "responses": {
+                    "200": {
+                        "description": "Endpoint list"
+                    }
+                }
             }
         },
         "/inspect": {
@@ -19,12 +23,27 @@
                     "required": true,
                     "content": {
                         "application/json": {
-                            "schema": { "$ref": "#/components/schemas/ErrandRequest" },
-                            "example": { "formUrl": "demo" }
+                            "schema": {
+                                "$ref": "#/components/schemas/ErrandRequest"
+                            },
+                            "example": {
+                                "formUrl": "demo"
+                            }
                         }
                     }
                 },
-                "responses": { "200": { "description": "Questions", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrandResult" } } } } }
+                "responses": {
+                    "200": {
+                        "description": "Questions",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrandResult"
+                                }
+                            }
+                        }
+                    }
+                }
             }
         },
         "/preview": {
@@ -34,23 +53,51 @@
                     "required": true,
                     "content": {
                         "application/json": {
-                            "schema": { "$ref": "#/components/schemas/ErrandRequest" },
+                            "schema": {
+                                "$ref": "#/components/schemas/ErrandRequest"
+                            },
                             "example": {
                                 "formUrl": "demo",
                                 "fields": [
-                                    { "label": "Who is this from?", "value": "Demo user" },
-                                    { "label": "What do you need?", "value": "Meal or drink" },
-                                    { "label": "Details", "value": "Lunch at the cafe across the street." },
-                                    { "label": "When?", "value": "12:30 today" },
-                                    { "label": "How urgent?", "value": "Today" }
+                                    {
+                                        "label": "Who is this from?",
+                                        "value": "Demo user"
+                                    },
+                                    {
+                                        "label": "What do you need?",
+                                        "value": "Meal or drink"
+                                    },
+                                    {
+                                        "label": "Details",
+                                        "value": "Lunch at the cafe across the street."
+                                    },
+                                    {
+                                        "label": "When?",
+                                        "value": "12:30 today"
+                                    },
+                                    {
+                                        "label": "How urgent?",
+                                        "value": "Today"
+                                    }
                                 ]
                             }
                         }
                     }
                 },
                 "responses": {
-                    "200": { "description": "Read-back, digest and screenshot", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrandResult" } } } },
-                    "400": { "description": "Invalid request" }
+                    "200": {
+                        "description": "Read-back, digest and screenshot",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrandResult"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request"
+                    }
                 }
             }
         },
@@ -61,15 +108,32 @@
                     "required": true,
                     "content": {
                         "application/json": {
-                            "schema": { "$ref": "#/components/schemas/ErrandRequest" },
+                            "schema": {
+                                "$ref": "#/components/schemas/ErrandRequest"
+                            },
                             "example": {
                                 "formUrl": "demo",
                                 "fields": [
-                                    { "label": "Who is this from?", "value": "Demo user" },
-                                    { "label": "What do you need?", "value": "Meal or drink" },
-                                    { "label": "Details", "value": "Lunch at the cafe across the street." },
-                                    { "label": "When?", "value": "12:30 today" },
-                                    { "label": "How urgent?", "value": "Today" }
+                                    {
+                                        "label": "Who is this from?",
+                                        "value": "Demo user"
+                                    },
+                                    {
+                                        "label": "What do you need?",
+                                        "value": "Meal or drink"
+                                    },
+                                    {
+                                        "label": "Details",
+                                        "value": "Lunch at the cafe across the street."
+                                    },
+                                    {
+                                        "label": "When?",
+                                        "value": "12:30 today"
+                                    },
+                                    {
+                                        "label": "How urgent?",
+                                        "value": "Today"
+                                    }
                                 ],
                                 "confirm": true,
                                 "confirmDigest": "paste the previewDigest here"
@@ -78,8 +142,19 @@
                     }
                 },
                 "responses": {
-                    "200": { "description": "Submitted, duplicate, refused or failed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrandResult" } } } },
-                    "400": { "description": "Invalid request" }
+                    "200": {
+                        "description": "Submitted, duplicate, refused or failed",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrandResult"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request"
+                    }
                 }
             }
         }
@@ -88,63 +163,188 @@
         "schemas": {
             "Answer": {
                 "type": "object",
-                "required": ["label", "value"],
+                "required": [
+                    "label",
+                    "value"
+                ],
                 "properties": {
-                    "label": { "type": "string", "description": "The question text as it appears on the form." },
-                    "value": {
-                        "oneOf": [{ "type": "string" }, { "type": "boolean" }, { "type": "array", "items": { "type": "string" } }]
+                    "label": {
+                        "type": "string",
+                        "description": "The question text as it appears on the form."
                     },
-                    "source": { "type": "string", "description": "Where the answer came from. Echoed back, never typed into the form." }
+                    "value": {
+                        "oneOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "boolean"
+                            },
+                            {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                }
+                            }
+                        ]
+                    },
+                    "source": {
+                        "type": "string",
+                        "description": "Where the answer came from. Echoed back, never typed into the form."
+                    }
                 }
             },
             "ErrandRequest": {
                 "type": "object",
-                "required": ["formUrl"],
+                "required": [
+                    "formUrl"
+                ],
                 "properties": {
-                    "formUrl": { "type": "string", "description": "HTTPS form address, or demo." },
-                    "fields": { "type": "array", "items": { "$ref": "#/components/schemas/Answer" } },
-                    "confirm": { "type": "boolean", "default": false },
-                    "confirmDigest": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
-                    "submitButtonText": { "type": "string", "default": "Submit" },
-                    "confirmationPattern": { "type": "string", "default": "recorded|received|thank|submitted|sent" },
-                    "disclosureText": { "type": "string" },
-                    "disclosureField": { "type": "string" },
-                    "includeScreenshot": { "type": "boolean", "default": true }
+                    "formUrl": {
+                        "type": "string",
+                        "description": "HTTPS form address, or demo."
+                    },
+                    "fields": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/Answer"
+                        }
+                    },
+                    "confirm": {
+                        "type": "boolean",
+                        "default": false
+                    },
+                    "confirmDigest": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{16}$"
+                    },
+                    "submitButtonText": {
+                        "type": "string",
+                        "default": "Submit"
+                    },
+                    "disclosureText": {
+                        "type": "string"
+                    },
+                    "disclosureField": {
+                        "type": "string"
+                    },
+                    "includeScreenshot": {
+                        "type": "boolean",
+                        "default": true
+                    },
+                    "confirmationPhrases": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "default": [
+                            "recorded",
+                            "received",
+                            "thank",
+                            "submitted",
+                            "sent"
+                        ]
+                    }
                 }
             },
             "ErrandResult": {
                 "type": "object",
                 "properties": {
-                    "status": { "type": "string", "enum": ["inspected", "previewed", "submitted", "duplicate", "refused", "failed"] },
-                    "formTitle": { "type": "string", "nullable": true },
-                    "fillAllowed": { "type": "boolean" },
-                    "questions": { "type": "array", "items": { "type": "object" } },
+                    "status": {
+                        "type": "string",
+                        "enum": [
+                            "inspected",
+                            "previewed",
+                            "submitted",
+                            "duplicate",
+                            "refused",
+                            "failed"
+                        ]
+                    },
+                    "formTitle": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "fillAllowed": {
+                        "type": "boolean"
+                    },
+                    "questions": {
+                        "type": "array",
+                        "items": {
+                            "type": "object"
+                        }
+                    },
                     "readBack": {
                         "type": "array",
                         "items": {
                             "type": "object",
                             "properties": {
-                                "label": { "type": "string" },
-                                "value": { "type": "string" },
-                                "matchedBy": { "type": "string" },
-                                "source": { "type": "string" }
+                                "label": {
+                                    "type": "string"
+                                },
+                                "value": {
+                                    "type": "string"
+                                },
+                                "matchedBy": {
+                                    "type": "string"
+                                },
+                                "source": {
+                                    "type": "string"
+                                }
                             }
                         }
                     },
-                    "readBackText": { "type": "string", "nullable": true },
-                    "previewDigest": { "type": "string", "nullable": true },
-                    "unmatched": { "type": "array", "items": { "type": "string" } },
-                    "missingRequired": { "type": "array", "items": { "type": "string" } },
+                    "readBackText": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "previewDigest": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "unmatched": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "missingRequired": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
                     "refusal": {
                         "type": "object",
                         "nullable": true,
-                        "properties": { "code": { "type": "string" }, "reason": { "type": "string" } }
+                        "properties": {
+                            "code": {
+                                "type": "string"
+                            },
+                            "reason": {
+                                "type": "string"
+                            }
+                        }
                     },
-                    "confirmationText": { "type": "string", "nullable": true },
-                    "screenshotUrl": { "type": "string", "nullable": true },
-                    "screenshotBase64": { "type": "string", "description": "JPEG, when includeScreenshot is true." },
-                    "timings": { "type": "object" },
-                    "submittedAt": { "type": "string", "nullable": true }
+                    "confirmationText": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "screenshotUrl": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "screenshotBase64": {
+                        "type": "string",
+                        "description": "JPEG, when includeScreenshot is true."
+                    },
+                    "timings": {
+                        "type": "object"
+                    },
+                    "submittedAt": {
+                        "type": "string",
+                        "nullable": true
+                    }
                 }
             }
         }

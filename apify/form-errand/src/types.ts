@@ -21,8 +21,8 @@ export interface ErrandInput {
     /** Submit only: the previewDigest the person heard. */
     confirmDigest?: string;
     submitButtonText: string;
-    /** Regular expression (case-insensitive) that the confirmation page must show after submit. */
-    confirmationPattern: string;
+    /** Plain phrases, matched case-insensitively; one must appear on the page after submit. Never a regex. */
+    confirmationPhrases: string[];
     /** Appended to a free-text answer so the recipient knows how the form was sent. Empty string turns it off. */
     disclosureText: string;
     /** Label of the free-text question that gets the disclosure. Defaults to the last paragraph question filled. */

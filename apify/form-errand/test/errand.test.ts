@@ -190,6 +190,18 @@ describe('consent and refusals', () => {
         });
     }
 
+    it('refuses a redirect to a private address', async () => {
+        const r = await runErrand(input({ formUrl: `${fixtures.base}/redirect-private`, fields: CARE }), makeDeps());
+        assert.equal(r.refusal?.code, 'bad_url');
+        assert.equal(r.screenshotBase64, undefined);
+    });
+
+    it('refuses a page that loads anything from a private address, and takes no screenshot', async () => {
+        const r = await runErrand(input({ formUrl: `${fixtures.base}/img-private`, fields: [{ label: 'Name', value: 'x' }] }), makeDeps());
+        assert.equal(r.refusal?.code, 'bad_url');
+        assert.equal(r.screenshotBase64, undefined);
+    });
+
     it('refuses plain http outside tests', async () => {
         const r = await runErrand(input({ formUrl: `${fixtures.base}/care`, fields: CARE }), makeDeps({ allowLocal: false }));
         assert.equal(r.refusal?.code, 'bad_url');

@@ -56,17 +56,28 @@ export function checkUrl(formUrl: string, opts: { allowLocal: boolean }): Refusa
 }
 
 /**
- * True when `formUrl` starts with one of the allowed prefixes at a path boundary, so
- * "https://forms.example.com/a" allows ".../a/viewform" but not ".../ab" or "https://forms.example.com.evil.test".
+ * True when `formUrl` is on one of the allowed prefixes. Both sides are parsed first, so case, default ports,
+ * "..", and percent-encoding cannot slip past. The origin must match exactly and the path must equal the
+ * prefix path or continue below it: "https://forms.example.com/a" allows "/a/viewform" but not "/ab".
  */
 export function matchesAllowedPrefix(formUrl: string, prefixes: string[]): boolean {
+    let url: URL;
+    try {
+        url = new URL(formUrl);
+    } catch {
+        return false;
+    }
     return prefixes.some((raw) => {
-        const prefix = raw.trim();
-        if (!prefix.startsWith('https://') && !prefix.startsWith('http://')) return false;
-        if (!formUrl.startsWith(prefix)) return false;
-        if (formUrl.length === prefix.length) return true;
-        if (prefix.endsWith('/')) return true;
-        return ['/', '?', '#'].includes(formUrl.charAt(prefix.length));
+        let prefix: URL;
+        try {
+            prefix = new URL(raw.trim());
+        } catch {
+            return false;
+        }
+        if (prefix.protocol !== 'https:' && prefix.protocol !== 'http:') return false;
+        if (url.origin !== prefix.origin) return false;
+        const base = prefix.pathname.replace(/\/+$/, '');
+        return base === '' || url.pathname === base || url.pathname.startsWith(`${base}/`);
     });
 }
 

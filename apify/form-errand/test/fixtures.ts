@@ -76,9 +76,15 @@ export async function startFixtures(): Promise<FixtureServer> {
         '/pay': page('<form><label for="c">Card number</label><input id="c" autocomplete="cc-number"></form>'),
         '/upload': page('<form><label for="f">Attach</label><input id="f" type="file"></form>'),
         '/empty': page('<p>No form here.</p>'),
+        '/img-private': page('<form><label for="a">Name</label><input id="a"></form><img src="http://10.0.0.1/x.png" alt="">'),
     };
     const server: Server = createServer((req, res) => {
         const path = (req.url ?? '/').split('?')[0];
+        if (path === '/redirect-private') {
+            res.writeHead(302, { Location: 'http://0.0.0.0:9/form' });
+            res.end();
+            return;
+        }
         if (req.method === 'POST') {
             req.resume();
             req.on('end', () => {

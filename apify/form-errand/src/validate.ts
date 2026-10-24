@@ -2,7 +2,7 @@ import type { ErrandInput, FieldInput, FieldValue, Mode } from './types.js';
 
 export class InputError extends Error {}
 
-export const DEFAULT_CONFIRMATION_PATTERN = 'recorded|received|thank|submitted|sent';
+export const DEFAULT_CONFIRMATION_PHRASES = ['recorded', 'received', 'thank', 'submitted', 'sent'];
 export const DEFAULT_DISCLOSURE = 'Sent with an assistive switch after a spoken read-back and a confirm.';
 
 const MODES: Mode[] = ['inspect', 'preview', 'submit'];
@@ -57,14 +57,13 @@ export function parseInput(raw: unknown): ErrandInput {
         if (!/^[0-9a-f]{16}$/.test(confirmDigest)) throw new InputError('confirmDigest must be the 16 hex characters from a preview.');
     }
 
-    const confirmationPattern =
-        r.confirmationPattern === undefined || r.confirmationPattern === ''
-            ? DEFAULT_CONFIRMATION_PATTERN
-            : text(r.confirmationPattern, 'confirmationPattern', 200);
-    try {
-        new RegExp(confirmationPattern, 'i');
-    } catch {
-        throw new InputError('confirmationPattern is not a valid regular expression.');
+    // Plain phrases only: a caller-supplied regular expression could stall the shared Standby server.
+    let confirmationPhrases = DEFAULT_CONFIRMATION_PHRASES;
+    if (r.confirmationPhrases !== undefined) {
+        if (!Array.isArray(r.confirmationPhrases)) throw new InputError('confirmationPhrases must be a list of phrases.');
+        if (r.confirmationPhrases.length > 10) throw new InputError('confirmationPhrases can list at most 10 phrases.');
+        const phrases = r.confirmationPhrases.map((p, i) => text(p, `confirmationPhrases[${i}]`, 80).trim()).filter(Boolean);
+        if (phrases.length > 0) confirmationPhrases = phrases;
     }
 
     return {
@@ -75,7 +74,7 @@ export function parseInput(raw: unknown): ErrandInput {
         ...(confirmDigest ? { confirmDigest } : {}),
         submitButtonText:
             r.submitButtonText === undefined || r.submitButtonText === '' ? 'Submit' : text(r.submitButtonText, 'submitButtonText', 60),
-        confirmationPattern,
+        confirmationPhrases,
         disclosureText: r.disclosureText === undefined ? DEFAULT_DISCLOSURE : text(r.disclosureText, 'disclosureText', 300),
         ...(r.disclosureField ? { disclosureField: text(r.disclosureField, 'disclosureField', 200) } : {}),
         includeScreenshot: r.includeScreenshot !== false,

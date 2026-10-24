@@ -5,6 +5,7 @@ import { buildReadBackText, computeDigest, normalizeText } from './digest.js';
 import { fillField, findMissingRequired, formTitle, listQuestions, locateField, readField, type LocatedField } from './fields.js';
 import { checkPage, checkUrl, hasOptInMarker, matchesAllowedPrefix, refusal } from './guards.js';
 import type { SubmitLedger } from './ledger.js';
+import { HostPolicy, NetworkGuard } from './network.js';
 import type { ErrandInput, ErrandResult, FieldInput, ReadBackItem, Refusal } from './types.js';
 
 export interface ScreenshotSink {
@@ -75,16 +76,21 @@ async function clickSubmit(page: Page, text: string): Promise<boolean> {
     return false;
 }
 
-/** Waits for a line matching the pattern that was not on the page before the click. */
-async function waitForConfirmation(page: Page, before: Set<string>, pattern: RegExp): Promise<string | null> {
+/** Waits for a line containing one of the phrases that was not on the page before the click. */
+async function waitForConfirmation(page: Page, before: Set<string>, phrases: string[]): Promise<string | null> {
+    const wanted = phrases.map((p) => p.toLowerCase());
     const deadline = Date.now() + CONFIRM_TIMEOUT_MS;
     while (Date.now() < deadline) {
-        const fresh = (await pageLines(page)).find((line) => pattern.test(line) && !before.has(line));
-        if (fresh) return fresh.slice(0, 300);
+        const fresh = (await pageLines(page))
+            .map((line) => line.slice(0, 300))
+            .find((line) => !before.has(line) && wanted.some((p) => line.toLowerCase().includes(p)));
+        if (fresh) return fresh;
         await page.waitForTimeout(250);
     }
     return null;
 }
+
+const PRIVATE_NETWORK = 'The page tried to reach a private network address.';
 
 /**
  * Runs one errand: inspect lists the questions, preview fills and reads back without sending,
@@ -120,6 +126,9 @@ export async function runErrand(input: ErrandInput, deps: ErrandDeps): Promise<E
     // Bundlers that keep function names (esbuild, used by tsx) wrap functions in __name(); functions we run
     // inside the page carry that call with them, so give the page a no-op __name.
     await context.addInitScript({ content: 'window.__name = window.__name || function (fn) { return fn; };' });
+    // Only public hosts, checked before each request and again after redirects, which routes do not see.
+    const guard = new NetworkGuard(new HostPolicy(deps.allowLocal || isDemo));
+    await guard.attach(context);
     try {
         if (isDemo) demo = await startDemoServer();
         const page = await context.newPage();
@@ -133,10 +142,17 @@ export async function runErrand(input: ErrandInput, deps: ErrandDeps): Promise<E
             });
             if (response && response.status() >= 400) return refuse(refusal('load_failed', `The page answered ${response.status()}.`));
         } catch {
+            if (!(await guard.clean(page))) return refuse(refusal('bad_url', PRIVATE_NETWORK));
             return refuse(refusal('load_failed'));
         }
         await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
         result.timings.loadMs = Date.now() - loadStart;
+        if (!(await guard.clean(page))) return refuse(refusal('bad_url', PRIVATE_NETWORK));
+        if (!isDemo) {
+            // Redirects can move us; the page we actually fill must pass the same address rules.
+            const movedBad = checkUrl(page.url(), { allowLocal: deps.allowLocal });
+            if (movedBad) return refuse(movedBad);
+        }
         result.finalUrl = demo ? 'demo' : page.url();
 
         const blocked = await checkPage(page);
@@ -145,7 +161,7 @@ export async function runErrand(input: ErrandInput, deps: ErrandDeps): Promise<E
         result.formTitle = await formTitle(page);
         result.questions = await listQuestions(page);
         result.fillAllowed =
-            isDemo || matchesAllowedPrefix(input.formUrl, deps.allowedPrefixes) || (await hasOptInMarker(page));
+            isDemo || matchesAllowedPrefix(page.url(), deps.allowedPrefixes) || (await hasOptInMarker(page));
 
         if (input.mode === 'inspect') {
             result.status = 'inspected';
@@ -209,6 +225,8 @@ export async function runErrand(input: ErrandInput, deps: ErrandDeps): Promise<E
         result.timings.fillMs = Date.now() - fillStart;
 
         const shoot = async (phase: 'PREVIEW' | 'CONFIRMATION'): Promise<void> => {
+            // Never capture a page that has reached a private address.
+            if (!(await guard.clean(page))) return;
             const jpeg = await page.screenshot({ type: 'jpeg', quality: 70, fullPage: true });
             const key = `SCREENSHOT-${phase}-${result.previewDigest ?? 'none'}`;
             result.screenshotKey = key;
@@ -216,6 +234,7 @@ export async function runErrand(input: ErrandInput, deps: ErrandDeps): Promise<E
             if (input.includeScreenshot) result.screenshotBase64 = jpeg.toString('base64');
         };
 
+        if (!(await guard.clean(page))) return refuse(refusal('bad_url', PRIVATE_NETWORK));
         if (input.mode === 'preview') {
             await shoot('PREVIEW');
             result.status = 'previewed';
@@ -252,7 +271,7 @@ export async function runErrand(input: ErrandInput, deps: ErrandDeps): Promise<E
             await deps.ledger.release(claim.key);
             return refuse(refusal('no_submit_button'));
         }
-        const confirmation = await waitForConfirmation(page, before, new RegExp(input.confirmationPattern, 'i'));
+        const confirmation = await waitForConfirmation(page, before, input.confirmationPhrases);
         result.timings.submitMs = Date.now() - submitStart;
         await shoot('CONFIRMATION').catch(() => undefined);
 

@@ -15,8 +15,16 @@
             "title": "Mode",
             "type": "string",
             "editor": "select",
-            "enum": ["inspect", "preview", "submit"],
-            "enumTitles": ["Inspect: list the questions", "Preview: fill and read back, never send", "Submit: send after a confirm"],
+            "enum": [
+                "inspect",
+                "preview",
+                "submit"
+            ],
+            "enumTitles": [
+                "Inspect: list the questions",
+                "Preview: fill and read back, never send",
+                "Submit: send after a confirm"
+            ],
             "description": "Inspect lists the questions. Preview fills the form, reads every value back off the page and returns a digest and a screenshot, without sending. Submit sends only with a confirm and the digest from the preview.",
             "default": "preview"
         },
@@ -26,11 +34,27 @@
             "editor": "json",
             "description": "List of answers, each {\"label\": question text, \"value\": answer, \"source\": optional note on where the answer came from}. Use a list of strings for checkbox questions and true or false for a single checkbox.",
             "prefill": [
-                { "label": "Who is this from?", "value": "Demo user", "source": "memory" },
-                { "label": "What do you need?", "value": "Meal or drink" },
-                { "label": "Details", "value": "Lunch at the cafe across the street, wheelchair entrance on the side." },
-                { "label": "When?", "value": "12:30 today" },
-                { "label": "How urgent?", "value": "Today" }
+                {
+                    "label": "Who is this from?",
+                    "value": "Demo user",
+                    "source": "memory"
+                },
+                {
+                    "label": "What do you need?",
+                    "value": "Meal or drink"
+                },
+                {
+                    "label": "Details",
+                    "value": "Lunch at the cafe across the street, wheelchair entrance on the side."
+                },
+                {
+                    "label": "When?",
+                    "value": "12:30 today"
+                },
+                {
+                    "label": "How urgent?",
+                    "value": "Today"
+                }
             ]
         },
         "confirm": {
@@ -53,12 +77,18 @@
             "description": "Visible name of the form's send button.",
             "default": "Submit"
         },
-        "confirmationPattern": {
-            "title": "Confirmation text pattern",
-            "type": "string",
-            "editor": "textfield",
-            "description": "Case-insensitive regular expression the page must show after sending. If it does not appear, the run reports that it could not confirm.",
-            "default": "recorded|received|thank|submitted|sent"
+        "confirmationPhrases": {
+            "title": "Confirmation phrases",
+            "type": "array",
+            "editor": "stringList",
+            "description": "Plain phrases, matched without regard to case. One of them must appear on the page after sending, or the run reports that it could not confirm.",
+            "default": [
+                "recorded",
+                "received",
+                "thank",
+                "submitted",
+                "sent"
+            ]
         },
         "disclosureText": {
             "title": "Note added to the answers",
@@ -81,5 +111,7 @@
             "default": true
         }
     },
-    "required": ["formUrl"]
+    "required": [
+        "formUrl"
+    ]
 }

@@ -5,6 +5,7 @@ import { buildReadBackText, canonicalFormUrl, computeDigest, spokenValue } from 
 import { nameScore } from '../src/fields.js';
 import { checkUrl, isSignInUrl, matchesAllowedPrefix, parsePrefixes } from '../src/guards.js';
 import { SubmitLedger, type RecordStore } from '../src/ledger.js';
+import { HostPolicy, isPrivateAddress } from '../src/network.js';
 import { DEFAULT_DISCLOSURE, InputError, parseInput } from '../src/validate.js';
 
 const items = [
@@ -71,13 +72,18 @@ describe('guards', () => {
         assert.equal(checkUrl('http://127.0.0.1:8080/f', { allowLocal: true }), null);
     });
 
-    it('matches allowed prefixes only at a path boundary', () => {
+    it('matches allowed prefixes only at a path boundary, after parsing both sides', () => {
         const prefixes = ['https://forms.example.com/a'];
         assert.equal(matchesAllowedPrefix('https://forms.example.com/a', prefixes), true);
         assert.equal(matchesAllowedPrefix('https://forms.example.com/a/viewform', prefixes), true);
         assert.equal(matchesAllowedPrefix('https://forms.example.com/a?x=1', prefixes), true);
+        assert.equal(matchesAllowedPrefix('HTTPS://FORMS.EXAMPLE.COM:443/a/x', prefixes), true);
         assert.equal(matchesAllowedPrefix('https://forms.example.com/ab', prefixes), false);
+        assert.equal(matchesAllowedPrefix('https://forms.example.com/a/../b', prefixes), false);
+        assert.equal(matchesAllowedPrefix('https://forms.example.com/a/%2e%2e/b', prefixes), false);
         assert.equal(matchesAllowedPrefix('https://forms.example.com.evil.test/a', ['https://forms.example.com']), false);
+        assert.equal(matchesAllowedPrefix('http://forms.example.com/a', prefixes), false);
+        assert.equal(matchesAllowedPrefix('https://forms.example.com/anything', ['https://forms.example.com/']), true);
         assert.equal(matchesAllowedPrefix('https://x.test/f', ['x.test']), false);
         assert.deepEqual(parsePrefixes(' https://a.test/x , ,https://b.test/ '), ['https://a.test/x', 'https://b.test/']);
     });
@@ -96,6 +102,34 @@ describe('guards', () => {
     });
 });
 
+describe('network policy', () => {
+    it('flags private, loopback, link-local and mapped addresses', () => {
+        for (const ip of ['10.0.0.1', '127.0.0.1', '169.254.169.254', '172.16.0.1', '192.168.1.1', '100.64.0.1', '0.0.0.0', '::1', 'fd00::1', 'fe80::1', '::ffff:10.0.0.1', '[::1]']) {
+            assert.equal(isPrivateAddress(ip), true, ip);
+        }
+        for (const ip of ['8.8.8.8', '1.1.1.1', '2606:4700::1111']) assert.equal(isPrivateAddress(ip), false, ip);
+    });
+
+    it('allows only public http(s) hosts, using DNS for names', async () => {
+        const resolver = async (host: string) => {
+            if (host === 'inside.example') return [{ address: '10.0.0.5' }];
+            if (host === 'mixed.example') return [{ address: '93.184.216.34' }, { address: '127.0.0.1' }];
+            if (host === 'gone.example') throw new Error('ENOTFOUND');
+            return [{ address: '93.184.216.34' }];
+        };
+        const policy = new HostPolicy(false, resolver);
+        assert.equal(await policy.allowed('https://forms.example.com/f'), true);
+        assert.equal(await policy.allowed('https://inside.example/f'), false);
+        assert.equal(await policy.allowed('https://mixed.example/f'), false);
+        assert.equal(await policy.allowed('https://gone.example/f'), false);
+        assert.equal(await policy.allowed('http://169.254.169.254/latest'), false);
+        assert.equal(await policy.allowed('http://localhost:3000/'), false);
+        assert.equal(await policy.allowed('file:///etc/passwd'), false);
+        assert.equal(await policy.allowed('data:text/plain,hi'), true);
+        assert.equal(await new HostPolicy(true, resolver).allowed('http://127.0.0.1:3000/'), true);
+    });
+});
+
 describe('input validation', () => {
     it('defaults to a preview that cannot send', () => {
         const input = parseInput({ formUrl: 'demo', fields: [{ label: 'Details', value: 'x' }] });
@@ -105,9 +139,14 @@ describe('input validation', () => {
         assert.equal(input.includeScreenshot, true);
     });
 
-    it('rejects malformed digests, bad patterns, and empty answer lists', () => {
+    it('rejects malformed digests, bad phrase lists, and empty answer lists', () => {
         assert.throws(() => parseInput({ formUrl: 'demo', mode: 'submit', fields: [{ label: 'a', value: 'b' }], confirmDigest: 'XYZ' }), InputError);
-        assert.throws(() => parseInput({ formUrl: 'demo', fields: [{ label: 'a', value: 'b' }], confirmationPattern: '(' }), InputError);
+        assert.throws(() => parseInput({ formUrl: 'demo', fields: [{ label: 'a', value: 'b' }], confirmationPhrases: 'thanks' }), InputError);
+        assert.throws(
+            () => parseInput({ formUrl: 'demo', fields: [{ label: 'a', value: 'b' }], confirmationPhrases: Array.from({ length: 11 }, () => 'x') }),
+            InputError,
+        );
+        assert.deepEqual(parseInput({ formUrl: 'demo', fields: [{ label: 'a', value: 'b' }], confirmationPhrases: ['(a+)+$'] }).confirmationPhrases, ['(a+)+$']);
         assert.throws(() => parseInput({ formUrl: 'demo', mode: 'preview', fields: [] }), InputError);
         assert.throws(() => parseInput({ formUrl: 'demo', mode: 'delete', fields: [{ label: 'a', value: 'b' }] }), InputError);
         assert.doesNotThrow(() => parseInput({ formUrl: 'demo', mode: 'inspect' }));
