@@ -23,7 +23,7 @@ Plain words, as in PLAN D13: the jaw clench is a muscle signal; the imagined fis
 
 1. Three role pages in the existing Next.js app: `/station` (role Station), `/speaker` (role Speaker), and asking on the existing `/partner` page (role Partner). Each pairs once with `request_pairing` and the owner's `approve_pairing`, keeps its SpacetimeDB token in `localStorage` under `<host>/<db>/auth_token/<role>`, and never puts a token in the page address.
 2. The station never runs its own clock. It plays what `scan_state` says, and relays each command to `gesture(...)` with the step and option the wearer was actually hearing at the command's onset (the heard log, 2.6).
-3. Input is the decoder over `ws://127.0.0.1:8765` (port proposed, Shashank confirms), or a labeled keyboard or USB switch. Key and switch presses carry `source` `key` or `switch`, the session label starts with `keyboard-` or `switch-`, and the station screen says so in words.
+3. Input is the decoder over `ws://127.0.0.1:8765` (port confirmed by Shashank, Oct 24 8:45 AM PDT), or a labeled keyboard or USB switch. Key and switch presses carry `source` `key` or `switch`, the session label starts with `keyboard-` or `switch-`, and the station screen says so in words.
 4. The station beats `heartbeat(beat_seq, decoder_healthy)` every `config.heartbeat_ms` (500) while it owns the session and its earpiece audio is running. `decoder_healthy` means "the person's input path is live" for the chosen mode.
 5. Earpiece: Cartesia Sonic through a byte-for-byte copy of the cartesia browser code, one context per option, the option's own tone, the pronunciation dictionary id when one exists, every option of a version synthesized in rank order before its scan, stock phrases cached once. Each clip's length goes to `report_clip_ready` (the scan's dwell), and each read's word timestamps go to `report_word_timings` (module v2, in progress) so the board can mark the word being read.
 6. Errands and calls: when the newest errand is Previewed (or the newest call is Prepared), the station reads it back in the steady voice with a fixed confirm sentence on the end, then calls `report_readback_done`. CONFIRM carries the digest of the read-back this station finished playing.
@@ -210,7 +210,7 @@ One focus: what is in the earpiece now. Tokens and words from `docs/ui.md`.
 
 | Item | Rule |
 |---|---|
-| Address | `ws://127.0.0.1:<port>`, port 8765 by default (**design**, proposal: the contract leaves the port open, and `switch/` is empty today, **checked**). The port is a field on the setup screen, kept in `localStorage` key `neurolingo/station/decoder_port`. |
+| Address | `ws://127.0.0.1:<port>`, port 8765 by default (confirmed by Shashank, Oct 24 8:45 AM PDT; `switch/` is empty today, **checked**). The port is a field on the setup screen, kept in `localStorage` key `neurolingo/station/decoder_port`. |
 | When | Open in headset mode only, as soon as the page is paired, with or without a session, so the screen shows decoder health before Start session. |
 | Reconnect | On close or error: wait 500 ms, then 1 s, then 2 s, then every 2 s, forever while in headset mode (**design**: it is local, and the decoder may restart). |
 | Frames | Text frames only; binary frames are ignored. Each frame is one JSON object. |
@@ -871,11 +871,11 @@ Three tracks run in parallel after a short shared start. All files are in `web/`
 
 | # | Question | Blocks | Who |
 |---|---|---|---|
-| O1 | The decoder's port (8765 proposed) and confirmation that it sends exactly the contract messages, with `health` at least every 250 ms. `switch/` is empty (**checked**) | the headset path (not keyboard tests) | Shashank |
+| O1 | Port 8765 confirmed (Shashank, Oct 24 8:45 AM PDT, after the contract messages and the 250 ms health rule were sent to him). Still open: a first run of his decoder against the station (L4). `switch/` is empty (**checked**) | the headset path (not keyboard tests) | Shashank |
 | O2 | Publish `say-when-dev` with `CARTESIA_API_KEY` (`spacetime/README.md`, "Adding the Cartesia key") and check one real mint | every voice: earpiece, speaker, Ink-2. Without it only silent keyboard tests run | Stephen |
 | O3 | Result of Chrome test 5.1 on the EEG laptop | where the station is served (deployed https or `http://localhost:3000`) | first person with the laptop |
 | O4 | Approve the input labeling: session labels `<mode>-<purpose>` and W1 on the dashboards, and whether R1 lands before the Sat 8 PM schema freeze | showing any keyboard or switch session to judges | Stephen |
-| O5 | Where the web app is deployed (the Vercel project and its root folder), so the cartesia copy (C3) and the new pages ship | the deployed station, speaker and partner asking | Stephen |
+| O5 | Closed Oct 24: Vercel project `neurolingo-web`, root `web/`, production alias `neurolingo-web.vercel.app`, reading `say-when-demo` | the deployed station, speaker and partner asking | Stephen |
 | O6 | Which device is the speaker: a laptop with a loudspeaker, or a phone (5.6) | B2 testing | Leon or Stephen |
 | O7 | Household names for Ink-2 keyterms need a private route; v1 ships none | name accuracy only | Stephen |
 | O8 | Confirm that the paired partner phone keeps following the room toggle (no words with sharing off), as designed in 4.4 | B3 details | Stephen |
@@ -890,9 +890,9 @@ Three tracks run in parallel after a short shared start. All files are in `web/`
 | R2 | module, optional | A station reducer such as `report_heard(step_seq, lag_ms)`, or a `lag_ms` argument on `report_word_timings` | a judge-checkable earpiece start lag (word timings are measured inside the clip, not against the clock) |
 | R3 | module, optional | YES while idle ignores a command whose `heard_step_seq` is older than the step at which the scan ended (`ignored:stale_step`) | a late YES from a veto does not open the menu |
 | R4 | module, optional | A pause reason for station audio failure (an appended `PauseReason` variant) and a station-callable pause | an earpiece failure does not read as "headset lost" |
-| W1 | dashboards (Stephen) | C6: read the input mode from the session label; "Keyboard input", "Switch input" and "Input off" on the chip, the banner and the command legend | nothing is passed off as headset input |
+| W1 | dashboards (Stephen) | Done Oct 24: the input kind comes from the session label in `board_session_ledger`; keyboard and switch sessions read as key or switch presses on every screen, and a label that names no input claims no brain or jaw signal (`web/test/input-words.test.ts`). Per-command source still needs R1 | nothing is passed off as headset input |
 | T1 | telemetry (Stephen) | Skip or tag sessions whose label starts with `keyboard-` or `switch-` | headset statistics stay headset statistics |
-| D1 | decoder (Shashank) | Port 8765, the contract messages, a `source` of `imagery` or `jaw` per command; optional later: an ack message | 2.4 |
+| D1 | decoder (Shashank) | Port 8765 (confirmed Oct 24), the contract messages, a `source` of `imagery` or `jaw` per command; optional later: an ack message | 2.4 |
 
 ---
 

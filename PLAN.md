@@ -69,7 +69,7 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⛔ blocked
 
 | Contract | Owner | Consumers | Definition |
 |----------|-------|-----------|------------|
-| Decoder event | Shashank | station page (Stephen) | The decoder sends `{ type: "gesture", id, command, onsetAgeMs, confidence, source }` and `{ type: "health", decoderHealthy }` (at least every 250 ms) over `ws://127.0.0.1:<port>` to the station page. `command` is `YES`, `NO`, `CONFIRM`, `STOP` or `HEADSET_OFF` (D11). The decoder never calls SpacetimeDB itself. |
+| Decoder event | Shashank | station page (Stephen) | The decoder sends `{ type: "gesture", id, command, onsetAgeMs, confidence, source }` and `{ type: "health", decoderHealthy }` (at least every 250 ms) over `ws://127.0.0.1:8765` to the station page (port confirmed by Shashank, Oct 24 8:45 AM). `command` is `YES`, `NO`, `CONFIRM`, `STOP` or `HEADSET_OFF` (D11). The decoder never calls SpacetimeDB itself. |
 | Gesture reducer | Stephen | station page | `gesture(gesture_id, command, heard_step_seq, heard_option_id, heard_digest, confidence, source, onset_age_ms)`, Station role only, idempotent on `gesture_id`. A refused command is recorded as `ignored:<reason>`, not thrown. |
 | Options | Stephen | station, web | Private `answer_option` rows, written only by the sidecar through `agent_publish_options(job_id, attempt, ...)`: 1 to 4 options, exactly 2 for a yes or no question; `kind` is `reply`, `errand`, `call` or `menu`. |
 | Pipeline event | Stephen | web | Public, content-free `pipeline_event { stage, status, detail, ms, counts_json, ... }`; content lives in the private `pipeline_payload` and reaches the board only while sharing is on. |
