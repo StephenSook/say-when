@@ -129,6 +129,7 @@ async function run(result: ConfigResult, log: Logger): Promise<number> {
         calls: wired.dialer !== null,
         model: config.planner.model,
         effort: config.planner.effort,
+        yesNoFast: config.speed.yesNoFast,
     });
 
     const db = await connect(result, log);
@@ -164,6 +165,7 @@ async function run(result: ConfigResult, log: Logger): Promise<number> {
         now: Date.now,
         clock: () => performance.now(),
         requestId: () => `call-${randomUUID().replace(/-/g, '').slice(0, 24)}`,
+        yesNoFast: config.speed.yesNoFast,
     };
     calls = new CallRunner({ db, dialer: wired.dialer, log, clock: () => performance.now(), now: Date.now });
     const errands = new ErrandRunner({ db, errands: wired.errands, previews, log, clock: () => performance.now() });

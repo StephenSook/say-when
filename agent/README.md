@@ -14,6 +14,7 @@ It writes no `speak`, `listen` or `select` step. The module writes one speak ste
 
 **Options job** (`agent_queue`, kind Options), for a partner question or a menu item the person picked:
 
+0. **Yes or no fast path** (`AGENT_YES_NO_FAST`, on by default; `src/fastpath.ts`). A partner question that is clearly yes or no gets two stock options at once, `Yes.` then `No.` (replies, provenance `stock`), published final with `answer_mode` `yes_no`: no memory, no search, no Claude. In yes_no mode the station plays only the stock prompt "Yes or no?" and YES picks rank 1, NO rank 2, so the word said aloud is exactly the one the person chose. The rule is deterministic and conservative: the question begins with one of do, does, did, is, are, was, were, can, could, will, would, should, shall, have, has, had, may, might; has no "or", "either", "versus" or "vs"; has no wh-word anywhere (what, when, where, which, who, whom, whose, why, how, whether); is one sentence; and does not end with "." or "!". Contractions ("Don't", "Isn't") and menu turns go the normal way. The smoke tag `[yes_no]` always takes it. The decision and its reason code are logged for every partner question. Claude is not asked to check it: the module ends an Options job only with a final publish, so a check that agreed would have to publish the same two options again as a second version, which the station switches to at the end of the pass with a fresh set of passes.
 1. **Memory first.** Moss recalls the person's own past replies to this partner and their preferences, locally, in milliseconds.
 2. **Search only when needed (D8).** `classifyQuestion` decides on the laptop whether the question needs outside facts. "Are you tired?" never waits on a search. Menu turns never search.
 3. **Search.** RAG Web Browser, or the Google Maps Scraper near the venue for place questions when `AGENT_PLACES_NEAR` is set. The search has its own deadline (20 s by default) so it stays inside the module's 45 s job lease, and the client does not retry: the question is sent once, right after the sidecar read the web search consent. While it runs, the person's own past replies are published as early options (when at least two clear the score floor and the question does not read like yes or no).
@@ -116,6 +117,7 @@ Names only; `.env.example` lists them all. Never commit real values.
 | `AGENT_TIME_ZONE` | the date and times in the planner prompt | `America/Los_Angeles` |
 | `AGENT_MAX_JOBS` | jobs at once | 3 |
 | `AGENT_MAX_OPTIONS` | options per question | 4 |
+| `AGENT_YES_NO_FAST` | the yes or no fast path | on; `off` sends every question to the planner |
 
 Each errand form also needs an Errand consent row in the module for its `formKey`, and each call contact a Call consent row for its id; the module refuses the pick otherwise.
 

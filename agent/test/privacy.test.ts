@@ -174,6 +174,7 @@ const ALLOWED_LABELS: ReadonlySet<string> = (() => {
         'preview read-back too long',
         'preview bad response',
         'preview error',
+        'yes no stock',
     ]);
     const space = (code: string) => code.replace(/_/g, ' ');
     for (const step of ['memory recall', 'web index', 'web search']) {
@@ -242,6 +243,18 @@ describe('privacy', () => {
         assert.ok(details.includes('web http 402'));
         assert.ok(details.includes('claude invalid reply'));
         assert.ok(details.includes('preview refused: captcha'));
+    });
+
+    it('keeps content out of the public events and the log on the yes or no fast path', async () => {
+        // SECRET.question begins with "Is": it takes the fast path.
+        const h = harness({ yesNoFast: true });
+        open = h;
+        h.orchestrator.start();
+        const jobId = h.db.addOptionsJob({ questionText: SECRET.question });
+        await waitFor(() => h.db.job(jobId)?.status === 'done', 3_000, 'fast path');
+        assert.equal(h.db.publishes[0]?.options[0]?.provenance, 'stock', 'the run took the fast path');
+        checkPublicEvents(h);
+        assert.deepEqual(leaks(h.log.text()), [], 'content reached the log');
     });
 
     it('keeps every piece of content out of the logs', async () => {

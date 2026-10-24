@@ -11,6 +11,7 @@ import type { CallRequest } from '@say-when/cartesia/server';
 import { LIMITS } from './contract.js';
 import type { AgentDb } from './db/db.js';
 import { callReducer } from './db/retry.js';
+import { classifyYesNo, stockYesNo } from './fastpath.js';
 import type { Logger } from './log.js';
 import { applyOrder, buildOptions, looksYesNo, memoryFirstOptions } from './options.js';
 import { JobEvents, label, StaleAttemptError } from './pipeline.js';
@@ -103,6 +104,11 @@ export interface JobDeps {
     requestId: () => string;
     /** How often an open step renews the job lease (src/pipeline.ts). Default LEASE_HEARTBEAT_MS. */
     leaseHeartbeatMs?: number;
+    /**
+     * The yes or no fast path (AGENT_YES_NO_FAST, on by default in the config): a clear yes or no question gets the
+     * stock Yes and No at once instead of a plan (src/fastpath.ts). Off when unset.
+     */
+    yesNoFast?: boolean;
 }
 
 /**
@@ -233,6 +239,21 @@ export async function runOptionsJob(row: AgentQueueRow, attempt: number, deps: J
     // Set once the question's rows may be in the Moss web index, so they are forgotten whatever happens next.
     let mayBeIndexed = false;
     try {
+        // 0. The yes or no fast path (src/fastpath.ts): a clear yes or no question gets the stock Yes and No at once,
+        // final, with no memory, search or Claude. The person hears "Yes or no?" and the picked word is said aloud.
+        if (!isMenu && deps.yesNoFast) {
+            const verdict = classifyYesNo(row.questionText);
+            deps.log.info(verdict.yesNo ? 'yes or no fast path: stock options' : 'yes or no fast path not taken', { job: row.jobId, why: verdict.reason });
+            if (verdict.yesNo) {
+                const options = stockYesNo();
+                // Written before the publish: a final publish ends the job, and the module refuses events after it.
+                await events.instant('plan', 'ok', 'yes no stock', 0, { counts: { optionCount: options.length, yesNo: true, final: true } });
+                await publish(deps.db, job, 'yes_no', options, true);
+                deps.log.info('options published', { job: row.jobId, options: options.length, mode: 'yes_no', ms: 0 });
+                return;
+            }
+        }
+
         // 1. Memory first.
         const recall = await recallMemory(deps.retrieval, events, row, signal, allowMemory);
         if (signal.aborted) throw new JobAbortedError();

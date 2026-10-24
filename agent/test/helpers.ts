@@ -479,6 +479,8 @@ export interface HarnessOptions {
     /** The call dial deadline after the CONFIRM, and the allowed clock difference (CallRunner). */
     confirmToDialMs?: number;
     clockSkewMs?: number;
+    /** The yes or no fast path (JobDeps.yesNoFast). Off by default here, so the older tests keep the planner path. */
+    yesNoFast?: boolean;
 }
 
 export function harness(options: HarnessOptions = {}): Harness {
@@ -521,6 +523,7 @@ export function harness(options: HarnessOptions = {}): Harness {
         clock,
         requestId: () => `call-test-${++requests}`,
         leaseHeartbeatMs: options.leaseHeartbeatMs,
+        yesNoFast: options.yesNoFast,
     };
     // Short retry waits so the tests of claims that never reached the module run fast.
     const callRunner = new CallRunner({
