@@ -7,8 +7,8 @@ import { Identity, Timestamp } from 'spacetimedb';
 import { SenderError } from 'spacetimedb/server';
 import { getConfig } from './config';
 import type { Ctx, ReadDb } from './ctx';
-import { cancelJobs, createJob } from './jobs';
-import { contactIsGood, idleLapsed } from './liveness';
+import { cancelJobs, createJob, endJob } from './jobs';
+import { contactIsGood, idleDue } from './liveness';
 import type {
   AnswerOption,
   CallRequest,
@@ -31,6 +31,7 @@ import {
   normCode,
   onceAt,
   plusMs,
+  publicCode,
   requireMatch,
   requireOptionalText,
   requireText,
@@ -73,23 +74,36 @@ export interface PendingWork {
   errand?: Errand;
   /** A call nobody has claimed yet (Prepared to Confirmed). */
   call?: CallRequest;
-  /** A call the agent is dialing or on. */
+  /** A call the agent is dialing or on (the newest, if there were ever more than one). */
   liveCall?: CallRequest;
+  /** Every live call of the session, so a STOP hangs up all of them, never only the newest. */
+  liveCalls: CallRequest[];
   /** An errand the agent is submitting. */
   submitting?: Errand;
 }
 
 export function pendingWork(db: ReadDb, sessionId: bigint): PendingWork {
-  const out: PendingWork = {};
+  const out: PendingWork = { liveCalls: [] };
   for (const e of db.errand.errandBySession.filter(sessionId)) {
     if (isErrandPreClaim(e) && (!out.errand || e.id > out.errand.id)) out.errand = e;
     if (e.status.tag === 'Submitting' && (!out.submitting || e.id > out.submitting.id)) out.submitting = e;
   }
   for (const c of db.callRequest.callBySession.filter(sessionId)) {
     if (isCallPreClaim(c) && (!out.call || c.id > out.call.id)) out.call = c;
-    if (isCallLive(c) && (!out.liveCall || c.id > out.liveCall.id)) out.liveCall = c;
+    if (isCallLive(c)) {
+      out.liveCalls.push(c);
+      if (!out.liveCall || c.id > out.liveCall.id) out.liveCall = c;
+    }
   }
   return out;
+}
+
+/** The session already has a call being dialed or on the line. One call at a time: a second is refused. */
+function lineBusy(db: ReadDb, sessionId: bigint, exceptCallId = 0n): boolean {
+  for (const c of db.callRequest.callBySession.filter(sessionId)) {
+    if (c.id !== exceptCallId && isCallLive(c)) return true;
+  }
+  return false;
 }
 
 export function hasAnythingPending(p: PendingWork): boolean {
@@ -118,6 +132,7 @@ const SAY: Record<string, string> = {
   lease_lapsed: 'It may or may not have gone through.',
   expired: 'That call is no longer ready. No call was made.',
   duplicate_request: 'That call was already set up once. No call was made.',
+  line_busy: 'A call is already in progress. No call was made.',
 };
 
 function sayFor(code: string, isCall: boolean): string {
@@ -156,6 +171,22 @@ export function clearErrandTimers(ctx: Ctx, errandId: bigint, kinds?: ErrandTime
 export function armErrandTimer(ctx: Ctx, errandId: bigint, kind: ErrandTimerKind['tag'], seq: number, when: Timestamp): void {
   clearErrandTimers(ctx, errandId, [kind]);
   ctx.db.errandLease.insert({ scheduledId: 0n, scheduledAt: onceAt(when), errandId, kind: { tag: kind }, seq });
+}
+
+/** A timer row's one-shot time has come (its reducer may not have run yet). */
+function timerDue(row: { scheduledAt: { tag: string; value: unknown } }, now: Timestamp): boolean {
+  return row.scheduledAt.tag === 'Time' && (row.scheduledAt.value as Timestamp).microsSinceUnixEpoch <= now.microsSinceUnixEpoch;
+}
+
+/**
+ * The errand's armed deadline of this kind and seq has passed, though its timer may not have run yet. A report that
+ * arrives after it is refused, and the timer then applies the timeout: a timeout means no.
+ */
+function errandDeadlinePassed(ctx: Ctx, errandId: bigint, kind: ErrandTimerKind['tag'], seq: number): boolean {
+  for (const r of ctx.db.errandLease.errandId.filter(errandId)) {
+    if (r.kind.tag === kind && r.seq === seq && timerDue(r, ctx.timestamp)) return true;
+  }
+  return false;
 }
 
 function errandEvent(ctx: Ctx, e: Errand, key: string, status: 'started' | 'ok' | 'error', detail: string, ms?: number, actor: Actor = 'Module'): void {
@@ -220,6 +251,14 @@ export function clearCallTimers(ctx: Ctx, callId: bigint, kinds?: CallTimerKind[
 export function armCallTimer(ctx: Ctx, callId: bigint, kind: CallTimerKind['tag'], seq: number, when: Timestamp): void {
   clearCallTimers(ctx, callId, [kind]);
   ctx.db.callTimer.insert({ scheduledId: 0n, scheduledAt: onceAt(when), callId, kind: { tag: kind }, seq });
+}
+
+/** As `errandDeadlinePassed`, for a call's Readback, ConfirmWindow or Lease deadline. */
+function callDeadlinePassed(ctx: Ctx, callId: bigint, kind: CallTimerKind['tag'], seq: number): boolean {
+  for (const r of ctx.db.callTimer.callId.filter(callId)) {
+    if (r.kind.tag === kind && r.seq === seq && timerDue(r, ctx.timestamp)) return true;
+  }
+  return false;
 }
 
 function callEvent(ctx: Ctx, c: CallRequest, key: string, status: 'started' | 'ok' | 'error', detail: string, actor: Actor = 'Module'): void {
@@ -482,13 +521,17 @@ export function createCallFromPick(ctx: Ctx, cfg: Config, s: Session, q: Questio
     createdAt: ctx.timestamp,
     updatedAt: ctx.timestamp,
   };
+  // One call at a time: a call picked while another is dialing or on the line is refused here, so a second call can
+  // never sit beside the live one (it could take STOP's hang-up away from the call that is actually connected).
   const refusal = !action
     ? 'bad_action'
     : !hasConsent(ctx.db, 'Call', action.contactId)
       ? 'no_consent'
       : isAfter(ctx.timestamp, expiresAt)
         ? 'expired'
-        : '';
+        : lineBusy(ctx.db, s.id)
+          ? 'line_busy'
+          : '';
   if (refusal) {
     const c = ctx.db.callRequest.insert({
       ...base,
@@ -523,6 +566,8 @@ export function readbackDone(ctx: Ctx, s: Session, kind: string, id: bigint, dig
     if (e.status.tag === 'AwaitingConfirm' && e.previewDigest === digest) return; // a retry
     if (e.status.tag !== 'Previewed') throw new SenderError('errand is not waiting for a read-back');
     if (digest !== e.previewDigest) throw new SenderError('digest mismatch: the station played a stale read-back');
+    // Too late: the Readback timer (due, perhaps not run yet) stops the errand; a late report never opens a window.
+    if (errandDeadlinePassed(ctx, e.id, 'Readback', e.windowSeq)) throw new SenderError('read-back deadline passed');
     const windowSeq = e.windowSeq + 1;
     const next = saveErrand(ctx, {
       ...e,
@@ -544,6 +589,7 @@ export function readbackDone(ctx: Ctx, s: Session, kind: string, id: bigint, dig
     if (c.status.tag === 'AwaitingConfirm' && c.scriptDigest === digest) return; // a retry
     if (c.status.tag !== 'Prepared') throw new SenderError('call is not waiting for a read-back');
     if (digest !== c.scriptDigest) throw new SenderError('digest mismatch: the station played a stale read-back');
+    if (callDeadlinePassed(ctx, c.id, 'Readback', c.windowSeq)) throw new SenderError('read-back deadline passed');
     const windowSeq = c.windowSeq + 1;
     const next = saveCall(ctx, {
       ...c,
@@ -586,6 +632,9 @@ interface Gate {
  *
  * A closed window is checked before the quiet hold: an early CONFIRM restarts the hold, and a stale one that
  * arrives after the window closed (before its timer ran) must not reopen it. A timeout means no.
+ *
+ * A passed idle deadline never reaches here: `gesture` applies a due idle pause before it decides any command
+ * (gesture.ts `applyDueIdle`), so a CONFIRM after the deadline finds the session paused and the errand voided.
  */
 function gateReason(ctx: Ctx, sessionId: bigint, gate: Gate, g: ConfirmInput): string {
   if (gate.status !== 'AwaitingConfirm' || !gate.readbackDoneAt || !gate.confirmOpensAt || !gate.confirmClosesAt) {
@@ -715,6 +764,9 @@ export function attachPreview(ctx: Ctx, errandId: bigint, r: PreviewResult): boo
   }
   const e = ctx.db.errand.id.find(errandId);
   if (!e || e.status.tag !== 'Drafted') return false; // STOP was quicker: the errand is unchanged
+  // A preview after its deadline is dropped like a lapsed attempt; the Preview timer (due, perhaps not run yet)
+  // fails the errand. Accepting it would delete that timer and revive an errand that timed out.
+  if (errandDeadlinePassed(ctx, e.id, 'Preview', 0)) throw new SenderError('stale attempt');
   const cfg = getConfig(ctx.db);
   clearErrandTimers(ctx, e.id, ['Preview']);
   const common = {
@@ -723,8 +775,8 @@ export function attachPreview(ctx: Ctx, errandId: bigint, r: PreviewResult): boo
     previewMs: u32(r.previewMs),
     previewedAt: ctx.timestamp,
   };
-  // A reason code reaches the public ledger, cue and board: keep it code-shaped whatever the Actor sent.
-  r = { ...r, reasonCode: normCode(r.reasonCode) };
+  // A reason code reaches the public ledger, cue and board: only a code from the fixed list, whatever the Actor sent.
+  r = { ...r, reasonCode: publicCode(r.reasonCode, r.status) };
   if (r.status === 'previewed' && !hasConsent(ctx.db, 'Errand', e.formKey)) {
     r = { ...r, status: 'refused', reasonCode: 'no_consent', reason: sayFor('no_consent', false) };
   }
@@ -788,7 +840,8 @@ function requirePresent(ctx: Ctx, sessionId: bigint): void {
   const s = ctx.db.scanState.sessionId.find(sessionId);
   if (!s || s.phase.tag === 'Paused') throw new SenderError('session paused');
   if (!contactIsGood(ctx.db, sessionId, ctx.timestamp)) throw new SenderError('no contact');
-  if (idleLapsed(ctx.db, session, ctx.timestamp)) throw new SenderError('idle deadline passed');
+  // As `idle_pause` decides: with a call Connected the deadline only re-arms, so nothing is voided.
+  if (idleDue(ctx.db, session, ctx.timestamp)) throw new SenderError('idle deadline passed');
 }
 
 /**
@@ -850,8 +903,8 @@ export function completeErrand(ctx: Ctx, errandId: bigint, given: CompleteInput)
   requireOptionalText(given.screenshotUrl, 'screenshot_url', 1000);
   requireOptionalText(given.reasonCode, 'reason_code', 40);
   requireOptionalText(given.reason, 'reason', 300);
-  // The code reaches the public ledger, cue and board: keep it code-shaped whatever the sidecar sent.
-  const r: CompleteInput = { ...given, reasonCode: normCode(given.reasonCode) };
+  // The code reaches the public ledger, cue and board: only a code from the fixed list, whatever the sidecar sent.
+  const r: CompleteInput = { ...given, reasonCode: publicCode(given.reasonCode, given.status) };
   const e = ctx.db.errand.id.find(errandId);
   if (!e || e.claimAttempt !== r.attempt || !e.claimedBy.isEqual(ctx.sender)) throw new SenderError('stale attempt');
   let late = false;
@@ -929,6 +982,7 @@ export function claimCall(ctx: Ctx, callId: bigint, digest: string): CallRequest
   if (digest !== c.scriptDigest) throw new SenderError('digest mismatch');
   if (!hasConsent(ctx.db, 'Call', c.contactId)) throw new SenderError('no call consent');
   requirePresent(ctx, c.sessionId);
+  if (lineBusy(ctx.db, c.sessionId, c.id)) throw new SenderError('line busy');
   const cfg = getConfig(ctx.db);
   const attempt = c.claimAttempt + 1;
   const next = saveCall(ctx, {
@@ -961,6 +1015,11 @@ function requireFencedCall(ctx: Ctx, callId: bigint, attempt: number): CallReque
   return c;
 }
 
+/** The dial lease of the call's current attempt has run out, though `call_timeout` may not have run yet. */
+function callLeaseLapsed(ctx: Ctx, c: CallRequest): boolean {
+  return callDeadlinePassed(ctx, c.id, 'Lease', c.claimAttempt);
+}
+
 /** The Dialer's progress. Out-of-order or repeated reports are ignored quietly; a call is never retried. */
 export function reportCallStatus(ctx: Ctx, callId: bigint, r: CallStatusInput): void {
   if (!['ringing', 'connected', 'ended', 'failed', 'refused'].includes(r.status)) {
@@ -981,12 +1040,15 @@ export function reportCallStatus(ctx: Ctx, callId: bigint, r: CallStatusInput): 
     refused: ['Dialing', 'Ringing'],
   };
   if (!allowed[r.status]!.includes(from)) return;
+  // Progress after the dial lease ran out is a zombie's write: ignored quietly, like an out-of-order report. A final
+  // report still lands (it ends the call and says how), until `call_timeout` has marked the call unknown.
+  if (!terminal && callLeaseLapsed(ctx, c)) return;
   const patch: Partial<CallRequest> = {};
   if (r.status === 'ringing') Object.assign(patch, { status: { tag: 'Ringing' }, ringingAt: ctx.timestamp });
   if (r.status === 'connected') Object.assign(patch, { status: { tag: 'Connected' }, connectedAt: ctx.timestamp });
   if (r.status === 'ended') Object.assign(patch, { status: { tag: 'Ended' }, result: r.result || 'answered', endReason: r.endReason, endedAt: ctx.timestamp });
-  // The code reaches the public ledger and board: keep it code-shaped whatever the Dialer sent.
-  const code = normCode(r.reasonCode);
+  // The code reaches the public ledger and board: only a code from the fixed list, whatever the Dialer sent.
+  const code = publicCode(r.reasonCode, r.status === 'refused' ? 'refused' : 'call_failed');
   if (r.status === 'failed') Object.assign(patch, { status: { tag: 'Failed' }, result: r.result || 'failed', endReason: r.endReason, reasonCode: code, reason: r.reason, endedAt: ctx.timestamp });
   if (r.status === 'refused') Object.assign(patch, { status: { tag: 'Refused' }, result: 'refused', reasonCode: code, reason: r.reason, endedAt: ctx.timestamp });
   const next = saveCall(ctx, { ...c, ...patch });
@@ -1003,7 +1065,9 @@ export function addCallLine(ctx: Ctx, callId: bigint, attempt: number, lineKey: 
   requireMatch(lineKey, /^[A-Za-z0-9:_.-]{1,128}$/, 'line_key');
   if (role !== 'assistant' && role !== 'recipient') throw new SenderError('role must be assistant or recipient');
   requireText(text, 'text', 500);
-  requireFencedCall(ctx, callId, attempt);
+  const c = requireFencedCall(ctx, callId, attempt);
+  // Lines belong to a live call inside its lease. One that ended, failed or lapsed takes none (ignored quietly).
+  if (!isCallLive(c) || callLeaseLapsed(ctx, c)) return;
   if (ctx.db.callLine.lineKey.find(lineKey)) return; // a retry
   ctx.db.callLine.insert({ id: 0n, callId, lineKey, role, text, at: ctx.timestamp });
 }
@@ -1021,7 +1085,18 @@ export function callTimedOut(ctx: Ctx, callId: bigint, kind: CallTimerKind['tag'
       return;
     case 'Lease': {
       if (!isCallLive(c) || seq !== c.claimAttempt) return;
-      const next = saveCall(ctx, { ...c, status: { tag: 'Failed' }, result: 'unknown', reasonCode: 'lease_lapsed', reason: sayFor('lease_lapsed', true), endedAt: ctx.timestamp });
+      // The module no longer knows the call's state, and the call may still be on the line: ask the sidecar to hang
+      // up (`call_queue` keeps showing it the row), since after this STOP has no live call to act on.
+      const next = saveCall(ctx, {
+        ...c,
+        status: { tag: 'Failed' },
+        result: 'unknown',
+        reasonCode: 'lease_lapsed',
+        reason: sayFor('lease_lapsed', true),
+        endedAt: ctx.timestamp,
+        cancelRequested: true,
+        cancelReason: c.cancelRequested ? c.cancelReason : 'operator',
+      });
       clearCallTimers(ctx, c.id);
       emitCue(ctx, c.sessionId, 'call_ended', { reason: 'unknown', callId: c.id, questionId: c.questionId });
       appendLedger(ctx, c.sessionId, 'call', 'Scheduler', { callId: c.id, questionId: c.questionId, outcome: 'failed', reason: 'lease_lapsed' });
@@ -1047,6 +1122,20 @@ export function stopUncovered(ctx: Ctx, scope: ConsentScope['tag'], actor: Actor
         if (hasConsent(ctx.db, 'Call', c.contactId)) continue;
         if (isCallPreClaim(c)) stopCall(ctx, c, 'consent_revoked', { actor });
         else requestCallCancel(ctx, c, 'operator', { actor });
+      }
+    }
+  }
+  // Web search and memory are flags copied onto a job when it is made. Revoking the scope clears the flag on every
+  // job not yet done (the sidecar reads it from `agent_queue`; a later `search` report is refused), and cancels a
+  // Remember job, which would otherwise still write the spoken reply into memory.
+  if ((scope === 'WebSearch' || scope === 'Memory') && !hasConsent(ctx.db, scope, '')) {
+    for (const tag of ['Pending', 'Claimed'] as const) {
+      for (const j of [...ctx.db.agentJob.jobByStatus.filter({ tag })]) {
+        if (scope === 'Memory' && j.kind.tag === 'Remember') {
+          endJob(ctx, j, 'Cancelled', 'consent_revoked');
+        } else if (scope === 'WebSearch' ? j.webSearchAllowed : j.memoryAllowed) {
+          ctx.db.agentJob.id.update({ ...j, ...(scope === 'WebSearch' ? { webSearchAllowed: false } : { memoryAllowed: false }), updatedAt: ctx.timestamp });
+        }
       }
     }
   }

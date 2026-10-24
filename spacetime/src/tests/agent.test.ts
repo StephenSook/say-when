@@ -2,6 +2,7 @@
 import { expect, test } from 'vitest';
 import { Identity } from 'spacetimedb';
 import * as m from '../index';
+import { publicCode } from '../util';
 import {
   advance,
   AGENT,
@@ -16,6 +17,7 @@ import {
   micros,
   newDb,
   now,
+  OWNER,
   pair,
   publish,
   question,
@@ -143,12 +145,12 @@ test('agent_fail with nothing to read fails the question and frees the clock', (
   const db = newDb();
   const q = ask(db);
   const job = claim(db, q.id);
-  as(db, AGENT, (ctx) => m.agentFail(ctx, { jobId: job.id, attempt: 1, reasonCode: 'model_down', reason: 'The model did not answer.' }));
+  as(db, AGENT, (ctx) => m.agentFail(ctx, { jobId: job.id, attempt: 1, reasonCode: 'planner_timeout', reason: 'The model did not answer.' }));
   expect(question(db, q.id).status.tag).toBe('Failed');
   expect(scan(db).phase.tag).toBe('Idle');
   const errors = [...db.db.pipelineEvent.eventBySession.filter(scan(db).sessionId)].filter((e) => e.status === 'error');
   expect(errors.map((e) => [e.stage, e.detail])).toEqual([
-    ['plan', 'failed: model_down'],
+    ['plan', 'failed: planner_timeout'],
     ['select', 'failed'],
   ]);
 });
@@ -201,14 +203,47 @@ test('agent_progress refuses a search without web search consent, a free-text la
   as(db, AGENT, (ctx) => m.agentProgress(ctx, { ...base, stage: 'retrieve', eventKey: 'k5', countsJson: JSON.stringify({ hits: 3, mossMs: 12, skippedRows: 0 }) }));
 });
 
-test('agent_fail and a refused preview keep reason codes code-shaped on every public row', () => {
+test('counts_json is stored as the checked object, so a duplicate key cannot hide a sentence in the public row', () => {
   const db = newDb();
   const q = ask(db);
   const job = claim(db, q.id);
-  as(db, AGENT, (ctx) => m.agentFail(ctx, { jobId: job.id, attempt: 1, reasonCode: 'Model Down!', reason: 'The model did not answer.' }));
+  // JSON.parse keeps the last `rows`, so the checks pass; the original text still holds the first one.
+  const sneaky = '{"rows":"alice takes lithium","rows":1}';
+  as(db, AGENT, (ctx) =>
+    m.agentProgress(ctx, { jobId: job.id, attempt: 1, eventKey: 'dup:1', stage: 'retrieve', status: 'ok', detail: 'memory', ms: 3, countsJson: sneaky, payloadJson: '' }),
+  );
+  const row = db.db.pipelineEvent.eventKey.find('dup:1')!;
+  expect(row.countsJson).toBe('{"rows":1}');
+  expect(row.countsJson).not.toContain('alice');
+});
+
+test('a reason code reaches public rows only from the fixed list: anything else becomes a module word', () => {
+  const db = newDb();
+  const q = ask(db);
+  const job = claim(db, q.id);
+  // Code-shaped is not content-free: `normCode` alone would publish this as `alice_takes_lithium`.
+  as(db, AGENT, (ctx) => m.agentFail(ctx, { jobId: job.id, attempt: 1, reasonCode: 'Alice takes lithium', reason: 'The model did not answer.' }));
   const rows = db.runQuery<{ kind: string; reason: string }>(m.boardLedger(db.anonymousViewContext()));
-  expect(rows.find((r) => r.kind === 'job_failed')!.reason).toBe('model_down_');
-  expect(db.db.agentJob.id.find(job.id)!.reason).toBe('model_down_');
+  expect(rows.find((r) => r.kind === 'job_failed')!.reason).toBe('agent_failed');
+  expect(db.db.agentJob.id.find(job.id)!.reason).toBe('agent_failed');
+  const show = (v: unknown) => JSON.stringify(v, (_k, x) => (typeof x === 'bigint' ? x.toString() : x));
+  for (const row of [...rows, ...db.db.pipelineEvent.iter()]) expect(show(row).toLowerCase()).not.toContain('alice');
+
+  // The sidecar's own codes keep their meaning: exact codes, prefixed codes and HTTP statuses, in any case.
+  const q2 = ask(db, 'Shall I check the bus times?');
+  const job2 = claim(db, q2.id);
+  as(db, AGENT, (ctx) => m.agentFail(ctx, { jobId: job2.id, attempt: 1, reasonCode: 'Planner_Timeout', reason: '' }));
+  expect(db.db.agentJob.id.find(job2.id)!.reason).toBe('planner_timeout');
+  for (const [given, kept] of [
+    ['preview_http_404', 'preview_http_404'],
+    ['not_sent_network', 'not_sent_network'],
+    ['captcha', 'captcha'],
+    ['preview_alice', 'x'],
+    ['http_999', 'x'],
+    ['planner_', 'x'],
+  ] as const) {
+    expect(publicCode(given, 'x'), given).toBe(kept);
+  }
 });
 
 test('publish refuses a call expiry that would not fit the stored timestamp', () => {
@@ -286,4 +321,33 @@ test('agent_queue shows pending jobs to every agent and claimed jobs only to the
   expect(theirs).toEqual([]);
   expect(question(db, q1.id).status.tag).toBe('Cancelled');
   expect(m.agentQueue(db.viewContext(auth(SPEAKER)))).toEqual([]);
+});
+
+test('revoking memory or web search consent reaches the jobs not yet done', () => {
+  const db = newDb();
+  grantConsent(db, 'memory');
+  grantConsent(db, 'web_search');
+  const q = scanning(db);
+  gesture(db, 'YES');
+  tick(db); // the reply is released
+  as(db, SPEAKER, (c) => m.replySpoken(c, { questionId: q.id, ms: 900 })); // queues a Remember job
+  const remember = claim(db, q.id, 'Remember');
+  const q2 = ask(db, 'Shall I look up the bus times?');
+  const options = claim(db, q2.id);
+  expect([options.webSearchAllowed, options.memoryAllowed]).toEqual([true, true]);
+  const revoke = (scope: 'WebSearch' | 'Memory') => {
+    const row = [...db.db.consent.consentByScope.filter({ tag: scope })].find((r) => r.revokedAt === undefined)!;
+    as(db, OWNER, (c) => m.revokeConsent(c, { consentId: row.id }));
+  };
+
+  revoke('WebSearch');
+  expect([db.db.agentJob.id.find(options.id)!.webSearchAllowed, db.db.agentJob.id.find(options.id)!.status.tag]).toEqual([false, 'Claimed']);
+  const search = { jobId: options.id, attempt: 1, eventKey: 'after-revoke', stage: 'search', status: 'started', detail: 'web', ms: 0, countsJson: '', payloadJson: '' };
+  expect(failure(() => as(db, AGENT, (c) => m.agentProgress(c, search)))).toContain('web search is not allowed');
+
+  revoke('Memory');
+  expect(db.db.agentJob.id.find(options.id)!.memoryAllowed).toBe(false);
+  expect([db.db.agentJob.id.find(remember.id)!.status.tag, db.db.agentJob.id.find(remember.id)!.reason]).toEqual(['Cancelled', 'consent_revoked']);
+  // The reply is never written into memory: the sidecar's late write is refused.
+  expect(failure(() => as(db, AGENT, (c) => m.agentDone(c, { jobId: remember.id, attempt: 1, countsJson: '' })))).toBe('stale attempt');
 });

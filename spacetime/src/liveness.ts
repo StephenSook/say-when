@@ -46,6 +46,22 @@ export function idleLapsed(db: ReadDb, session: Session, now: Timestamp): boolea
   return false;
 }
 
+/** A call of the session is Connected (the idle timer re-arms instead of pausing, so it never hangs one up). */
+export function hasConnectedCall(db: ReadDb, sessionId: bigint): boolean {
+  for (const c of db.callRequest.callBySession.filter(sessionId)) {
+    if (c.status.tag === 'Connected') return true;
+  }
+  return false;
+}
+
+/**
+ * The idle pause is due: the deadline passed and its timer would pause (no call is Connected), whether or not the
+ * timer has run yet. What `idle_pause` voids must not be confirmed or claimed after this point.
+ */
+export function idleDue(db: ReadDb, session: Session, now: Timestamp): boolean {
+  return idleLapsed(db, session, now) && !hasConnectedCall(db, session.id);
+}
+
 /**
  * For a resume after a signal pause: healthy, not lapsed, and healthy for at least `ms`, counted from whichever
  * is later, the start of the healthy run or the pause itself.

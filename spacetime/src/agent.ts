@@ -10,7 +10,7 @@ import {
   appendLedger,
   DETAIL_RE,
   KEY_RE,
-  normCode,
+  publicCode,
   requireCountsJson,
   requireMatch,
   requireOptionalText,
@@ -192,8 +192,8 @@ function failOptionsQuestion(ctx: Ctx, job: AgentJob, code: string, actor: 'Agen
 export function agentFail(ctx: Ctx, job: AgentJob, reasonCode: string, reason: string): void {
   requireOptionalText(reasonCode, 'reason_code', 40);
   requireOptionalText(reason, 'reason', 300);
-  // The code reaches the public ledger and cue rows: keep it code-shaped whatever the sidecar sent.
-  const code = normCode(reasonCode) || 'agent_failed';
+  // The code reaches the public ledger, cue and pipeline rows: only a code from the fixed list, whatever was sent.
+  const code = publicCode(reasonCode, 'agent_failed') || 'agent_failed';
   endJob(ctx, job, 'Failed', code);
   appendLedger(ctx, sessionOf(ctx, job), 'job_failed', 'Agent', { jobId: job.id, questionId: job.questionId, errandId: job.errandId, reason: code });
   if (job.kind.tag === 'Options') failOptionsQuestion(ctx, job, code, 'Agent');

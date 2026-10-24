@@ -117,6 +117,22 @@ test('a heartbeat that arrives after its lease ran out pauses and voids, even be
   expect(gesture(db, 'CONFIRM', { heardDigest: DIGEST }).outcome).toBe('ignored:nothing_to_confirm');
 });
 
+test('a reply is never released without heartbeat evidence, even after a deliberate resume left no lease row', () => {
+  const db = newDb();
+  const q = scanning(db);
+  expireLease(db); // liveness_expired pauses as HeadsetLost
+  // The host deletes a fired one-shot row (the harness does not): no lease is left, and no heartbeat comes.
+  for (const l of [...db.db.livenessLease.sessionId.filter(scan(db).sessionId)]) db.db.livenessLease.scheduledId.delete(l.scheduledId);
+  expect(gesture(db, 'STOP').outcome).toBe('accepted:pause'); // the signal pause becomes deliberate
+  settle(db);
+  expect(gesture(db, 'YES').outcome).toBe('accepted:resume'); // a deliberate pause resumes without a contact check
+  settle(db);
+  expect(gesture(db, 'YES', { heardStepSeq: scan(db).stepSeq }).outcome).toBe('accepted:pick');
+  tick(db); // the veto ends with no lease at all
+  expect([scan(db).phase.tag, scan(db).pauseReason?.tag]).toEqual(['Paused', 'HeadsetLost']);
+  expect(question(db, q.id).status.tag).toBe('Scanning'); // not Released: the speaker has nothing to say
+});
+
 test('a heartbeat just inside its lease keeps everything running', () => {
   const db = newDb();
   const errandId = errandAwaitingConfirm(db);

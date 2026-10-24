@@ -47,8 +47,9 @@ export function computeStats(db: ReadDb): SessionStats {
   let answered = 0;
   const toFirst: number[] = [];
   for (const q of db.question.questionBySession.filter(sessionId)) {
+    // Both counts are partner questions: the person's own menu and its follow-ups are not "questions answered".
     if (q.origin.tag === 'Partner') questions += 1;
-    if (['Released', 'Spoken', 'Acting'].includes(q.status.tag)) answered += 1;
+    if (q.origin.tag === 'Partner' && ['Released', 'Spoken', 'Acting'].includes(q.status.tag)) answered += 1;
     const first = firstScan.get(q.id);
     if (q.origin.tag === 'Partner' && first !== undefined) {
       toFirst.push(Number((first - q.askedAt.microsSinceUnixEpoch) / 1000n));

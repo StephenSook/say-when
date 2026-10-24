@@ -6,7 +6,7 @@
 import { t } from 'spacetimedb/server';
 import { optionsOf } from './clock';
 import { hasConsent, publicReason } from './consent';
-import { normCode } from './util';
+import { publicCode } from './util';
 import type { AnonContext, ReadDb, ViewContext } from './ctx';
 import spacetimedb, {
   AnswerMode,
@@ -520,14 +520,19 @@ export const errandQueue = spacetimedb.view({ public: true }, t.array(ErrandQueu
   return rows;
 });
 
-/** Agent (stretch): Confirmed calls to claim, plus the live ones this agent holds. */
+/**
+ * Agent (stretch): Confirmed calls to claim, plus the live ones this agent holds, plus its calls whose dial lease
+ * lapsed: those are Failed with `cancel_requested`, and stay here so the sidecar still hangs up a call that may be on
+ * the line (its `reconcile` cancels on `cancel_requested`; a row that leaves the view is only forgotten).
+ */
 export const callQueue = spacetimedb.view({ public: true }, t.array(CallQueueItem), (ctx) => {
   if (liveRole(ctx.db, ctx.sender) !== 'Agent') return [];
   const rows = [];
-  for (const tag of ['Confirmed', 'Dialing', 'Ringing', 'Connected'] as const) {
+  for (const tag of ['Confirmed', 'Dialing', 'Ringing', 'Connected', 'Failed'] as const) {
     for (const c of ctx.db.callRequest.callByStatus.filter({ tag })) {
       const mine = c.claimedBy.isEqual(ctx.sender);
       if (tag !== 'Confirmed' && !mine) continue;
+      if (tag === 'Failed' && !(c.reasonCode === 'lease_lapsed' && c.cancelRequested)) continue;
       rows.push({
         callId: c.id,
         status: c.status,
@@ -616,7 +621,7 @@ export const boardErrands = spacetimedb.anonymousView({ public: true }, t.array(
     status: e.status,
     formTitle: share ? e.formTitle : 'Form',
     previewDigest: e.previewDigest,
-    reasonCode: normCode(e.reasonCode),
+    reasonCode: publicCode(e.reasonCode, snake(e.status.tag)),
     reason: share ? e.reason : publicReason(e.reasonCode, false),
     confirmGestureId: e.confirmGestureId,
     stopGestureId: e.stopGestureId,
@@ -653,7 +658,7 @@ export const boardCalls = spacetimedb.anonymousView({ public: true }, t.array(Bo
     status: c.status,
     result: c.result,
     endReason: share ? c.endReason : '',
-    reasonCode: normCode(c.reasonCode),
+    reasonCode: publicCode(c.reasonCode, snake(c.status.tag)),
     reason: share ? c.reason : publicReason(c.reasonCode, true),
     scriptDigest: c.scriptDigest,
     consentOnFile: hasConsent(ctx.db, 'Call', c.contactId),

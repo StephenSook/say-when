@@ -2,10 +2,12 @@
 // confirm window, with good contact and the digest the person heard, once. Then one digest-checked claim.
 import { expect, test } from 'vitest';
 import * as m from '../index';
+import { onceAt } from '../util';
 import {
   advance,
   AGENT,
   as,
+  auth,
   CALL_DIGEST,
   callOption,
   claim,
@@ -347,7 +349,7 @@ test('an agent result reported as unknown is UnknownOutcome, never a resubmit', 
   expect(failure(() => as(db, AGENT, (ctx) => m.claimErrand(ctx, { errandId: e.id, digest: DIGEST })))).toBe('errand is not confirmed');
 });
 
-test('complete_errand stores a code-shaped reason code, and the board shows no outside sentence while sharing is off', () => {
+test('complete_errand stores a listed reason code, and the board shows no outside sentence while sharing is off', () => {
   const db = newDb();
   const e = confirmed(db);
   as(db, AGENT, (ctx) => m.claimErrand(ctx, { errandId: e.id, digest: DIGEST }));
@@ -358,6 +360,26 @@ test('complete_errand stores a code-shaped reason code, and the board shows no o
   expect([done.status.tag, done.reasonCode]).toEqual(['Refused', 'digest_mismatch']);
   const board = m.boardErrands(db.anonymousViewContext())[0]!;
   expect([board.reasonCode, board.reason]).toEqual(['digest_mismatch', '']);
+
+  // A code that is not on the list is stored as the outcome's own word.
+  const db2 = newDb();
+  const e2 = confirmed(db2);
+  as(db2, AGENT, (ctx) => m.claimErrand(ctx, { errandId: e2.id, digest: DIGEST }));
+  as(db2, AGENT, (ctx) =>
+    m.completeErrand(ctx, { errandId: e2.id, attempt: 1, status: 'failed', confirmationText: '', screenshotUrl: '', reasonCode: 'jane doe form', reason: '', submitMs: 10 }),
+  );
+  expect([errandOf(db2).status.tag, errandOf(db2).reasonCode]).toEqual(['Failed', 'failed']);
+});
+
+test("a call report's code that is not on the list is stored as a module word", () => {
+  const db = newDb();
+  const c = connectedCall(db);
+  as(db, AGENT, (ctx) =>
+    m.reportCallStatus(ctx, { callId: c.id, attempt: 1, status: 'failed', result: 'failed', endReason: '', reasonCode: 'Jane Doe hung up', reason: '' }),
+  );
+  expect([callOf(db).status.tag, callOf(db).reasonCode]).toEqual(['Failed', 'call_failed']);
+  const ledger = [...db.db.ledger.ledgerBySession.filter(scan(db).sessionId)].filter((l) => l.kind === 'call');
+  for (const l of ledger) expect(l.reason).not.toContain('jane');
 });
 
 test('a submit timer armed for another attempt does nothing', () => {
@@ -460,13 +482,16 @@ test('a call is prepared on the pick, confirmed after its read-back, claimed onc
   as(db, AGENT, (ctx) => m.claimCall(ctx, { callId: c.id, digest: CALL_DIGEST }));
   expect([callOf(db).status.tag, callOf(db).claimAttempt]).toEqual(['Dialing', 1]);
   as(db, AGENT, (ctx) => m.reportCallStatus(ctx, { callId: c.id, attempt: 1, status: 'connected', result: '', endReason: '', reasonCode: '', reason: '' }));
+  as(db, AGENT, (ctx) => m.addCallLine(ctx, { callId: c.id, attempt: 1, lineKey: 'line-1', role: 'assistant', text: 'Hello, this is NeuroLingo.' }));
+  as(db, AGENT, (ctx) => m.addCallLine(ctx, { callId: c.id, attempt: 1, lineKey: 'line-1', role: 'assistant', text: 'Hello, this is NeuroLingo.' }));
+  expect([...db.db.callLine.callId.filter(c.id)]).toHaveLength(1); // a retry of the same line_key
   settle(db);
   expect(gesture(db, 'STOP').outcome).toBe('accepted:hang_up');
   expect([callOf(db).cancelRequested, callOf(db).cancelReason]).toEqual([true, 'stop']);
   as(db, AGENT, (ctx) => m.reportCallStatus(ctx, { callId: c.id, attempt: 1, status: 'ended', result: 'cancelled', endReason: 'hangup', reasonCode: '', reason: '' }));
   expect([callOf(db).status.tag, callOf(db).result]).toEqual(['Ended', 'cancelled']);
-  as(db, AGENT, (ctx) => m.addCallLine(ctx, { callId: c.id, attempt: 1, lineKey: 'line-1', role: 'assistant', text: 'Hello, this is NeuroLingo.' }));
-  as(db, AGENT, (ctx) => m.addCallLine(ctx, { callId: c.id, attempt: 1, lineKey: 'line-1', role: 'assistant', text: 'Hello, this is NeuroLingo.' }));
+  // A line for a call that has ended is dropped quietly.
+  as(db, AGENT, (ctx) => m.addCallLine(ctx, { callId: c.id, attempt: 1, lineKey: 'line-2', role: 'recipient', text: 'Bye.' }));
   expect([...db.db.callLine.callId.filter(c.id)]).toHaveLength(1);
 });
 
@@ -475,4 +500,257 @@ test('a call option without consent for the contact is refused at the pick', () 
   scanning(db, [callOption(db, 'call-2', 'stranger')]);
   gesture(db, 'YES');
   expect([callOf(db).status.tag, callOf(db).reasonCode]).toEqual(['Refused', 'no_consent']);
+});
+
+// ---------- Review round 2: deadlines decided by elapsed time, not by which timer ran first ----------
+
+test('a CONFIRM after the idle deadline, before its timer ran, finds the idle pause applied: nothing is confirmed', () => {
+  const db = newDb();
+  as(db, OWNER, (ctx) => m.setTiming(ctx, { json: JSON.stringify({ idle_pause_ms: 30000 }) }));
+  const e = previewed(db); // the YES that picked the errand set the idle deadline 30 s ahead
+  live(db, 25_000);
+  as(db, STATION, (ctx) => m.reportReadbackDone(ctx, { kind: 'errand', id: e.id, digest: DIGEST }));
+  live(db, 5_100); // the window is open; the idle deadline passed 100 ms ago and idle_pause has not run
+  const session = db.db.session.id.find(scan(db).sessionId)!;
+  expect(gesture(db, 'CONFIRM', { heardDigest: DIGEST }).outcome).toBe('ignored:paused');
+  expect([errandOf(db).status.tag, errandOf(db).reasonCode]).toEqual(['Stopped', 'idle']);
+  expect([scan(db).phase.tag, scan(db).pauseReason?.tag]).toEqual(['Paused', 'Idle']);
+  // The deadline was not pushed forward: no new idle timer, the same fence.
+  expect([...db.db.idleTimer.sessionId.filter(session.id)]).toHaveLength(0);
+  expect(db.db.session.id.find(session.id)!.idleSeq).toBe(session.idleSeq);
+  expect(failure(() => as(db, AGENT, (ctx) => m.claimErrand(ctx, { errandId: e.id, digest: DIGEST })))).toBe('errand is not confirmed');
+});
+
+test('a YES after the idle deadline, before its timer ran, resumes instead of picking, so no reply is released', () => {
+  const db = newDb(); // the idle deadline is 120 s after the session started
+  live(db, 118_000);
+  const q = scanning(db);
+  live(db, 2_010); // option 1 is still being read; the deadline passed 10 ms ago and idle_pause has not run
+  expect(gesture(db, 'YES', { heardStepSeq: scan(db).stepSeq }).outcome).toBe('accepted:resume');
+  const s = scan(db);
+  expect([s.phase.tag, s.cursor, s.pickedOptionId]).toEqual(['Reading', 1, undefined]); // option 1 again, from its start
+  expect(question(db, q.id).status.tag).toBe('Scanning');
+  const kinds = [...db.db.ledger.ledgerBySession.filter(s.sessionId)].map((l) => [l.kind, l.outcome]);
+  expect(kinds).toContainEqual(['pause', 'idle']);
+});
+
+test('a veto whose tick finds the idle pause due pauses instead of releasing the reply', () => {
+  const db = newDb();
+  const q = scanning(db);
+  expect(gesture(db, 'YES').outcome).toBe('accepted:pick');
+  // Move the idle deadline behind the veto's end (only a very late tick could see this in practice).
+  const sid = scan(db).sessionId;
+  for (const r of [...db.db.idleTimer.sessionId.filter(sid)]) {
+    db.db.idleTimer.scheduledId.update({ ...r, scheduledAt: onceAt(now(db)) });
+  }
+  const veto = [...db.db.scanTimer.sessionId.filter(sid)].find((r) => r.kind.tag === 'VetoEnd')!;
+  db.clock.set(timerAt(veto));
+  internal(db, (ctx) => m.scanTick(ctx, { job: veto }));
+  expect([scan(db).phase.tag, scan(db).pauseReason?.tag]).toEqual(['Paused', 'Idle']);
+  expect(question(db, q.id).status.tag).toBe('Scanning'); // not Released
+});
+
+test('a read-back reported after its deadline is refused, and the timer then stops the errand', () => {
+  const db = newDb();
+  const e = previewed(db);
+  const readback = [...db.db.errandLease.errandId.filter(e.id)].find((r) => r.kind.tag === 'Readback')!;
+  live(db, 30_000); // the read-back deadline has passed; errand_timeout has not run
+  expect(failure(() => as(db, STATION, (ctx) => m.reportReadbackDone(ctx, { kind: 'errand', id: e.id, digest: DIGEST })))).toBe('read-back deadline passed');
+  expect([errandOf(db).status.tag, confirmTimer(db, e.id)]).toEqual(['Previewed', undefined]);
+  internal(db, (ctx) => m.errandTimeout(ctx, { job: readback }));
+  expect([errandOf(db).status.tag, errandOf(db).reasonCode]).toEqual(['Stopped', 'readback_not_finished']);
+});
+
+test('a preview after its deadline is refused as stale, and the timer then fails the errand', () => {
+  const db = newDb();
+  grantConsent(db, 'errand', FORM_KEY);
+  const q = scanning(db, [errandOption()]);
+  gesture(db, 'YES');
+  const e = errandOf(db);
+  const preview = [...db.db.errandLease.errandId.filter(e.id)].find((r) => r.kind.tag === 'Preview')!;
+  live(db, 30_000);
+  const job = claim(db, q.id, 'ErrandPreview'); // its own lease runs to +75 s, past the preview deadline
+  live(db, 30_000); // the 60 s preview deadline has passed; errand_timeout has not run
+  expect(
+    failure(() =>
+      as(db, AGENT, (ctx) =>
+        m.agentAttachPreview(ctx, { jobId: job.id, attempt: job.attempt, status: 'previewed', formTitle: '', readBackText: 'Request: Lunch.', readBackJson: '', previewDigest: DIGEST, screenshotUrl: '', reasonCode: '', reason: '', previewMs: 1 }),
+      ),
+    ),
+  ).toBe('stale attempt');
+  expect(errandOf(db).status.tag).toBe('Drafted');
+  internal(db, (ctx) => m.errandTimeout(ctx, { job: preview }));
+  expect([errandOf(db).status.tag, errandOf(db).reasonCode]).toEqual(['Failed', 'preview_timeout']);
+  expect(db.db.agentJob.id.find(job.id)!.status.tag).toBe('Cancelled');
+});
+
+test('a call read-back reported after its deadline is refused', () => {
+  const db = newDb();
+  grantConsent(db, 'call', 'leon');
+  scanning(db, [callOption(db)]);
+  gesture(db, 'YES');
+  const c = callOf(db);
+  live(db, 30_000);
+  expect(failure(() => as(db, STATION, (ctx) => m.reportReadbackDone(ctx, { kind: 'call', id: c.id, digest: CALL_DIGEST })))).toBe('read-back deadline passed');
+  expect(callOf(db).status.tag).toBe('Prepared');
+});
+
+/** A call the agent claimed and the Dialer connected. */
+function connectedCall(db: Test) {
+  grantConsent(db, 'call', 'leon');
+  scanning(db, [callOption(db)]);
+  expect(gesture(db, 'YES').outcome).toBe('accepted:pick_call');
+  const c = callOf(db);
+  as(db, STATION, (ctx) => m.reportReadbackDone(ctx, { kind: 'call', id: c.id, digest: CALL_DIGEST }));
+  live(db, 1500);
+  expect(gesture(db, 'CONFIRM', { heardDigest: CALL_DIGEST }).outcome).toBe('accepted:confirm');
+  as(db, AGENT, (ctx) => m.claimCall(ctx, { callId: c.id, digest: CALL_DIGEST }));
+  as(db, AGENT, (ctx) => m.reportCallStatus(ctx, { callId: c.id, attempt: 1, status: 'connected', result: '', endReason: '', reasonCode: '', reason: '' }));
+  expect(callOf(db).status.tag).toBe('Connected');
+  return callOf(db);
+}
+
+/** Mid-call, the partner asks something else and the person picks an errand option: it waits for its preview. */
+function errandDuringCall(db: Test) {
+  grantConsent(db, 'errand', FORM_KEY);
+  scanning(db, [errandOption()]); // a new partner question: it supersedes, but leaves the live call alone
+  live(db, 1001); // past refractory, with the station still beating
+  expect(gesture(db, 'YES', { heardStepSeq: scan(db).stepSeq }).outcome).toBe('accepted:pick_errand');
+  expect(errandOf(db).status.tag).toBe('Drafted');
+}
+
+test('STOP during a call hangs it up even when an errand picked during the call is waiting, and stops that too', () => {
+  const db = newDb();
+  const call = connectedCall(db);
+  errandDuringCall(db);
+  expect(gesture(db, 'STOP').outcome).toBe('accepted:stop_errand_hang_up');
+  expect([errandOf(db).status.tag, errandOf(db).reasonCode]).toEqual(['Stopped', 'stop']);
+  const after = db.db.callRequest.id.find(call.id)!;
+  expect([after.status.tag, after.cancelRequested, after.cancelReason]).toEqual(['Connected', true, 'stop']);
+});
+
+test('with a call connected, a passed idle deadline voids nothing, so the confirm and the claim still go through', () => {
+  const db = newDb();
+  as(db, OWNER, (ctx) => m.setTiming(ctx, { json: JSON.stringify({ idle_pause_ms: 30000 }) }));
+  connectedCall(db);
+  errandDuringCall(db);
+  const job = claim(db, errandOf(db).questionId, 'ErrandPreview');
+  as(db, AGENT, (ctx) =>
+    m.agentAttachPreview(ctx, { jobId: job.id, attempt: job.attempt, status: 'previewed', formTitle: '', readBackText: 'Request: Lunch.', readBackJson: '', previewDigest: DIGEST, screenshotUrl: '', reasonCode: '', reason: '', previewMs: 1 }),
+  );
+  live(db, 25_000);
+  const e = errandOf(db);
+  as(db, STATION, (ctx) => m.reportReadbackDone(ctx, { kind: 'errand', id: e.id, digest: DIGEST }));
+  live(db, 5_000); // the idle deadline (30 s after the YES) has passed, but `idle_pause` would only re-arm
+  expect(gesture(db, 'CONFIRM', { heardDigest: DIGEST }).outcome).toBe('accepted:confirm');
+  live(db, 30_000); // the next idle deadline passes too
+  as(db, AGENT, (ctx) => m.claimErrand(ctx, { errandId: e.id, digest: DIGEST }));
+  expect(errandOf(db).status.tag).toBe('Submitting');
+});
+
+test('STOP during a reply veto while a call is connected hangs the call up and still cancels the reply', () => {
+  const db = newDb();
+  const call = connectedCall(db);
+  const q = scanning(db); // a partner question mid-call, with three replies
+  live(db, 1001);
+  expect(gesture(db, 'YES', { heardStepSeq: scan(db).stepSeq }).outcome).toBe('accepted:pick');
+  expect(scan(db).phase.tag).toBe('Veto');
+  expect(gesture(db, 'STOP').outcome).toBe('accepted:stop_reply_hang_up');
+  expect(db.db.callRequest.id.find(call.id)!.cancelRequested).toBe(true);
+  expect([scan(db).phase.tag, question(db, q.id).status.tag, question(db, q.id).replyText]).toEqual(['Idle', 'Stopped', undefined]);
+});
+
+test('STOP while options are read during a call hangs the call up and ends the scan: none of these', () => {
+  const db = newDb();
+  const call = connectedCall(db);
+  const q = scanning(db);
+  expect(gesture(db, 'STOP').outcome).toBe('accepted:none_hang_up');
+  expect(db.db.callRequest.id.find(call.id)!.cancelRequested).toBe(true);
+  expect(question(db, q.id).status.tag).toBe('None');
+});
+
+test('one call at a time: a call picked during a live call is refused, a second cannot be claimed, and STOP hangs up every live call', () => {
+  const db = newDb();
+  const a = connectedCall(db);
+  grantConsent(db, 'call', 'mia');
+  scanning(db, [callOption(db, 'call-mia', 'mia')]);
+  live(db, 1001);
+  expect(gesture(db, 'YES', { heardStepSeq: scan(db).stepSeq }).outcome).toBe('accepted:pick_call');
+  const b = callOf(db);
+  expect([b.status.tag, b.reasonCode, b.reason]).toEqual(['Refused', 'line_busy', 'A call is already in progress. No call was made.']);
+  // A second Confirmed call, written behind the reducers' back, still cannot be claimed while A is on the line.
+  const ghost = db.db.callRequest.insert({ ...a, id: 0n, requestId: 'call-ghost', status: { tag: 'Confirmed' }, claimAttempt: 0, cancelRequested: false });
+  expect(failure(() => as(db, AGENT, (ctx) => m.claimCall(ctx, { callId: ghost.id, digest: CALL_DIGEST })))).toBe('line busy');
+  // And if two were ever live, one STOP hangs up both (not only the newest).
+  db.db.callRequest.id.update({ ...db.db.callRequest.id.find(ghost.id)!, status: { tag: 'Dialing' } });
+  expect(gesture(db, 'STOP').outcome).toBe('accepted:hang_up');
+  expect([a.id, ghost.id].map((id) => db.db.callRequest.id.find(id)!.cancelRequested)).toEqual([true, true]);
+});
+
+test('a call reported connected after the idle deadline first gets the idle pause it owed: waiting work stops, the call is hung up', () => {
+  const db = newDb();
+  as(db, OWNER, (ctx) => m.setTiming(ctx, { json: JSON.stringify({ idle_pause_ms: 30000 }) }));
+  grantConsent(db, 'call', 'leon');
+  scanning(db, [callOption(db)]);
+  expect(gesture(db, 'YES').outcome).toBe('accepted:pick_call');
+  const c = callOf(db);
+  as(db, STATION, (ctx) => m.reportReadbackDone(ctx, { kind: 'call', id: c.id, digest: CALL_DIGEST }));
+  live(db, 1500);
+  expect(gesture(db, 'CONFIRM', { heardDigest: CALL_DIGEST }).outcome).toBe('accepted:confirm');
+  as(db, AGENT, (ctx) => m.claimCall(ctx, { callId: c.id, digest: CALL_DIGEST }));
+  as(db, AGENT, (ctx) => m.reportCallStatus(ctx, { callId: c.id, attempt: 1, status: 'ringing', result: '', endReason: '', reasonCode: '', reason: '' }));
+  errandDuringCall(db); // its YES set the idle deadline 30 s ahead; the call only rings, so idle_pause would pause
+  live(db, 30_000); // the idle pause is due and idle_pause has not run
+  as(db, AGENT, (ctx) => m.reportCallStatus(ctx, { callId: c.id, attempt: 1, status: 'connected', result: '', endReason: '', reasonCode: '', reason: '' }));
+  expect([scan(db).phase.tag, scan(db).pauseReason?.tag]).toEqual(['Paused', 'Idle']);
+  expect([errandOf(db).status.tag, errandOf(db).reasonCode]).toEqual(['Stopped', 'idle']);
+  const call = db.db.callRequest.id.find(c.id)!;
+  expect([call.status.tag, call.cancelRequested, call.cancelReason]).toEqual(['Connected', true, 'auto_pause']);
+});
+
+test('NO during a call stops a waiting errand and leaves the call alone', () => {
+  const db = newDb();
+  const call = connectedCall(db);
+  errandDuringCall(db);
+  settle(db);
+  expect(gesture(db, 'NO').outcome).toBe('accepted:stop_errand');
+  expect(errandOf(db).status.tag).toBe('Stopped');
+  expect(db.db.callRequest.id.find(call.id)!.cancelRequested).toBe(false);
+});
+
+test('a lapsed dial lease marks the call unknown and asks for the hang-up, and the agent still sees the row', () => {
+  const db = newDb();
+  as(db, OWNER, (ctx) => m.setTiming(ctx, { json: JSON.stringify({ call_lease_ms: 60000 }) }));
+  const c = connectedCall(db);
+  const lease = [...db.db.callTimer.callId.filter(c.id)].find((r) => r.kind.tag === 'Lease')!;
+  live(db, 60_000);
+  internal(db, (ctx) => m.callTimeout(ctx, { job: lease }));
+  const after = callOf(db);
+  expect([after.status.tag, after.result, after.reasonCode, after.cancelRequested, after.cancelReason]).toEqual(['Failed', 'unknown', 'lease_lapsed', true, 'operator']);
+  // The sidecar's reconcile cancels on `cancel_requested`, so the row stays in its queue.
+  const queue = m.callQueue(db.viewContext(auth(AGENT)));
+  expect(queue.map((r) => [r.callId, r.status.tag, r.cancelRequested, r.claimedByMe])).toEqual([[c.id, 'Failed', true, true]]);
+  // Its later report of the hang-up changes nothing; the board says unknown, never sent or not sent.
+  as(db, AGENT, (ctx) => m.reportCallStatus(ctx, { callId: c.id, attempt: 1, status: 'ended', result: 'cancelled', endReason: '', reasonCode: '', reason: '' }));
+  expect([callOf(db).status.tag, callOf(db).result]).toEqual(['Failed', 'unknown']);
+});
+
+test('call progress after the dial lease ran out is ignored before call_timeout runs; a final report still lands', () => {
+  const db = newDb();
+  as(db, OWNER, (ctx) => m.setTiming(ctx, { json: JSON.stringify({ call_lease_ms: 60000 }) }));
+  grantConsent(db, 'call', 'leon');
+  scanning(db, [callOption(db)]);
+  gesture(db, 'YES');
+  const c = callOf(db);
+  as(db, STATION, (ctx) => m.reportReadbackDone(ctx, { kind: 'call', id: c.id, digest: CALL_DIGEST }));
+  live(db, 1500);
+  expect(gesture(db, 'CONFIRM', { heardDigest: CALL_DIGEST }).outcome).toBe('accepted:confirm');
+  as(db, AGENT, (ctx) => m.claimCall(ctx, { callId: c.id, digest: CALL_DIGEST }));
+  live(db, 60_000); // the lease ran out; call_timeout has not run
+  as(db, AGENT, (ctx) => m.reportCallStatus(ctx, { callId: c.id, attempt: 1, status: 'connected', result: '', endReason: '', reasonCode: '', reason: '' }));
+  expect(callOf(db).status.tag).toBe('Dialing');
+  as(db, AGENT, (ctx) => m.addCallLine(ctx, { callId: c.id, attempt: 1, lineKey: 'late-1', role: 'recipient', text: 'Hello?' }));
+  expect([...db.db.callLine.callId.filter(c.id)]).toHaveLength(0);
+  as(db, AGENT, (ctx) => m.reportCallStatus(ctx, { callId: c.id, attempt: 1, status: 'ended', result: 'no_answer', endReason: '', reasonCode: '', reason: '' }));
+  expect([callOf(db).status.tag, callOf(db).result]).toEqual(['Ended', 'no_answer']);
 });

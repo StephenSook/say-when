@@ -5,11 +5,14 @@
 // back the record of what the person did. Only a malformed call or the wrong caller throws.
 //
 // Precedence when more than one thing is live (the design's table is per state; this is the order used):
-//   1. a pause; 2. an errand or call nobody has claimed yet (read-back and confirm); 3. for STOP only, a live
-//   call (hang up); 4. the scan (preparing, reading, window, veto); 5. a live call or a submitting errand; 6. idle.
+//   1. a pause; 2. an errand or call nobody has claimed yet (read-back and confirm); 3. the scan (preparing, reading,
+//   window, veto); 4. a live call or a submitting errand; 5. idle. STOP is the exception that adds, not orders: it
+//   always hangs up every live call, then does what it does in 1 to 5.
+// Before deciding, a due idle pause is applied (`applyDueIdle`), as if its late timer had run on time.
 import { SenderError } from 'spacetimedb/server';
 import { activeSession, requireRole } from './auth';
 import {
+  applyDueIdle,
   cancelVeto,
   closeQuestion,
   enterReading,
@@ -92,6 +95,10 @@ export function handleGesture(ctx: Ctx, a: GestureArgs): void {
     d = ignored('no_session');
   } else {
     if (!session.station.isEqual(ctx.sender)) throw new SenderError('not the session station');
+    // A due idle pause is applied first, as if its late timer had run on time: otherwise an accepted command would
+    // push the deadline forward and erase the pause it owed, a CONFIRM could confirm what that pause voids, and a
+    // YES would pick where it should only resume.
+    applyDueIdle(ctx, session);
     d = decide(ctx, cfg, session, command, a);
   }
 
@@ -170,17 +177,19 @@ function onStop(ctx: Ctx, s: ScanState, p: PendingWork, a: GestureArgs): Decisio
     pause(ctx, s, 'Stop', { actor: 'Station', gestureId: a.gestureId }); // a signal pause becomes deliberate
     return accepted('pause', { questionId: s.questionId });
   }
+  // STOP is the only command that hangs up (NO is busy during a call), so every STOP hangs up every live call, and
+  // then still does what it does without a call: neither waiting work nor a scan started mid-call (a reply in its
+  // veto above all) is shielded from it, and no newer call can shield an older one (D11).
+  const hungUp = p.liveCalls.length > 0 ? p.liveCall : undefined;
+  for (const c of p.liveCalls) requestCallCancel(ctx, c, 'stop', { actor: 'Station', gestureId: a.gestureId });
+  const also = hungUp ? '_hang_up' : '';
   if (p.errand) {
     stopErrand(ctx, p.errand, 'stop', { actor: 'Station', gestureId: a.gestureId });
-    return accepted('stop_errand', { errandId: p.errand.id, questionId: p.errand.questionId });
+    return accepted(`stop_errand${also}`, { errandId: p.errand.id, callId: hungUp?.id, questionId: p.errand.questionId });
   }
   if (p.call) {
     stopCall(ctx, p.call, 'stop', { actor: 'Station', gestureId: a.gestureId });
-    return accepted('stop_call', { callId: p.call.id, questionId: p.call.questionId });
-  }
-  if (p.liveCall) {
-    requestCallCancel(ctx, p.liveCall, 'stop', { actor: 'Station', gestureId: a.gestureId });
-    return accepted('hang_up', { callId: p.liveCall.id, questionId: p.liveCall.questionId });
+    return accepted(`stop_call${also}`, { callId: p.call.id, questionId: p.call.questionId });
   }
   const q = ctx.db.question.id.find(s.questionId) ?? undefined;
   switch (s.phase.tag) {
@@ -190,15 +199,16 @@ function onStop(ctx: Ctx, s: ScanState, p: PendingWork, a: GestureArgs): Decisio
       } else {
         finishScan(ctx, s, undefined, 'Stopped', { actor: 'Station', cue: 'none', reason: 'stop', gestureId: a.gestureId });
       }
-      return accepted('stop', { questionId: s.questionId });
+      return accepted(`stop${also}`, { questionId: s.questionId, callId: hungUp?.id });
     case 'Reading':
     case 'Window':
       finishScan(ctx, s, q, 'None', { actor: 'Station', cue: 'none', reason: 'stop', gestureId: a.gestureId });
-      return accepted('none', { questionId: s.questionId, cursor: s.cursor });
+      return accepted(`none${also}`, { questionId: s.questionId, callId: hungUp?.id, cursor: s.cursor });
     case 'Veto':
       finishScan(ctx, s, q, 'Stopped', { actor: 'Station', cue: 'veto_cancelled', reason: 'stop', gestureId: a.gestureId });
-      return accepted('stop_reply', { questionId: s.questionId, optionId: s.pickedOptionId });
+      return accepted(`stop_reply${also}`, { questionId: s.questionId, callId: hungUp?.id, optionId: s.pickedOptionId });
     default:
+      if (hungUp) return accepted('hang_up', { callId: hungUp.id, questionId: hungUp.questionId });
       if (p.submitting) {
         emitCue(ctx, s.sessionId, 'too_late', { errandId: p.submitting.id, questionId: p.submitting.questionId });
         return ignored('too_late', { errandId: p.submitting.id });

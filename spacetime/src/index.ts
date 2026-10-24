@@ -27,6 +27,7 @@ import {
 } from './auth';
 import {
   allClipsIn,
+  applyDueIdle,
   clearScanTimers,
   closeQuestion,
   endPass,
@@ -61,7 +62,15 @@ import {
 } from './consent';
 import { handleGesture } from './gesture';
 import { claimJob, createJob, endJob, requireFencedJob } from './jobs';
-import { contactGoodFor, latestLease, leaseLapsed as livenessLapsed, nextHealthySince } from './liveness';
+import {
+  contactGoodFor,
+  contactIsGood,
+  hasConnectedCall,
+  idleDue,
+  latestLease,
+  leaseLapsed as livenessLapsed,
+  nextHealthySince,
+} from './liveness';
 import { ensureTimers as ensureTimersImpl } from './repair';
 import spacetimedb, {
   callTimer,
@@ -744,6 +753,14 @@ export const reportCallStatus = spacetimedb.reducer(
   },
   (ctx, { callId, ...rest }) => {
     requireRole(ctx, 'Agent');
+    // Once a call is Connected, `idle_pause` only re-arms. So an idle pause already due (its timer late) is applied
+    // before the call counts as Connected: it voids waiting work and asks for the hang-up, then the report lands
+    // on the re-read row and keeps that request. A refused report rolls the pause back with it.
+    if (rest.status === 'connected') {
+      const c = ctx.db.callRequest.id.find(callId);
+      const session = c ? ctx.db.session.id.find(c.sessionId) : undefined;
+      if (session) applyDueIdle(ctx, session);
+    }
     reportCallStatusImpl(ctx, callId, rest);
   },
 );
@@ -774,9 +791,25 @@ export const scanTick = spacetimedb.reducer({ onSchedule: scanTimer }, { job: sc
         else endPass(ctx, s);
       }
       return;
-    case 'VetoEnd':
-      if (s.phase.tag === 'Veto') releaseReply(ctx, s);
+    case 'VetoEnd': {
+      if (s.phase.tag !== 'Veto') return;
+      // The reply is said only with good contact now: the newest lease healthy and not run out. A lease that ran out
+      // before this tick (its own timer due but perhaps not run, since overdue timers need not run in order), or no
+      // lease at all (the host deletes a fired one, and a deliberate resume needs no heartbeat), pauses here instead,
+      // as `liveness_expired` would have: the pick is cancelled and nothing is said.
+      if (!contactIsGood(ctx.db, session.id, ctx.timestamp)) {
+        const lease = latestLease(ctx.db, session.id);
+        pause(ctx, s, 'HeadsetLost', { actor: 'Scheduler', latencyMs: lease ? Math.max(0, msBetween(ctx.timestamp, lease.lastBeatAt)) : 0 });
+        return;
+      }
+      // The same for a due idle pause (the YES that started the veto pushed the deadline, so this guards a late tick).
+      if (idleDue(ctx.db, session, ctx.timestamp)) {
+        pause(ctx, s, 'Idle', { actor: 'Scheduler' });
+        return;
+      }
+      releaseReply(ctx, s);
       return;
+    }
     case 'ClipDeadline':
       if (s.phase.tag === 'Preparing') {
         const q = ctx.db.question.id.find(s.questionId);
@@ -806,8 +839,7 @@ export const idlePause = spacetimedb.reducer({ onSchedule: idleTimer }, { job: i
   if (!session || session.endedAt !== undefined || session.idleSeq !== job.idleSeq) return;
   const s = getScan(ctx.db, session.id);
   if (s.phase.tag === 'Paused') return;
-  const connected = [...ctx.db.callRequest.callBySession.filter(session.id)].some((c) => c.status.tag === 'Connected');
-  if (connected) {
+  if (hasConnectedCall(ctx.db, session.id)) {
     pushIdle(ctx, session.id);
     return;
   }

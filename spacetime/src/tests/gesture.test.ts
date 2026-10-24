@@ -7,6 +7,7 @@ import {
   as,
   ask,
   auth,
+  beat,
   clips,
   currentTimer,
   emptyDb,
@@ -218,9 +219,25 @@ test('yes or no mode: YES answers with rank 1 and NO with rank 2, each after a v
   const db2 = newDb();
   const q2 = scanning(db2, [reply('Yes, I am tired'), reply('No, I am fine')], 'yes_no');
   tick(db2); // the prompt's window
+  beat(db2); // the station beats every 500 ms; the reply is released only while the dead-man lease holds
   expect(gesture(db2, 'YES').outcome).toBe('accepted:answer_yes');
   tick(db2);
   expect(question(db2, q2.id).replyText).toBe('Yes, I am tired');
+});
+
+test('a veto that ends after the dead-man lease ran out says nothing: it pauses, as the lapsed lease would have', () => {
+  const db = newDb(); // the last heartbeat is now: the lease runs out in 1.5 s
+  const q = scanning(db);
+  advance(db, 1000);
+  expect(gesture(db, 'YES', { heardStepSeq: scan(db).stepSeq }).outcome).toBe('accepted:pick');
+  const veto = currentTimer(db); // ends at +1.7 s, after the lease; liveness_expired has not run yet
+  tick(db);
+  const s = scan(db);
+  expect([s.phase.tag, s.pauseReason?.tag, s.pickedOptionId]).toEqual(['Paused', 'HeadsetLost', undefined]);
+  expect(question(db, q.id).status.tag).toBe('Scanning'); // not Released: the speaker has nothing to say
+  expect(question(db, q.id).replyText).toBeUndefined();
+  expect(myReply(db)).toBeUndefined();
+  expect(veto.kind.tag).toBe('VetoEnd');
 });
 
 test('YES while idle opens the menu: four module-made options, then Preparing', () => {

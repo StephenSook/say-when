@@ -9,6 +9,7 @@ import { createErrandFromPick, createCallFromPick, voidPending } from './consent
 import type { Ctx, ReadDb } from './ctx';
 import { cancelJobs, createJob } from './jobs';
 import { hasConsent } from './consent';
+import { idleDue } from './liveness';
 import type {
   AnswerOption,
   MenuItem,
@@ -654,6 +655,19 @@ export function pause(ctx: Ctx, s: ScanState, reason: PauseReason['tag'], opts: 
   });
   emitCue(ctx, s.sessionId, 'paused', { reason: PAUSE_CODE[reason], questionId: s.questionId });
   return true;
+}
+
+/**
+ * The idle pause is due (no accepted command for `idle_pause_ms`, no call Connected) but `idle_pause` has not run:
+ * a timer can run late. Applies it now, as that timer would have, so nothing can act as if the deadline had not
+ * passed. Called before a command is decided (gesture.ts) and before a call is reported Connected (which would turn
+ * the owed pause into a re-arm). Returns whether it paused.
+ */
+export function applyDueIdle(ctx: Ctx, session: Session): boolean {
+  if (session.endedAt !== undefined) return false;
+  const s = ctx.db.scanState.sessionId.find(session.id);
+  if (!s || s.phase.tag === 'Paused' || !idleDue(ctx.db, session, ctx.timestamp)) return false;
+  return pause(ctx, s, 'Idle', { actor: 'Module' });
 }
 
 /**

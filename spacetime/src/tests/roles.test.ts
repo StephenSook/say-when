@@ -11,6 +11,7 @@ import {
   auth,
   CALL_DIGEST,
   callOption,
+  clips,
   emptyDb,
   errandOption,
   failure,
@@ -31,6 +32,7 @@ import {
   reply,
   scan,
   scanning,
+  settle,
   SPEAKER,
   STATION,
   tick,
@@ -217,20 +219,21 @@ test('board_errands hides the form title, the read-back and the result unless sh
   expect([on.formTitle, on.readBackText]).toEqual(['Care team request', 'Request: Lunch.']);
 });
 
-test("with sharing off the board shows only the module's own reason sentences, and codes stay code-shaped", () => {
+test("with sharing off the board shows only the module's own reason sentences, and codes come from the fixed list", () => {
   const db = newDb();
   grantConsent(db, 'errand', FORM_KEY);
   const q = scanning(db, [errandOption()]);
   gesture(db, 'YES');
   const job = [...db.db.agentJob.jobByQuestion.filter(q.id)].find((j) => j.kind.tag === 'ErrandPreview')!;
   as(db, AGENT, (c) => m.agentClaim(c, { jobId: job.id }));
+  // The Actor's own refusal code `login`, sent in another case: kept. A sentence in the code would not be.
   as(db, AGENT, (c) =>
-    m.agentAttachPreview(c, { jobId: job.id, attempt: 1, status: 'refused', formTitle: 'Jane Doe medication request', readBackText: '', readBackJson: '', previewDigest: '', screenshotUrl: '', reasonCode: 'Login Needed', reason: "Jane Doe's medication request needs a login.", previewMs: 10 }),
+    m.agentAttachPreview(c, { jobId: job.id, attempt: 1, status: 'refused', formTitle: 'Jane Doe medication request', readBackText: '', readBackJson: '', previewDigest: '', screenshotUrl: '', reasonCode: 'Login', reason: "Jane Doe's medication request needs a login.", previewMs: 10 }),
   );
   const e = [...db.db.errand.errandBySession.filter(scan(db).sessionId)][0]!;
-  expect([e.status.tag, e.reasonCode, e.reason]).toEqual(['Refused', 'login_needed', "Jane Doe's medication request needs a login."]);
+  expect([e.status.tag, e.reasonCode, e.reason]).toEqual(['Refused', 'login', "Jane Doe's medication request needs a login."]);
   const off = m.boardErrands(db.anonymousViewContext())[0]!;
-  expect([off.formTitle, off.reasonCode, off.reason]).toEqual(['Form', 'login_needed', '']);
+  expect([off.formTitle, off.reasonCode, off.reason]).toEqual(['Form', 'login', '']);
   const show = (v: unknown) => JSON.stringify(v, (_k, x) => (typeof x === 'bigint' ? x.toString() : x));
   const publicRows = [...m.boardErrands(db.anonymousViewContext()), ...db.runQuery(m.boardLedger(db.anonymousViewContext())), ...db.db.pipelineEvent.iter()];
   for (const row of publicRows) expect(show(row)).not.toContain('Jane');
@@ -243,6 +246,21 @@ test("with sharing off the board shows only the module's own reason sentences, a
   gesture(db2, 'STOP');
   const stopped = m.boardErrands(db2.anonymousViewContext())[0]!;
   expect([stopped.status.tag, stopped.reasonCode, stopped.reason]).toEqual(['Stopped', 'stop', 'Stopped. Nothing was sent.']);
+
+  // A refusal whose code is a sentence: stored and shown as the module word for the outcome, never the words.
+  const db3 = newDb();
+  grantConsent(db3, 'errand', FORM_KEY);
+  const q3 = scanning(db3, [errandOption()]);
+  gesture(db3, 'YES');
+  const job3 = [...db3.db.agentJob.jobByQuestion.filter(q3.id)].find((j) => j.kind.tag === 'ErrandPreview')!;
+  as(db3, AGENT, (c) => m.agentClaim(c, { jobId: job3.id }));
+  as(db3, AGENT, (c) =>
+    m.agentAttachPreview(c, { jobId: job3.id, attempt: 1, status: 'refused', formTitle: '', readBackText: '', readBackJson: '', previewDigest: '', screenshotUrl: '', reasonCode: 'Jane Doe takes lithium', reason: '', previewMs: 10 }),
+  );
+  const e3 = [...db3.db.errand.errandBySession.filter(scan(db3).sessionId)][0]!;
+  expect([e3.status.tag, e3.reasonCode]).toEqual(['Refused', 'refused']);
+  const rows3 = [...m.boardErrands(db3.anonymousViewContext()), ...db3.runQuery(m.boardLedger(db3.anonymousViewContext())), ...db3.db.pipelineEvent.iter()];
+  for (const row of rows3) expect(show(row).toLowerCase()).not.toContain('jane');
 });
 
 test('board_calls hides the name, the end reason and outside sentences unless sharing is on', () => {
@@ -256,15 +274,15 @@ test('board_calls hides the name, the end reason and outside sentences unless sh
   expect(gesture(db, 'CONFIRM', { heardDigest: CALL_DIGEST }).outcome).toBe('accepted:confirm');
   as(db, AGENT, (x) => m.claimCall(x, { callId: c.id, digest: CALL_DIGEST }));
   as(db, AGENT, (x) =>
-    m.reportCallStatus(x, { callId: c.id, attempt: 1, status: 'failed', result: 'failed', endReason: 'jane_doe_hung_up', reasonCode: 'Line Busy', reason: 'Jane Doe was already on a call, so I did not call.' }),
+    m.reportCallStatus(x, { callId: c.id, attempt: 1, status: 'failed', result: 'failed', endReason: 'jane_doe_hung_up', reasonCode: 'Outside Hours', reason: 'Jane Doe was asleep, so I did not call.' }),
   );
-  expect(db.db.callRequest.id.find(c.id)!.reasonCode).toBe('line_busy'); // stored code-shaped
+  expect(db.db.callRequest.id.find(c.id)!.reasonCode).toBe('outside_hours'); // a listed Dialer code, kept
   const off = m.boardCalls(db.anonymousViewContext())[0]!;
-  expect([off.status.tag, off.contactName, off.endReason, off.reasonCode, off.reason]).toEqual(['Failed', 'Contact', '', 'line_busy', '']);
+  expect([off.status.tag, off.contactName, off.endReason, off.reasonCode, off.reason]).toEqual(['Failed', 'Contact', '', 'outside_hours', '']);
   grantConsent(db, 'board_text');
   as(db, OWNER, (x) => m.setBoardSharing(x, { on: true }));
   const on = m.boardCalls(db.anonymousViewContext())[0]!;
-  expect([on.contactName, on.endReason, on.reason]).toEqual(['Leon', 'jane_doe_hung_up', 'Jane Doe was already on a call, so I did not call.']);
+  expect([on.contactName, on.endReason, on.reason]).toEqual(['Leon', 'jane_doe_hung_up', 'Jane Doe was asleep, so I did not call.']);
 });
 
 test('public tables carry no conversation content', () => {
@@ -343,6 +361,18 @@ test('the stats a judge can check are recomputed from stored rows', () => {
   const s = computeStats(db.db);
   expect([s.questions, s.questionsAnswered, s.picks, s.medianLateByMs, s.gestures, s.gesturesIgnored]).toEqual([1, 1, 1, 0, 1, 0]);
   expect(s.medianQuestionToFirstOptionMs).toBe(0);
+});
+
+test("the stats count only partner questions as answered: the person's own menu pick is not one", () => {
+  const db = newDb();
+  expect(gesture(db, 'YES').outcome).toBe('accepted:menu_open');
+  const menu = question(db, scan(db).questionId);
+  clips(db, menu.id, 1);
+  settle(db);
+  expect(gesture(db, 'YES', { heardStepSeq: scan(db).stepSeq }).outcome).toBe('accepted:menu_item');
+  expect(question(db, menu.id).status.tag).toBe('Acting');
+  const s = computeStats(db.db);
+  expect([s.questions, s.questionsAnswered]).toEqual([0, 0]);
 });
 
 test("purge_session deletes an ended session's private rows and jobs, keeps only spent gesture ids, and refuses an active one", () => {

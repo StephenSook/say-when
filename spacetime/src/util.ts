@@ -95,17 +95,74 @@ export function requireCountsJson(json: string): string {
     const ok = typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value));
     if (!ok) throw new SenderError('counts_json values must be numbers or booleans');
   }
-  return json;
+  // The checked object, not the caller's text: a duplicate key (`{"rows":"a sentence","rows":1}`) parses to its last
+  // value, so returning the original string would publish the hidden first one.
+  return JSON.stringify(obj);
 }
 
 /**
- * A producer's reason code made code-shaped before it is stored or reaches a public row (ledger, cue, board):
- * lowercase letters, digits, `_` and `-`, at most 40 characters. Empty stays empty. It never throws, so an odd code
- * from the Actor, the Dialer or the sidecar cannot block the write that reports what happened.
+ * A producer's reason code made code-shaped: lowercase letters, digits, `_` and `-`, at most 40 characters. Empty
+ * stays empty. It never throws, so an odd code cannot block the write that reports what happened. Shape is not
+ * meaning (`alice_takes_lithium` is code-shaped), so a code that reaches a public row goes through `publicCode`.
  */
 export function normCode(code: string): string {
   if (code === '') return '';
   return code.toLowerCase().replace(/[^a-z0-9_-]/g, '_').slice(0, 40);
+}
+
+/**
+ * Every reason code a public row (ledger, cue, pipeline label, board) may carry: the module's own, the form-errand
+ * Actor's `RefusalCode` (`apify/form-errand/src/types.ts`), the Apify client's error kinds and unknown-outcome
+ * reasons, the Dialer's `RefusalCode` (`cartesia/src/call.ts`), and the sidecar's codes (`agent/src`). A code is a
+ * fixed word list, never a sentence about a person.
+ */
+const PUBLIC_CODES: ReadonlySet<string> = new Set([
+  // The module.
+  'no', 'stop', 'headset_lost', 'headset_off', 'idle', 'operator', 'interrupted', 'consent_revoked', 'session_ended',
+  'readback_not_finished', 'window_closed', 'preview_timeout', 'agent_lost', 'no_consent', 'bad_action', 'lease_lapsed',
+  'expired', 'duplicate_request', 'agent_failed', 'refused', 'failed', 'unknown', 'submitted', 'duplicate',
+  'not_wanted', 'superseded', 'cancelled',
+  // The form-errand Actor's refusals.
+  'bad_input', 'bad_url', 'load_failed', 'captcha', 'login', 'payment', 'upload', 'no_form', 'not_allowed',
+  'unmatched_fields', 'missing_required', 'not_confirmed', 'digest_mismatch', 'no_submit_button', 'no_confirmation',
+  'click_uncertain',
+  // The Apify client's error kinds and unknown-outcome reasons.
+  'http', 'timeout', 'network', 'aborted', 'server_error', 'bad_response', 'unconfirmed_duplicate', 'error',
+  // The Dialer's refusals.
+  'bad_request', 'errand_not_allowed', 'not_consented', 'consent_expired', 'do_not_call', 'opt_out_hold',
+  'hold_file_error', 'emergency_number', 'bad_number', 'errand_stale', 'outside_hours', 'already_used', 'line_busy',
+  'agent_mismatch', 'agent_unverified',
+  // The sidecar, its option planner's error codes and its database error kinds.
+  'agent_error', 'errands_not_configured', 'bad_fields', 'read_back_too_long', 'bad_preview', 'bad_result',
+  'not_configured', 'call_failed', 'dial_unknown', 'end_unknown', 'confirm_time_unknown', 'confirm_expired',
+  'empty_question', 'rate_limited', 'overloaded', 'unavailable', 'truncated', 'invalid_reply', 'auth', 'not_found',
+  'stale', 'disconnected', 'unknown_result', 'internal', 'gave_up',
+]);
+
+/** The sidecar's prefixed codes (`planner_timeout`, `preview_http_404`, `not_sent_network`): prefix plus a known code. */
+const CODE_PREFIXES = ['planner_', 'publish_', 'preview_', 'not_sent_'] as const;
+const HTTP_CODE_RE = /^http_[1-5][0-9]{2}$/;
+
+function isPublicCode(code: string): boolean {
+  if (PUBLIC_CODES.has(code) || HTTP_CODE_RE.test(code)) return true;
+  for (const prefix of CODE_PREFIXES) {
+    if (code.startsWith(prefix)) {
+      const rest = code.slice(prefix.length);
+      return PUBLIC_CODES.has(rest) || HTTP_CODE_RE.test(rest);
+    }
+  }
+  return false;
+}
+
+/**
+ * The code a public row may carry for a producer's reason code: the code itself when it is on the fixed list (after
+ * `normCode`), else `fallback` (a module word such as `refused`). Empty stays empty. Stored rows keep only this, so
+ * every public surface (the anonymous ledger, cues, pipeline labels, the board) is content-free whatever was sent.
+ */
+export function publicCode(code: string, fallback: string): string {
+  const c = normCode(code);
+  if (c === '') return '';
+  return isPublicCode(c) ? c : fallback;
 }
 
 /** `Object.hasOwn` for lookup tables keyed by caller strings, so `constructor` or `toString` never match. */

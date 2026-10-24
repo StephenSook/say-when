@@ -50,7 +50,7 @@ Node 22. From this folder:
 ```bash
 npm ci
 npm run typecheck              # the module, the scripts and the generated bindings
-npm test                       # vitest with the 2.12+ module test harness: 117 tests, no server needed
+npm test                       # vitest with the 2.12+ module test harness: 155 tests, no server needed
 spacetime build --module-path .
 ```
 
@@ -229,3 +229,15 @@ Regenerate after every schema change. With `spacetime.json` present, a `spacetim
 - Any number on venue Ethernet, and every timing value on a real wearer.
 - A real `mint_voice_token` with the key, calls (`claim_call`, `report_call_status`) on Maincloud, the two-minute idle pause on Maincloud, and a republish while a scan is running.
 - The web app and the real agent sidecar against `say-when-dev` (their own workflows).
+- The adversarial review's rules (`docs/spacetime.md` section 13) are tested in the suite and the 17-check smoke passed on them, but the call and idle rules have not run on Maincloud, and the last two fixes (section 13 rows 20 and 21) had no second-model review.
+
+## Review notes for client builders
+
+The review (`docs/spacetime.md` section 13) changed a few things a client can see:
+
+- New gesture outcomes: `accepted:stop_errand_hang_up`, `accepted:stop_call_hang_up`, `accepted:stop_hang_up`, `accepted:none_hang_up`, `accepted:stop_reply_hang_up` (STOP hangs up every live call and still does what it does without one).
+- After two quiet minutes the first command meets a paused session (`ignored:paused` for CONFIRM, `accepted:resume` for YES), because a due idle pause is applied before any command.
+- A call option picked while a call is live is refused with code `line_busy`; `claim_call` can throw `line busy`.
+- `report_readback_done` can throw `read-back deadline passed`; a late `agent_attach_preview` throws `stale attempt`.
+- With sharing off, `board_errands.form_title` is "Form", `board_calls.end_reason` is empty, and reason sentences are the module's own or empty. Reason codes on every row come from a fixed list (`publicCode` in `src/util.ts`); an unlisted code is stored as `agent_failed`, `refused`, `failed` or `call_failed`.
+- `call_queue` also shows the agent its Failed `lease_lapsed` calls with `cancel_requested`, so the sidecar hangs them up.
