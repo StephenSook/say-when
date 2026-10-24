@@ -243,3 +243,43 @@ jobs:
           pass=$(awk '/^# pass/ {print $3}' test.log)
           echo "passing tests: $pass"
           test "$pass" -ge 134
+
+  agent:
+    name: Agent sidecar (Claude planner, errand and call wiring)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            apify/client/package-lock.json
+            moss/package-lock.json
+            cartesia/package-lock.json
+            spacetime/package-lock.json
+            agent/package-lock.json
+      - name: Build the packages the sidecar imports
+        run: |
+          for p in apify/client moss cartesia; do
+            npm ci --prefix "$p"
+            npm run build --prefix "$p"
+          done
+          npm ci --prefix spacetime
+      - name: Install
+        working-directory: agent
+        run: npm ci
+      - name: Typecheck (including the generated SpacetimeDB bindings)
+        working-directory: agent
+        run: npm run typecheck
+      - name: Tests (fakes for Claude, Apify, Moss, Cartesia and the database)
+        working-directory: agent
+        run: |
+          status=0
+          npm test > test.log 2>&1 || status=$?
+          cat test.log
+          test "$status" -eq 0
+          grep -qE '^# fail 0$' test.log
+          pass=$(awk '/^# pass/ {print $3}' test.log)
+          echo "passing tests: $pass"
+          test "$pass" -ge 191

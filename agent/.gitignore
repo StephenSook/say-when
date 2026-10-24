@@ -1,0 +1,9 @@
+node_modules/
+dist/
+# The sidecar's SpacetimeDB identity token. Never commit it.
+.agent-token
+# Local settings, for example AGENT_FORMS_FILE contents with a real form address.
+.env
+.env.*
+!.env.example
+private/

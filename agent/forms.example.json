@@ -1,0 +1,14 @@
+[
+    {
+        "formKey": "care_team_request",
+        "formUrl": "demo",
+        "formTitle": "Care team request",
+        "fields": [
+            { "label": "Who is this from?", "fixedValue": "Demo user" },
+            { "label": "What do you need?", "choices": ["Ride", "Meal or drink", "Company", "Something else"], "required": true },
+            { "label": "Details", "hint": "what they asked for, in a few words" },
+            { "label": "When?", "hint": "a time if they said one" },
+            { "label": "How urgent?", "choices": ["Now", "Today", "This week"] }
+        ]
+    }
+]

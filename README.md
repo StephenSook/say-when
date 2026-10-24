@@ -51,6 +51,7 @@ The hand commands are imagined movements read over the motor cortex, so they onl
 | Moss retrieval | `moss/` | Built, 75 tests in CI; first run against real Moss pending. Memory text stays private unless a memory is marked shareable |
 | SpacetimeDB module | `spacetime/` | Built, 155 tests in CI. Four rounds of adversarial review by a second model ([docs/spacetime.md](docs/spacetime.md) section 13). Live on Maincloud as `say-when-dev` (Oct 24) and smoke-tested there after the review: 17 of 17 end-to-end checks ([spacetime/README.md](spacetime/README.md)). Design in [docs/spacetime.md](docs/spacetime.md) |
 | Dashboard and partner phone | `web/` | Built, 112 tests and a production build in CI; checked in a browser at 1440 and 390 px on the labeled sample replay. Live SpacetimeDB wiring in progress. Spec in [docs/ui.md](docs/ui.md) |
+| Agent sidecar (Claude planner, errands, calls) | `agent/` | Built, 191 tests in CI on fakes. Plans up to four options with Claude (structured output, checked strictly), retrieves memory first, searches only when needed, and runs the errand and call steps only after the module records a matching CONFIRM. Not yet run against the live services |
 | Tiger Data telemetry | `telemetry/` | Built, 134 tests in CI. Live on a free Tiger service: 5 hypertables, 3 real-time continuous aggregates and retention, verified from the live catalog; pinned TLS. Not yet run during a real session |
 | Headset decoder | `switch/` | Shashank; not in this repo yet. Brain test in [docs/brain-mode-test.md](docs/brain-mode-test.md) |
 
@@ -66,7 +67,7 @@ Measured on Maincloud (Oct 24, smoke runs with made-up content, not yet a wearer
 |---|---|---|
 | `spacetime/` | SpacetimeDB module: tables, reducers, views, scan clock, consent gate; smoke tools in `spacetime/scripts/` | Built; live as `say-when-dev` |
 | `switch/` | Headset reader, four-command decoder, calibration | Planned |
-| `agent/` | Option planner and the agent sidecar | In progress |
+| `agent/` | Option planner and the agent sidecar | Built |
 | `apify/form-errand/` | Apify Actor: preview, read back, submit | Built |
 | `apify/client/` | Apify client for the agent: web search, places, errand preview and submit | Built |
 | `cartesia/` | Ink-2 speech to text, Sonic voice, pronunciation dictionary, outbound call | Built |

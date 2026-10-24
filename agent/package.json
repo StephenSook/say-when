@@ -1,0 +1,40 @@
+{
+    "name": "@say-when/agent",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "description": "NeuroLingo agent sidecar: drafts up to four options with Claude from Moss memory and Apify results, and runs confirmed errands and calls, all through the SpacetimeDB module.",
+    "engines": {
+        "node": ">=22"
+    },
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "default": "./dist/index.js"
+        }
+    },
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json",
+        "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.bindings.json",
+        "test": "tsx --test test/*.test.ts",
+        "start": "tsx src/main.ts run",
+        "pair": "tsx src/main.ts pair",
+        "check": "tsx src/main.ts check"
+    },
+    "dependencies": {
+        "@anthropic-ai/sdk": "0.137.0",
+        "@say-when/apify-client": "file:../apify/client",
+        "@say-when/cartesia": "file:../cartesia",
+        "@say-when/moss": "file:../moss",
+        "spacetimedb": "2.13.0",
+        "zod": "4.6.7"
+    },
+    "devDependencies": {
+        "@types/node": "^24.19.2",
+        "tsx": "^4.23.15",
+        "typescript": "~6.0.3"
+    },
+    "license": "MIT"
+}
