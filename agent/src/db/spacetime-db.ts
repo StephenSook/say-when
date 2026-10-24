@@ -119,6 +119,11 @@ export class SpacetimeAgentDb implements AgentDb {
     // grant is still seen (onInsert passes (ctx, row), onUpdate (ctx, oldRow, row)).
     private readonly onConsentInsert = (...args: unknown[]) => this.consentRowArrived(args[1]);
     private readonly onConsentUpdate = (...args: unknown[]) => this.consentRowArrived(args[2]);
+    /**
+     * A removed `agent_consent` row (the Agent device revoked, for example) counts as memory off: until a row comes back
+     * what it allowed is unknown, and a revocation and a new grant in the gap would otherwise never be heard.
+     */
+    private readonly onConsentDelete = () => this.memoryOff();
     private closed = false;
     private syncs = 0;
 
@@ -337,6 +342,7 @@ export class SpacetimeAgentDb implements AgentDb {
             if (view.wire === VIEWS.agentConsent.wire) {
                 table.onInsert(this.onConsentInsert);
                 table.onUpdate?.(this.onConsentUpdate);
+                table.onDelete?.(this.onConsentDelete);
             }
         }
     }
@@ -351,6 +357,7 @@ export class SpacetimeAgentDb implements AgentDb {
             if (view.wire === VIEWS.agentConsent.wire) {
                 table.removeOnInsert(this.onConsentInsert);
                 table.removeOnUpdate?.(this.onConsentUpdate);
+                table.removeOnDelete?.(this.onConsentDelete);
             }
         }
     }

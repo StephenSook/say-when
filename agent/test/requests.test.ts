@@ -300,6 +300,17 @@ describe('recalling past requests for the plan', () => {
         assert.ok(h.memory.recalls.some((r) => r.question === 'Past request (Care team request, form other_team_request)'));
     });
 
+    // Codex round 2: the query budget must not drop a note the question recall already found.
+    it('keeps a note the question found for an allowed form past the query budget', async () => {
+        const forms = [1, 2, 3, 4].map((n) => ({ ...DEMO_FORM, formKey: `form_${n}` }));
+        const h = start(harness({ forms: [...forms, DEMO_FORM] }));
+        h.memory.recallResult = { hits: [NEWEST, memoryHit(1)], instant: [], mossMs: 3, wallMs: 4 };
+        h.api.reply({ answer_mode: 'pick', options: [reply({ text: 'Not now.', tone: 'calm' }), reply({ text: 'Maybe later.', tone: 'warm' })] });
+        await optionsJob(h);
+        assert.ok(!h.memory.recalls.some((r) => r.question.endsWith('form care_team_request)')), 'the fifth form gets no query of its own');
+        assert.ok(h.api.userMessage(0).includes('m1 (past request, saved Oct 24): '));
+    });
+
     it('publishes the memory-filled errand option with the note as its memory source', async () => {
         const h = start(harness({ forms: [DEMO_FORM] }));
         h.memory.pastRequestHits = [NEWEST];

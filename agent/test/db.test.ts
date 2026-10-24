@@ -6,6 +6,7 @@ import { MemoryDb } from '../src/db/memory-db.js';
 import { callReducer } from '../src/db/retry.js';
 import { SpacetimeAgentDb, toAgentQueueRow, toCallQueueRow, TokenSaveError, type BuilderLike, type ConnectionLike } from '../src/db/spacetime-db.js';
 import { recordingLogger } from '../src/log.js';
+import { MemoryWatch } from '../src/requests.js';
 
 const named = (name: string, message = '') => Object.assign(new Error(message), { name });
 
@@ -39,6 +40,11 @@ class FakeTable {
     insert(row: unknown) {
         this.rows.push(row);
         for (const cb of this.inserts) cb({}, row);
+    }
+    /** Removes row `index` and calls the delete listeners with it. */
+    remove(index: number) {
+        const [row] = this.rows.splice(index, 1);
+        for (const cb of this.deletes) cb({}, row);
     }
     /** Replaces row `index` and calls the update listeners with the old and the new row. */
     update(index: number, row: unknown) {
@@ -311,6 +317,27 @@ describe('the SpacetimeDB adapter', () => {
         assert.ok(changes >= 1, 'a change to agent_consent is a change to the views');
         fake.tables.agentConsent.insert({ sessionId: 9n, webSearchAllowed: true });
         assert.equal(off, 2, 'a row that cannot be read counts as memory off');
+    });
+
+    // Codex round 2: the row can go (the Agent device revoked) and come back without a reconnect; a revocation, a
+    // CONFIRM and a new grant in that gap would otherwise go unseen by a past-request mark (src/requests.ts).
+    it('counts a removed agent_consent row as memory off, so a consent mark taken before it no longer holds', async () => {
+        const fake = fakeConnection();
+        const db = new SpacetimeAgentDb({ builder: () => fake.builder, uri: 'https://example.test', database: 'say-when-dev', log: recordingLogger() });
+        await db.connect();
+        let off = 0;
+        db.onMemoryOff(() => off++);
+        const watch = new MemoryWatch(db);
+        fake.tables.agentConsent.insert({ sessionId: 8n, memoryAllowed: true, webSearchAllowed: true });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const mark = watch.mark();
+        assert.ok(mark, 'memory consent holds');
+        fake.tables.agentConsent.remove(0);
+        assert.equal(off, 1, 'the row went: what it allowed is no longer known');
+        fake.tables.agentConsent.insert({ sessionId: 8n, memoryAllowed: true, webSearchAllowed: true });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        assert.equal(db.agentConsent()?.memoryAllowed, true);
+        assert.equal(watch.heldSince(mark), false);
     });
 
     it('counts a lost connection or a refused subscription as memory off', async () => {

@@ -106,8 +106,9 @@ async function recallWithPastRequests(
     deadlineMs: number,
     signal: AbortSignal,
 ): Promise<{ recall: Recall; pastRequests: number }> {
-    const unique = forms.filter((form, i) => forms.findIndex((f) => f.formKey === form.formKey) === i).slice(0, MAX_PAST_REQUEST_FORMS);
-    const finding = Promise.all(unique.map((form) => findPastRequests(memory, row, form, deadlineMs)));
+    const unique = forms.filter((form, i) => forms.findIndex((f) => f.formKey === form.formKey) === i);
+    // The query budget limits the extra queries only; a note the question's own recall found counts for every form.
+    const finding = Promise.all(unique.slice(0, MAX_PAST_REQUEST_FORMS).map((form) => findPastRequests(memory, row, form, deadlineMs)));
     const recall = await withDeadline(memory.recall(row.questionText, row.askedBy), deadlineMs, 'memory recall', signal);
     // Each past-request query has its own deadline, started with the question's, so this wait is bounded too.
     const found = await finding;
