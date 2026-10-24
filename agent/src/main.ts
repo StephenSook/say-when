@@ -25,7 +25,7 @@ import { ConversationLog, PreviewBook, type JobDeps } from './jobs.js';
 import { consoleLogger, type Logger } from './log.js';
 import { Orchestrator } from './orchestrator.js';
 import { errorTag, startupFailureLine, StartupError } from './startup.js';
-import { askSidecar, checkVoiceToken, formatWarm, removeQuietly, wakeStandby, warmFiles, warmMoss, writePrivate } from './warm.js';
+import { askSidecar, checkVoiceToken, formatWarm, newNonce, removeQuietly, wakeStandby, WarmFileError, warmFiles, warmMoss, writePidFile, writeWarmStatus } from './warm.js';
 import { classifyQuestion, wire } from './wiring.js';
 
 const AGENT_DIR = fileURLToPath(new URL('../', import.meta.url));
@@ -182,8 +182,10 @@ async function run(result: ConfigResult, log: Logger): Promise<number> {
     log.info('the sidecar is running; press Ctrl-C to stop');
 
     // `npm run warm` finds this process by its pid file and sends SIGUSR2: Moss opens here (or its idle clock starts
-    // again), and the result goes to the status file that `warm` prints. One warm at a time.
+    // again), and the result goes to the status file that `warm` prints, tagged with this run's nonce. One warm at a
+    // time. `warm` checks the process's command, working folder and start before it signals (src/warm.ts).
     const files = warmFiles(config.spacetime.tokenFile);
+    const nonce = newNonce();
     let warming = false;
     const onWarm = () => {
         if (warming) return;
@@ -191,16 +193,16 @@ async function run(result: ConfigResult, log: Logger): Promise<number> {
         void warmMoss(wired.moss, wired.memory)
             .then((line) => {
                 log.info(formatWarm(line));
-                writePrivate(files.status, JSON.stringify(line));
+                writeWarmStatus(files.status, line, nonce);
             })
             .catch(() => log.warn('warm: the status could not be written'))
             .finally(() => (warming = false));
     };
     process.on('SIGUSR2', onWarm);
     try {
-        writePrivate(files.pid, `${process.pid}\n`);
-    } catch {
-        log.warn('warm: the pid file could not be written; npm run warm will not find this sidecar');
+        writePidFile(files.pid, process.pid, nonce);
+    } catch (error) {
+        log.warn('warm: the pid file was not written; npm run warm will not find this sidecar', { why: error instanceof WarmFileError ? error.message : errorTag(error) });
     }
 
     return new Promise<number>((resolve) => {
@@ -239,7 +241,7 @@ async function warm(result: ConfigResult): Promise<number> {
         // Reported by wakeStandby as a setting that is not set.
     }
     const lines = await Promise.all([
-        askSidecar(warmFiles(result.config.spacetime.tokenFile)),
+        askSidecar(warmFiles(result.config.spacetime.tokenFile), { expectedCwd: AGENT_DIR }),
         wakeStandby(apifyUrl, apifyToken),
         checkVoiceToken(process.env.CARTESIA_API_KEY, (key) => mintAccessToken(key, 'tts', { expiresInSeconds: 60, timeoutMs: 15_000 })),
     ]);
