@@ -54,6 +54,9 @@ const POSITIVES = [
     'Are you cold?',
     'Is the Berkeley Public Library open on Sunday?',
     'Would you be cold outside?',
+    // Review round 2: offers to rest, go or sit stay fast.
+    'Do you want to go outside?',
+    'Would you like to rest now?',
 ];
 
 const NEGATIVES: [string, string][] = [
@@ -78,7 +81,15 @@ const NEGATIVES: [string, string][] = [
     ['Would you mind opening the window?', 'request'],
     ['Can you please help me?', 'request'],
     ['Could you hand me the cup?', 'request'],
-    ['Will you tell the nurse?', 'request'],
+    ['Will you tell the nurse?', 'errand_verb'],
+    // Review round 2 (Codex): an offer to act, or a request named as a noun, never stock Yes and No.
+    ['Do you want to submit a care team request?', 'errand_verb'],
+    ['Do you want me to get the nurse?', 'errand_verb'],
+    ['Would you like me to ask the nurse for a blanket?', 'errand_verb'],
+    ['Should I bring your glasses?', 'errand_verb'],
+    ['Do you want me to open the window?', 'request'],
+    ['Shall I turn on the lights?', 'request'],
+    ['Can I help you with anything?', 'request'],
     ['What do you want for lunch?', 'no_auxiliary'],
     ['Do you know where the station is?', 'wh_word'],
     ['Can you tell me how you feel?', 'wh_word'],
@@ -451,8 +462,10 @@ describe('the speed settings', () => {
         assert.ok(bad.problems.includes('AGENT_YES_NO_FAST must be on or off.'));
     });
 
-    it('turns draft first on by default, and off with AGENT_DRAFT_FIRST=off', () => {
-        assert.equal(readConfig(base, tokenFile).config.speed.draftFirst, true);
-        assert.equal(readConfig({ ...base, AGENT_DRAFT_FIRST: 'off' }, tokenFile).config.speed.draftFirst, false);
+    it('leaves draft first off by default (review round 2), and turns it on with AGENT_DRAFT_FIRST=on', () => {
+        // The module ends a question with no pick when the draft's passes run out, and cancels the job, even while
+        // the final plan with web results is still on its way; until the module waits for it, the draft is opt-in.
+        assert.equal(readConfig(base, tokenFile).config.speed.draftFirst, false);
+        assert.equal(readConfig({ ...base, AGENT_DRAFT_FIRST: 'on' }, tokenFile).config.speed.draftFirst, true);
     });
 });
