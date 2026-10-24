@@ -250,4 +250,22 @@ describe('recovery', () => {
         await assert.rejects(port.web('Is the pharmacy open?', { signal: new AbortController().signal }), (e: unknown) => e instanceof ApifyHttpError);
         assert.equal(requests, 1);
     });
+
+    it('runs a place search with a charge cap Apify accepts and a run limit inside the search deadline', async () => {
+        const urls: string[] = [];
+        const fetchFn = async (input: string) => {
+            urls.push(input);
+            return new Response('[]', { status: 201, headers: { 'content-type': 'application/json' } });
+        };
+        // The sidecar's default search deadline (AGENT_SEARCH_TIMEOUT_MS).
+        const port = searchPort({ token: 'apify_api_placeholder', ragWebBrowserUrl: 'https://rag.example.test' }, 20_000, fetchFn);
+        const result = await port.places('lunch', { signal: new AbortController().signal, near: { lat: 37.8716, lng: -122.2727 } });
+        assert.deepEqual(result.rows, []);
+        assert.equal(urls.length, 1);
+        const url = new URL(urls[0] ?? '');
+        // Apify refuses a cap under $0.50 with HTTP 400 max-total-charge-usd-below-minimum (live test, Oct 24), and the
+        // port passes no cap of its own, so the client's default must be one Apify accepts.
+        assert.ok(Number(url.searchParams.get('maxTotalChargeUsd')) >= 0.5, url.search);
+        assert.equal(url.searchParams.get('timeout'), '15');
+    });
 });

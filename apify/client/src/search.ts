@@ -97,13 +97,19 @@ export interface PlaceSearchOptions extends CallOptions {
     timeoutSecs?: number;
     /** Run memory in MB, a power of 2 of at least 128. Default 4096. */
     memoryMbytes?: number;
-    /** Hard cap on what one run can charge, above 0 and at most 5. Default 0.25. */
+    /** Hard cap on what one run can charge, 0.50 (Apify's minimum) to 5. Default 0.50. */
     maxChargeUsd?: number;
 }
 
 const RAG_SERVER_MARGIN_MS = 5_000;
 const MAX_QUERY_CHARS = 1_000;
 const MAPS_ACTOR = 'compass~crawler-google-places';
+/**
+ * The lowest charge cap Apify accepts on a Maps run, and our default. A lower one is refused before the run starts:
+ * HTTP 400 `max-total-charge-usd-below-minimum`, "Maximum cost per run is less than the allowed minimum of $0.50"
+ * (live test, Oct 24; with 0.25 every place search failed). It is a ceiling, not a price: a run is billed per place.
+ */
+const MAPS_MIN_CHARGE_USD = 0.5;
 const MAPS_FIELDS = [
     'title',
     'address',
@@ -398,8 +404,11 @@ export async function searchPlaces(query: string, opts: PlaceSearchOptions = {})
     if (!Number.isInteger(memory) || memory < 128 || (memory & (memory - 1)) !== 0) {
         throw new RangeError('memoryMbytes must be a power of 2 of at least 128.');
     }
-    const maxCharge = opts.maxChargeUsd ?? 0.25;
-    if (!Number.isFinite(maxCharge) || maxCharge <= 0 || maxCharge > 5) throw new RangeError('maxChargeUsd must be above 0 and at most 5.');
+    const maxCharge = opts.maxChargeUsd ?? MAPS_MIN_CHARGE_USD;
+    if (!Number.isFinite(maxCharge) || maxCharge < MAPS_MIN_CHARGE_USD || maxCharge > 5) {
+        // Refused here rather than by Apify, which answers a cap under $0.50 with HTTP 400.
+        throw new RangeError('maxChargeUsd must be at least 0.50 (Apify refuses a lower cap) and at most 5.');
+    }
     const language = opts.language ?? 'en';
     if (typeof language !== 'string' || !/^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?$/.test(language)) {
         throw new RangeError('language must be a language code such as "en".');

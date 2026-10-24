@@ -144,9 +144,34 @@ describe('listen', () => {
         timers.tick(5000);
         assert.equal(audio.stopped, true);
         assert.deepEqual(JSON.parse(String(socket.sent.at(-1))), { type: 'close' });
-        timers.tick(3000);
+        timers.tick(5000);
         const result = await session.done;
         assert.ok(result.ok && result.reason === 'timeout' && !result.complete);
+    });
+
+    it('waits 5 s by default for a final transcript that comes late after the close command', async () => {
+        // Live test, Oct 24: Ink-2's final came 3.5 s after the close, and the old 3 s wait cut the question short.
+        const { session, timers } = setup({ endOn: 'release' });
+        const socket = await opened();
+        socket.receive(turn('turn.update', 'What should we have for'));
+        session.release();
+        assert.deepEqual(JSON.parse(String(socket.sent.at(-1))), { type: 'close' });
+        timers.tick(3500);
+        assert.equal(await settled(session.done, 20), 'pending', 'still waiting 3.5 s after the close');
+        socket.receive(turn('turn.end', 'What should we have for dinner?'));
+        timers.tick(1500);
+        const result = await session.done;
+        assert.deepEqual(result, { ok: true, text: 'What should we have for dinner?', turns: 1, complete: true, reason: 'release', ms: 5000 });
+    });
+
+    it('takes a shorter wait when drainMs sets one, keeping the words heard so far', async () => {
+        const { session, timers } = setup({ endOn: 'release', drainMs: 1000 });
+        const socket = await opened();
+        socket.receive(turn('turn.update', 'What should we have for'));
+        session.release();
+        timers.tick(1000);
+        const result = await session.done;
+        assert.deepEqual(result, { ok: true, text: 'What should we have for', turns: 0, complete: false, reason: 'release', ms: 1000 });
     });
 
     it('sends audio held before the socket opened, then the close command', async () => {

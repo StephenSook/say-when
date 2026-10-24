@@ -102,7 +102,7 @@ jobs:
           grep -qE '^# fail 0$' test.log
           pass=$(awk '/^# pass/ {print $3}' test.log)
           echo "passing tests: $pass"
-          test "$pass" -ge 191
+          test "$pass" -ge 192
 
   cartesia:
     name: Cartesia (speech, voice, call)
@@ -129,7 +129,7 @@ jobs:
           grep -qE '^# fail 0$' test.log
           pass=$(awk '/^# pass/ {print $3}' test.log)
           echo "passing tests: $pass"
-          test "$pass" -ge 164
+          test "$pass" -ge 166
 
   moss:
     name: Moss (memory and web retrieval)
@@ -282,4 +282,4 @@ jobs:
           grep -qE '^# fail 0$' test.log
           pass=$(awk '/^# pass/ {print $3}' test.log)
           echo "passing tests: $pass"
-          test "$pass" -ge 212
+          test "$pass" -ge 213

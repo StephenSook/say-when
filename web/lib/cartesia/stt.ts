@@ -170,7 +170,10 @@ export interface ListenOptions {
     endOn?: 'turn_end' | 'release';
     /** Hard stop for a stuck button, so the stream cannot keep billing. */
     maxMs?: number;
-    /** After audio stops, how long to wait for the server's last events. */
+    /**
+     * After the close command, how long to wait for the server's last events. Default 5000. After a release or the
+     * time limit, releaseDeadlineMs still ends the session no later than that.
+     */
     drainMs?: number;
     audio?: AudioSource;
     socket?: SocketFactory;
@@ -203,6 +206,12 @@ export interface Listening {
 
 /** Most audio held while the socket opens: about 5 seconds. */
 const MAX_PENDING_CHUNKS = 50;
+
+/**
+ * The default drainMs. In a live test on Oct 24 a slow Ink-2 final transcript arrived 3.5 s after the close command,
+ * and the old 3 s wait cut the question to "What should we have for".
+ */
+const DEFAULT_DRAIN_MS = 5000;
 
 class ListenSession implements Listening {
     readonly done: Promise<ListenResult>;
@@ -313,7 +322,7 @@ class ListenSession implements Listening {
         } catch {
             return;
         }
-        this.drainTimer = this.timers.set(() => this.finish(), this.options.drainMs ?? 3000);
+        this.drainTimer = this.timers.set(() => this.finish(), this.options.drainMs ?? DEFAULT_DRAIN_MS);
     }
 
     private stopStreaming(reason: 'turn_end' | 'release' | 'timeout'): void {
@@ -429,7 +438,7 @@ class ListenSession implements Listening {
         }
         // Give the server a moment to close after the close command, then close it ourselves.
         if (this.socket && this.socket.readyState === SOCKET_OPEN) {
-            if (this.closeSent) this.timers.set(() => this.closeSocket(), this.options.drainMs ?? 3000);
+            if (this.closeSent) this.timers.set(() => this.closeSocket(), this.options.drainMs ?? DEFAULT_DRAIN_MS);
             else this.closeSocket();
         }
     }
