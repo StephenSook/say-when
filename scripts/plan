@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# CLI helper for PLAN.md so nobody hand-edits the status table.
+# Usage: ./scripts/plan <claim|done|block|handoff|ls> [task#] [note or name]
+# Set PLAN_NAME to the name you use in the Owner column (defaults to the first word of git user.name).
+set -u
+
+PLAN="PLAN.md"
+cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
+[ -f "$PLAN" ] || { echo "No PLAN.md found."; exit 1; }
+
+cmd="${1:-}"
+task="${2:-}"
+arg="${3:-}"
+who="${PLAN_NAME:-$(git config user.name | awk '{print $1}')}"
+# The venue is in San Francisco, so every timestamp is Pacific time.
+stamp="$(TZ=America/Los_Angeles date "+%b %d %-I:%M%p" | sed 's/AM/am/;s/PM/pm/') PT"
+
+lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+
+# get_cell <task> <column>
+get_cell() {
+    awk -v t="$1" -v c="$2" 'BEGIN { FS = "|" }
+        NF >= 9 { id = $2; gsub(/^ +| +$/, "", id); if (id == t) { v = $(c + 1); gsub(/^ +| +$/, "", v); print v; exit } }' "$PLAN"
+}
+
+# set_cell <task> <column> <value>; columns: 1 #, 2 Component, 3 File(s), 4 Owner, 5 Status, 6 Deps, 7 Notes
+set_cell() {
+    awk -v t="$1" -v c="$2" -v v="$3" 'BEGIN { FS = OFS = "|" }
+        {
+            if (NF >= 9) {
+                id = $2; gsub(/^ +| +$/, "", id)
+                if (id == t) { $(c + 1) = " " v " "; hit = 1 }
+            }
+            print
+        }
+        END { exit hit ? 0 : 3 }' "$PLAN" > "$PLAN.tmp" && mv "$PLAN.tmp" "$PLAN" || {
+        rm -f "$PLAN.tmp"
+        echo "Task $1 not found in $PLAN."
+        exit 3
+    }
+}
+
+need_task() { [ -n "$task" ] || { echo "Missing task number."; exit 2; }; }
+
+commit_and_push() {
+    git add "$PLAN" && git commit -q -m "$1" || exit 1
+    if git pull --rebase -q && git push -q; then
+        echo "Pushed: $1"
+    else
+        echo "Committed locally but the push failed. Resolve, then run: git push"
+    fi
+}
+
+case "$cmd" in
+    claim)
+        need_task
+        set_cell "$task" 5 "🟡"
+        # Taking over someone else's row (for example a stale lock) makes you the owner.
+        owner=$(get_cell "$task" 4)
+        case "$(lower "$owner")" in
+            *"$(lower "$who")"*) ;;
+            *) set_cell "$task" 4 "$who"; echo "Owner was $owner. Ping them about the takeover." ;;
+        esac
+        set_cell "$task" 7 "$who, since $stamp"
+        commit_and_push "status: $task 🟡 claimed by $who"
+        ;;
+    done)
+        need_task
+        set_cell "$task" 5 "✅"
+        set_cell "$task" 7 "done $stamp"
+        commit_and_push "status: $task ✅ completed by $who"
+        ;;
+    block)
+        need_task
+        [ -n "$arg" ] || { echo "Say why: ./scripts/plan block $task \"reason\""; exit 2; }
+        set_cell "$task" 5 "⛔"
+        set_cell "$task" 7 "blocked: $arg ($stamp)"
+        commit_and_push "status: $task ⛔ blocked: $arg"
+        ;;
+    handoff)
+        need_task
+        [ -n "$arg" ] || { echo "Name the teammate: ./scripts/plan handoff $task Name"; exit 2; }
+        set_cell "$task" 4 "$arg"
+        set_cell "$task" 7 "handed to $arg by $who, $stamp"
+        commit_and_push "status: $task → $arg"
+        ;;
+    ls)
+        case "$task" in
+            --active)  grep '| 🟡 |' "$PLAN" ;;
+            --mine)    grep '^| ' "$PLAN" | grep -i "| $who" ;;
+            --blocked) grep '| ⛔ |' "$PLAN" ;;
+            *)         grep -E '\| (⬜|🟡|⛔) \|' "$PLAN" ;;
+        esac
+        ;;
+    *)
+        echo "Usage: ./scripts/plan <claim|done|block|handoff|ls> [task#] [note or name]"
+        echo ""
+        echo "  claim   2.1             mark in progress (🟡), commit, push"
+        echo "  done    2.1             mark complete (✅), commit, push"
+        echo "  block   2.1 \"reason\"    mark blocked (⛔), commit, push"
+        echo "  handoff 2.1 Name        give the row to a teammate, commit, push"
+        echo "  ls [--active|--mine|--blocked]"
+        ;;
+esac

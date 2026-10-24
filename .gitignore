@@ -1,0 +1,61 @@
+# Secrets: never commit real keys
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa*
+service-account*.json
+.npmrc
+.pypirc
+.token-*
+
+# Node
+node_modules/
+.next/
+out/
+dist/
+build/
+.turbo/
+*.tsbuildinfo
+.vercel/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Apify local storage and Playwright output
+storage/
+apify_storage/
+test-results/
+playwright-report/
+.playwright/
+
+# SpacetimeDB build output
+spacetime/**/target/
+spacetime/**/dist/
+
+# Raw headset recordings stay on the laptop
+switch/recordings/
+*.edf
+*.bdf
+*.xdf
+
+# OS and editors
+.DS_Store
+.AppleDouble
+._*
+.vscode/
+.idea/
+*.swp
+*.log

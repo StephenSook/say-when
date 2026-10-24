@@ -1,0 +1,47 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# Branch pushes supersede each other; every main commit keeps its own run.
+concurrency:
+  group: ci-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || '' }}
+  cancel-in-progress: true
+
+jobs:
+  secrets:
+    name: Secret scan (full history)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install gitleaks
+        run: |
+          curl -sSfL -o gitleaks.tgz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          tar -xzf gitleaks.tgz gitleaks
+          ./gitleaks version
+      - name: Scan
+        run: ./gitleaks git --redact --verbose .
+
+  hygiene:
+    name: Repo hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: No env files tracked
+        run: |
+          tracked=$(git ls-files | grep -E '(^|/)\.env($|\.)' | grep -v '\.env\.example$' || true)
+          if [ -n "$tracked" ]; then echo "Tracked env files: $tracked"; exit 1; fi
+      - name: Shell scripts parse
+        run: bash -n .githooks/check-plan.sh scripts/plan
+      - name: PLAN.md table is intact
+        run: |
+          rows=$(grep -cE '^\| [0-9]+\.[0-9]+ \|' PLAN.md)
+          echo "PLAN.md task rows: $rows"
+          test "$rows" -ge 10
