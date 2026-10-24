@@ -56,14 +56,16 @@ const ERRAND_VERB =
 const REQUEST_START = /^(can|could|would|will) you\b/;
 /**
  * The only verbs after "can/could/would/will you" that keep a question yes or no: what the person hears, feels,
- * wants or is able to do. Anything else ("would you mind", "could you hand me", "can you please") reads as a request.
+ * wants or is able to do. Anything else ("would you mind", "could you hand me", "can you please", "could you be more
+ * specific", "would you be able to describe") reads as a request.
  */
-const REQUEST_SAFE: readonly string[] = ['hear', 'see', 'feel', 'like', 'want', 'need', 'remember', 'understand', 'sleep', 'breathe', 'eat', 'drink', 'swallow', 'taste', 'smell', 'move', 'come', 'be'];
+const REQUEST_SAFE: readonly string[] = ['hear', 'see', 'feel', 'like', 'want', 'need', 'remember', 'understand', 'sleep', 'breathe', 'eat', 'drink', 'swallow', 'taste', 'smell', 'move', 'come'];
 /**
- * An offer to act: "do you want (me) to ...", "would you like (me) to ...", "should I ...", "shall I ...", "can I ...".
+ * An offer to act: "do you want (me) to ...", "would you like (me) to ...", "should I ...", "shall I ...", "can I ...",
+ * and "able, willing, ready, going or trying to ..." ("Are you able to describe it?").
  * Yes or no only when the verb is on OFFER_SAFE ("Do you want to go outside?", "Shall we go?", "May I sit here?").
  */
-const OFFER_WANT = /\b(?:want|wants|like|need|needs)(?: (?:me|us|him|her|them|someone|somebody))? to ([a-z]+)/;
+const OFFER_WANT = /\b(?:want|wants|like|need|needs|able|willing|ready|going|trying)(?: (?:me|us|him|her|them|someone|somebody))? to ([a-z]+)/;
 const OFFER_SELF = /^(?:should|shall|can|could|may|will) (?:i|we) ([a-z]+)/;
 const OFFER_SAFE: readonly string[] = [...REQUEST_SAFE, 'go', 'sit', 'rest', 'stay', 'wait', 'talk', 'listen', 'watch', 'read', 'walk', 'stand', 'lie', 'try', 'play'];
 /** A wh-question, also an embedded one ("Do you know where it is?", "Do you know if it is open?"). */

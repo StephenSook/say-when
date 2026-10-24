@@ -236,6 +236,9 @@ export async function runOptionsJob(row: AgentQueueRow, attempt: number, deps: J
     // Consent as the module shows it at each use: revoking it clears the job's flags while the job runs.
     const allowMemory = () => memoryConsent(deps, row, attempt);
     const allowWeb = () => consentNow(deps, row, attempt).webSearchAllowed;
+    // A call option about the recent errand is possible: only the normal plan sees the contacts and that errand, so
+    // neither stock options nor a final draft may answer the question.
+    const callPossible = () => !!deps.dialer && deps.contacts.length > 0 && recentErrand(row, deps.now()) !== null;
     // The turns with this partner before this question (the question itself goes to the planner on its own). The
     // conversation is kept, and sent, only under memory consent; once the module shows it withdrawn, what was kept is
     // forgotten (memoryConsent), at whichever check sees it first.
@@ -248,8 +251,10 @@ export async function runOptionsJob(row: AgentQueueRow, attempt: number, deps: J
         // final, with no memory, search or Claude. The person hears "Yes or no?" and the picked word is said aloud.
         if (!isMenu && deps.yesNoFast) {
             const verdict = classifyYesNo(row.questionText);
-            deps.log.info(verdict.yesNo ? 'yes or no fast path: stock options' : 'yes or no fast path not taken', { job: row.jobId, why: verdict.reason });
-            if (verdict.yesNo) {
+            const fast = verdict.yesNo && !callPossible();
+            const why = verdict.yesNo && !fast ? 'call_possible' : verdict.reason;
+            deps.log.info(fast ? 'yes or no fast path: stock options' : 'yes or no fast path not taken', { job: row.jobId, why });
+            if (fast) {
                 const options = stockYesNo();
                 // Written before the publish: a final publish ends the job, and the module refuses events after it.
                 await events.instant('plan', 'ok', 'yes no stock', 0, { counts: { optionCount: options.length, yesNo: true, final: true } });
@@ -326,7 +331,11 @@ export async function runOptionsJob(row: AgentQueueRow, attempt: number, deps: J
                 const memory = consent.memoryAllowed ? memoryContext(recall) : [];
                 const drafted = await planOptions(plans, planInput(memory, [], 'pending', null, deps.now()), memory, [], null, 'claude draft');
                 if (!drafted.stillAllowed()) throw new ConsentWithdrawnError();
-                if (drafted.plan.answerMode === 'yes_no') {
+                if (drafted.plan.answerMode === 'yes_no' && callPossible()) {
+                    // A final yes or no draft would end the job before the normal plan could offer the call, and an
+                    // open one would start the prompt over when the final version comes, so it is not published.
+                    deps.log.info('yes or no draft not used: a call about the recent errand is possible', { job: row.jobId });
+                } else if (drafted.plan.answerMode === 'yes_no') {
                     // In yes_no mode the person hears only "Yes or no?", so a later version would change nothing they
                     // hear and would only start the prompt over. The draft is final and the search is stopped.
                     stopSearch.abort();
@@ -334,10 +343,11 @@ export async function runOptionsJob(row: AgentQueueRow, attempt: number, deps: J
                     await publish(deps.db, job, 'yes_no', drafted.options, true, drafted.stillAllowed);
                     deps.log.info('options published', { job: row.jobId, options: drafted.options.length, mode: 'yes_no', ms: drafted.plan.ms, draft: true });
                     return;
+                } else {
+                    await publish(deps.db, job, 'pick', drafted.options, false, drafted.stillAllowed);
+                    draft = drafted;
+                    deps.log.info('draft options published; the search goes on', { job: row.jobId, options: drafted.options.length, ms: drafted.plan.ms });
                 }
-                await publish(deps.db, job, 'pick', drafted.options, false, drafted.stillAllowed);
-                draft = drafted;
-                deps.log.info('draft options published; the search goes on', { job: row.jobId, options: drafted.options.length, ms: drafted.plan.ms });
             } catch (error) {
                 if (signal.aborted || error instanceof JobAbortedError) throw new JobAbortedError();
                 if (!(error instanceof PlannerError) && !(error instanceof PublishRefusedError) && !(error instanceof ConsentWithdrawnError)) throw error;

@@ -53,7 +53,7 @@ const POSITIVES = [
     'Do you want water?',
     'Are you cold?',
     'Is the Berkeley Public Library open on Sunday?',
-    'Would you be cold outside?',
+    'Are you able to hear me?',
     // Review round 2: offers to rest, go or sit stay fast.
     'Do you want to go outside?',
     'Would you like to rest now?',
@@ -91,6 +91,11 @@ const NEGATIVES: [string, string][] = [
     ['Shall I turn on the lights?', 'request'],
     ['Can I help you with anything?', 'open_ended'],
     ['Can I help you with the cup?', 'request'],
+    // Review round 4 (Codex): "be" after "would/could you" and "able to" are requests for content.
+    ['Would you be able to describe your pain?', 'request'],
+    ['Could you be more specific?', 'request'],
+    ['Are you able to describe it?', 'request'],
+    ['Would you be cold outside?', 'request'],
     // Review round 3 (Codex): a list of alternatives, with commas or slashes, is a choice for the planner.
     ['Is your pain mild/moderate/severe?', 'list'],
     ['Do you prefer tea, coffee, juice?', 'list'],
@@ -220,6 +225,24 @@ describe('the yes or no fast path', () => {
         assert.equal(h.api.calls.length, 1, 'Claude writes the options');
         assert.ok(h.db.publishes.every((p) => p.options.every((o) => o.provenance !== 'stock')));
         assert.match(h.log.text(), /yes or no fast path not taken job=\d+ why=errand_verb/);
+    });
+
+    it('leaves a yes or no question to the planner while a call about a recent errand is possible (review round 4)', async () => {
+        const h = start(harness({ yesNoFast: true, contacts: [CARE_TEAM] }));
+        h.api.reply(yesNo());
+        const jobId = h.db.addOptionsJob({ questionText: 'Are you tired?', recentErrandTitle: 'Care team request', recentErrandSentAtMs: Date.now() - 30_000 });
+        await waitFor(() => h.db.job(jobId)?.status === 'done');
+        assert.equal(h.api.calls.length, 1, 'Claude writes the options, and can offer the call');
+        assert.match(h.api.userMessage(0), /Contacts for a call:\n/);
+        assert.match(h.log.text(), /yes or no fast path not taken job=\d+ why=call_possible/);
+    });
+
+    it('still answers at once when the recent errand is too old for a call (the control)', async () => {
+        const h = start(harness({ yesNoFast: true, contacts: [CARE_TEAM] }));
+        const jobId = h.db.addOptionsJob({ questionText: 'Are you tired?', recentErrandTitle: 'Care team request', recentErrandSentAtMs: Date.now() - 9 * 60_000 });
+        await waitFor(() => h.db.job(jobId)?.status === 'done');
+        assert.equal(h.api.calls.length, 0);
+        assert.equal(h.db.publishes[0]?.options[0]?.provenance, 'stock');
     });
 
     it('never answers a menu turn with stock options', async () => {
@@ -409,6 +432,28 @@ describe('draft first', () => {
         release();
         await waitFor(() => h.db.job(jobId)?.status === 'done');
         assert.match(h.api.userMessage(1), /Contacts for a call:\n/);
+    });
+
+    it('does not make a yes or no draft final while a call about a recent errand is possible (review round 4)', async () => {
+        const h = start(harness({ draftFirst: true, contacts: [CARE_TEAM] }));
+        const release = h.search.hold();
+        h.api.reply(yesNo());
+        h.api.reply({
+            answer_mode: 'pick',
+            options: [
+                reply({ text: 'Not now.', tone: 'calm' }),
+                { text: 'Call the care team about it.', kind: 'call', tone: 'warm', laugh: false, sources: [], errand: null, call: { contact_id: 'care_team' } },
+            ],
+        });
+        const jobId = h.db.addOptionsJob({ questionText: 'Is the pharmacy request done yet?', recentErrandTitle: 'Care team request', recentErrandSentAtMs: Date.now() - 30_000 });
+        await waitFor(() => h.api.calls.length === 1, 3_000, 'draft asked');
+        await settle(50);
+        assert.equal(h.db.publishes.length, 0, 'the yes or no draft is not published');
+        assert.ok(!eventDetails(h).includes('search ok search stopped'), 'the search goes on');
+        release();
+        await waitFor(() => h.db.job(jobId)?.status === 'done', 3_000, 'job done');
+        assert.equal(h.db.publishes.length, 1);
+        assert.deepEqual(h.db.publishes[0]?.options.map((o) => o.kind), ['reply', 'call']);
     });
 
     it('plans again instead of keeping the draft when a call is possible, even if the search brought nothing', async () => {
