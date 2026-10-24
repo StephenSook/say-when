@@ -92,7 +92,7 @@ cp .env.example .env.local            # fill in your own keys; never commit them
 ./scripts/plan ls                     # see open tasks
 ```
 
-Each folder has its own README with run and test commands.
+Each folder has its own README with run and test commands. The live demo starts with one command, `scripts/demo-up.sh --db say-when-demo`; [docs/demo-runbook.md](docs/demo-runbook.md) has the judging morning step by step.
 
 ## License
 

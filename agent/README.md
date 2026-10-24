@@ -94,6 +94,8 @@ agent/scripts/run-with-keychain.sh warm     # npm run warm, with the same keys a
 - Calls are always off here (`AGENT_CALLS=off`): calls need consent confirmed under the Eleven name first.
 - Defaults, each overridden by a value already in the environment: `SPACETIMEDB_DB=say-when-dev`, `SPACETIMEDB_URI` Maincloud, `AGENT_PLANNER_MODEL=claude-haiku-5-5`, `FORM_ERRAND_URL` the form-errand Actor's Standby URL, `AGENT_FORMS_FILE=agent/forms.example.json` (the Actor's built-in demo form, which sends nothing anywhere; grant `errand care_team_request` for it), `MOSS_SNAPSHOT_DIR=moss/.memory`, and `AGENT_TOKEN_FILE=~/.config/say-when/agent_token_<database>`, outside the repo and one per database.
 
+For the demo and rehearsals, `scripts/demo-up.sh` (repo root) wraps the same start with the rest of the demo's needs: only `say-when-dev` or `say-when-demo`, calls only with `--calls` after `call:check` passes, a Moss memory per database (so a rehearsal never writes the demo's), `/healthz` on `127.0.0.1:8791`, `caffeinate`, a private log, and a clean stop by exact pid. `docs/demo-runbook.md` has the judging morning.
+
 ### Warm
 
 `npm run warm` gets the slow first steps out of the way before a judge's first question, and prints one line per step with its time (`warm moss ok 812 ms: ...`). It never prints a key, a token, a URL or any content, and exits 0 only when all three are ok:
