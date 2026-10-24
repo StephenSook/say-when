@@ -9,11 +9,18 @@
 //   drained below the low-water mark. A replay source waits on it; the live SpacetimeDB source cannot pause the
 //   server, so it relies on drop-oldest instead.
 // - Rest minutes with the same key coalesce in the queue with bitwise OR, as they do in Tiger.
+// - Session metadata (SESSION_METADATA: one input row per session) is never queued, so a full queue cannot drop it.
+//   The writer keeps each session's input row in memory (one small entry per session it follows) and sends the ones
+//   not yet written at the start of every flush, those of the sessions in the batch first, up to maxBatch. If that
+//   insert fails, the batch's rows are not sent and the whole flush is retried as one, so no row is ever written ahead
+//   of its session's input when the input is known. Once an insert of an input succeeds it is not sent again. A flush
+//   also runs with an empty queue while inputs are unwritten (an input can arrive after its session's rows went out),
+//   on the same retry wait, and `stop()` counts unwritten inputs among the rows it could not write.
 // - `stop()` waits for a batch already out (its rows have left the queue) and reports what it could not send.
 import { safeMessage } from './credentials.js';
 import type { Logger } from './log.js';
 import type { RowSink } from './sink.js';
-import { popcount, TABLE_NAMES, type RestMinuteRow, type TableName, type TelemetryRow } from './types.js';
+import { popcount, SESSION_METADATA, TABLE_NAMES, type RestMinuteRow, type TableName, type TelemetryRow } from './types.js';
 
 export interface Timers {
     now(): number;
@@ -57,8 +64,10 @@ export interface WriterStats {
     readonly lastWriteAtMs: number | null;
     readonly lastError: string | null;
     readonly retryAtMs: number | null;
-    /** Rows not written when `stop()` returned (queued plus in flight); null until stopped. */
+    /** Rows not written when `stop()` returned (queued, in flight, and unwritten session inputs); null until stopped. */
     readonly unsentAtStop: number | null;
+    /** Of `unsentAtStop`, the session input rows; null until stopped. */
+    readonly inputsUnsentAtStop: number | null;
 }
 
 interface Entry {
@@ -86,6 +95,10 @@ export class TelemetryWriter {
     private queue: Array<Entry | undefined> = [];
     private head = 0;
     private readonly slots = new Map<string, Entry>();
+    /** Each session's metadata row, by `<table>|<session>`, kept for the writer's life; never queued. */
+    private readonly metadata = new Map<string, { readonly table: TableName; readonly row: TelemetryRow['row'] }>();
+    /** The keys of `metadata` not yet written (an insert of them has not succeeded). */
+    private readonly unwritten = new Set<string>();
     private readonly written = zero();
     private readonly dropped = zero();
     private failedFlushes = 0;
@@ -96,6 +109,7 @@ export class TelemetryWriter {
     private flushing: Promise<boolean> | null = null;
     private inFlight = 0;
     private unsentAtStop: number | null = null;
+    private inputsUnsentAtStop: number | null = null;
     private timer: unknown = null;
     private running = false;
     private waiters: Array<() => void> = [];
@@ -148,11 +162,26 @@ export class TelemetryWriter {
             lastError: this.lastError,
             retryAtMs: this.retryAtMs,
             unsentAtStop: this.unsentAtStop,
+            inputsUnsentAtStop: this.inputsUnsentAtStop,
         };
+    }
+
+    /** Something to send: queued rows, or session inputs not yet written (an input can arrive after its rows went out). */
+    private get due(): boolean {
+        return this.size > 0 || this.unwritten.size > 0;
     }
 
     /** Queues one row. Never throws and never blocks; past capacity the oldest queued row is dropped and counted. */
     push(item: TelemetryRow): void {
+        if (SESSION_METADATA.has(item.table)) {
+            // Not queued: kept, and sent at the start of the next flushes until an insert of it succeeds.
+            const key = `${item.table}|${item.row.sessionId}`;
+            if (!this.metadata.has(key)) {
+                this.metadata.set(key, { table: item.table, row: item.row });
+                this.unwritten.add(key);
+            }
+            return;
+        }
         const slot = slotOf(item);
         if (slot !== null) {
             const queued = this.slots.get(slot);
@@ -200,13 +229,14 @@ export class TelemetryWriter {
         const left = () => giveUpAt - this.timers.now();
         // A batch already out has left the queue: wait for it, or its rows could come back after this returned.
         if (this.flushing) await this.within(this.flushing, left());
-        while (this.size > 0 && left() > 0) {
+        while (this.due && left() > 0) {
             const ok = await this.within(this.flush(), left());
             if (ok !== true) break;
         }
-        this.unsentAtStop = this.size + this.inFlight;
+        this.inputsUnsentAtStop = this.unwritten.size;
+        this.unsentAtStop = this.size + this.inFlight + this.unwritten.size;
         if (this.unsentAtStop > 0) {
-            this.options.log.warn('stopped before every row was written; these rows are lost', { queued: this.size, inFlight: this.inFlight });
+            this.options.log.warn('stopped before every row was written; these rows are lost', { queued: this.size, inFlight: this.inFlight, inputsNotWritten: this.unwritten.size });
         }
         this.release(true);
     }
@@ -264,7 +294,7 @@ export class TelemetryWriter {
             }
             const waiting = this.retryAtMs !== null && this.timers.now() < this.retryAtMs;
             if (!waiting) {
-                for (let i = 0; i < this.maxBatchesPerTick && this.size > 0; i++) {
+                for (let i = 0; i < this.maxBatchesPerTick && this.due; i++) {
                     const ok = await this.flush();
                     if (!ok) break;
                 }
@@ -329,15 +359,48 @@ export class TelemetryWriter {
         }
     }
 
+    /**
+     * The metadata to send with a batch: every unwritten row of a session in the batch (a batch of at most maxBatch rows
+     * has at most maxBatch sessions), then other unwritten rows (an input that became known after its session's rows
+     * were written), at most maxBatch in all.
+     */
+    private metadataFor(batch: readonly Entry[]): string[] {
+        if (this.unwritten.size === 0) return [];
+        const sessions = new Set(batch.map((e) => e.row.sessionId));
+        const first: string[] = [];
+        const rest: string[] = [];
+        for (const key of this.unwritten) (sessions.has(this.metadata.get(key)!.row.sessionId) ? first : rest).push(key);
+        return [...first, ...rest].slice(0, this.maxBatch);
+    }
+
     private async flushOnce(): Promise<boolean> {
-        if (this.size === 0) return true;
+        // An empty queue with unwritten inputs still flushes: an input can become known after its rows were written.
+        if (!this.due) return true;
         const batch = this.take(this.maxBatch);
         this.inFlight = batch.length;
         const byTable = new Map<TableName, Entry[]>();
         for (const e of batch) byTable.set(e.table, [...(byTable.get(e.table) ?? []), e]);
         const failed: Entry[] = [];
         let firstError: unknown = null;
-        for (const table of TABLE_NAMES) {
+        // Set when the metadata insert fails, which also fails a flush whose batch is empty (inputs only).
+        let metaFailed = false;
+        // Session metadata first, in the same flush: if it fails, none of the batch is sent, and the whole flush is
+        // retried as one (the batch goes back to the queue, the metadata stays unwritten).
+        const metaKeys = this.metadataFor(batch);
+        const metaByTable = new Map<TableName, string[]>();
+        for (const k of metaKeys) metaByTable.set(this.metadata.get(k)!.table, [...(metaByTable.get(this.metadata.get(k)!.table) ?? []), k]);
+        try {
+            for (const [table, keys] of metaByTable) {
+                await this.options.sink.insert(table, keys.map((k) => this.metadata.get(k)!.row) as never);
+                this.written[table] += keys.length;
+                for (const k of keys) this.unwritten.delete(k);
+            }
+        } catch (error) {
+            metaFailed = true;
+            failed.push(...batch);
+            firstError = error;
+        }
+        for (const table of metaFailed ? [] : TABLE_NAMES) {
             const entries = byTable.get(table);
             if (!entries || entries.length === 0) continue;
             try {
@@ -348,7 +411,7 @@ export class TelemetryWriter {
                 firstError ??= error;
             }
         }
-        if (failed.length === 0) {
+        if (failed.length === 0 && !metaFailed) {
             this.inFlight = 0;
             if (this.consecutiveFailures > 0) {
                 this.options.log.info('Tiger is writable again', { afterFailures: this.consecutiveFailures, queued: this.size });

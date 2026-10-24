@@ -60,6 +60,21 @@ export const DATABASE_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 /** Synthetic rows from tests carry this prefix and are never counted as real usage. */
 export const TEST_SESSION_RE = /^test-[A-Za-z0-9_-]{1,64}(:[0-9]{1,20})?$/;
 
+/**
+ * The input a session ran with, from the label the station gives `start_session` (`<mode>-<purpose>`, the
+ * `session_start` ledger row's outcome; docs/station.md 2.3): `headset-demo`, `keyboard-test`, `switch-demo` and so
+ * on. A label that names no input (`smoke`, `demo`, empty) is `unknown`. Only this word is stored, never the label.
+ */
+export const INPUT_KINDS = ['headset', 'keyboard', 'switch', 'unknown'] as const;
+export type InputKind = (typeof INPUT_KINDS)[number];
+
+export function inputOf(label: string): InputKind {
+    if (label.startsWith('headset-')) return 'headset';
+    if (label.startsWith('keyboard-')) return 'keyboard';
+    if (label.startsWith('switch-')) return 'switch';
+    return 'unknown';
+}
+
 /** Accepted codes of a gesture that made a pick; its ledger row shares the gesture id with the `pick` row. */
 export const PICK_CODES: ReadonlySet<string> = new Set(['pick', 'pick_errand', 'pick_call', 'menu_item', 'answer_yes', 'answer_no']);
 
@@ -213,15 +228,32 @@ export interface RestMinuteRow {
     readonly idleMs: number;
 }
 
+/** The input a session ran with (sql/060), one row per session, so keyboard and switch sessions stay apart (T1). */
+export interface SessionInputRow {
+    /** The session's start (its `session_start` ledger row). */
+    readonly time: Micros;
+    readonly sessionId: string;
+    readonly input: InputKind;
+}
+
 export type TelemetryRow =
     | { readonly table: 'switch_events'; readonly row: SwitchEventRow }
     | { readonly table: 'scan_steps'; readonly row: ScanStepRow }
     | { readonly table: 'picks'; readonly row: PickRow }
     | { readonly table: 'action_outcomes'; readonly row: ActionOutcomeRow }
-    | { readonly table: 'rest_minutes'; readonly row: RestMinuteRow };
+    | { readonly table: 'rest_minutes'; readonly row: RestMinuteRow }
+    | { readonly table: 'session_inputs'; readonly row: SessionInputRow };
 
 export type TableName = TelemetryRow['table'];
-export const TABLE_NAMES: readonly TableName[] = ['switch_events', 'scan_steps', 'picks', 'action_outcomes', 'rest_minutes'];
+export const TABLE_NAMES: readonly TableName[] = ['switch_events', 'scan_steps', 'picks', 'action_outcomes', 'rest_minutes', 'session_inputs'];
+
+/**
+ * Session metadata: one row per session, keyed by session, not time-series data. Its `time` is the session's start,
+ * so it is never dropped for age (a session can start long before its current commands). The writer never queues it:
+ * it keeps it in memory and sends it at the start of each flush until an insert of it succeeds, so a full queue can
+ * never drop it, and a flush whose metadata insert fails sends none of its rows.
+ */
+export const SESSION_METADATA: ReadonlySet<TableName> = new Set<TableName>(['session_inputs']);
 
 /** Number of set bits. */
 export function popcount(mask: bigint): number {

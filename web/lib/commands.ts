@@ -1,11 +1,13 @@
 /**
- * The D11 command map in words (PLAN.md D11): the brain chooses, the jaw commits or stops.
+ * The D11 command map in words (PLAN.md D11, with D16: STOP is a single jaw clench, CONFIRM a double):
+ * the brain chooses, the jaw commits or stops.
  * Use these strings for the command strip, the event feed and any legend, so every screen says the
  * same thing. Honest wording: the jaw clench is a muscle signal and the imagined squeeze is the
  * brain part. Never claim more than those two signals.
  *
  * If the imagined squeezes fail the pre-registered test (PLAN D9, docs/brain-mode-test.md), YES
- * becomes a single short jaw clench and NO becomes silence; change `signal` and `short` here only.
+ * becomes a single jaw clench, NO becomes silence, and there is no STOP gesture (D16); change `signal`
+ * and `short` here only.
  */
 import type { CommandName, InputKind, PersonCommand, SafetyState } from './data/types';
 
@@ -45,8 +47,8 @@ export const COMMAND_INFO: Readonly<Record<CommandName, CommandInfo>> = {
   },
   STOP: {
     name: 'STOP',
-    signal: 'Long jaw clench, about 1 s',
-    short: 'long jaw clench',
+    signal: 'Single jaw clench',
+    short: 'single jaw clench',
     meaning: 'Cancel, none of these, hang up, pause.',
     kind: 'jaw',
   },

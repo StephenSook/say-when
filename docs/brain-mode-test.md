@@ -9,7 +9,7 @@ Written and committed before any measurement, so the bar cannot move after we se
 | Imagine squeezing your right fist | YES: pick this one. While nothing is happening, it opens the person's own menu. |
 | Imagine squeezing your left fist | NO: skip, or answer no. |
 | Double jaw clench | CONFIRM: the only way anything leaves the room (a form or a call). |
-| Long jaw clench, about 1 second | STOP: cancel, none of these, hang up, pause. |
+| Single jaw clench | STOP: cancel, none of these, hang up, pause. |
 
 The brain makes the choices and the jaw commits or stops. The jaw clench is a muscle signal (EMG), not a brain signal, and we say so. Nothing leaves the room without a fresh double clench after the spoken read-back.
 
@@ -23,16 +23,17 @@ Imagined left and right fist squeezes count as the YES and NO commands for this 
 4. 60 fresh trials followed: 20 left, 20 right and 20 rest, in random order, with spoken cues, eyes on a fixed point, hands flat and visible on the table, and the jaw relaxed.
 5. At least 15 of 20 were right in EACH class. Any trial flagged as an artifact counts as a miss, never dropped.
 6. At most 2 of the 40 left and right trials were read as the opposite hand, because a YES read as a NO (or the reverse) is the costly mistake.
-7. In a control block (10 single jaw clenches, 10 double clenches, 10 long clenches, 30 s of talking, 30 s with eyes closed, 60 s of idle listening) it produced zero YES and zero NO. A jaw clench must never be read as a fist.
+7. In a control block (10 single jaw clenches, 10 double clenches, 30 s of talking, 30 s with eyes closed, 60 s of idle listening) it produced zero YES and zero NO. A jaw clench must never be read as a fist.
 8. Jaw-muscle power at the temple sites and eye movement at the forehead sites did not differ systematically between the imagery trials and the rest trials.
 
 If any condition fails, the hands are not used today, and the fallback below runs instead. The measured numbers go in the README as an experiment either way.
 
 ## The fallback (jaw only)
 
-- YES: a single short jaw clench.
+- YES: a single jaw clench.
 - NO: silence. The option times out and the next one plays.
-- CONFIRM and STOP stay the same: a double clench and a long clench.
+- CONFIRM stays a double clench.
+- STOP: the decoder cannot tell a held clench (PLAN D16), and in this mode a single clench is YES, so there is no STOP gesture unless the decoder adds a triple clench. Nothing leaves the room without a CONFIRM, and a teammate can STOP from the station keys.
 
 ## What a pass means
 

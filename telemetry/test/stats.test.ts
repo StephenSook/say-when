@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { percentileCont, summarize, type RawStats } from '../src/stats.js';
+import { fetchRawStats, percentileCont, sessionFilter, summarize, type RawStats } from '../src/stats.js';
 
 const asOf = new Date('2026-10-25T17:45:30.000Z');
 const windowStart = new Date('2026-10-25T17:16:00.000Z'); // 30 one-minute buckets ending with 17:45
@@ -20,6 +20,8 @@ function raw(patch: Partial<RawStats> = {}): RawStats {
         percentiles: 'toolkit',
         rowsWritten: 1_234,
         lastWriteAt: new Date('2026-10-25T17:45:29.500Z'),
+        input: 'headset',
+        sessionInput: null,
         ...patch,
     };
 }
@@ -57,6 +59,68 @@ describe('the dashboard numbers', () => {
         assert.equal(s.lastWriteAt, '2026-10-25T17:45:29.500Z');
         assert.equal(summarize(raw({ lastWriteAt: null })).lastWriteAt, null);
         assert.equal(s.windowStart, '2026-10-25T17:16:00.000Z');
+    });
+});
+
+describe('which sessions count, by input (T1)', () => {
+    /** A pool that records every statement and answers with fixed rows, so the filter's parameters can be read. */
+    function stubPool(stored: string | null = 'keyboard') {
+        const calls: Array<{ sql: string; params: unknown[] }> = [];
+        const pool = {
+            query: async (sql: string, params: unknown[] = []) => {
+                calls.push({ sql, params });
+                if (sql.includes('telemetry.migrations')) return { rows: [{ variant: 'toolkit' }] };
+                if (sql.startsWith('WITH w AS')) return { rows: [{ as_of: asOf, start: windowStart, false_activations: 0, commands: 4, yes_acted: 0, idle_ms: 0 }] };
+                if (sql.includes('FROM telemetry.picks_1m')) return { rows: [{ n: 0, p50: null, p95: null }] };
+                if (sql.startsWith('SELECT input FROM telemetry.session_inputs')) return { rows: stored === null ? [] : [{ input: stored }] };
+                return { rows: [{ n: 9, last: null }] };
+            },
+        };
+        return { pool: pool as never, calls };
+    }
+    /** Every $n a statement uses has a parameter, and every parameter is used. */
+    const placeholdersMatch = (c: { sql: string; params: unknown[] }) => {
+        const used = new Set([...c.sql.matchAll(/\$(\d+)/g)].map((m) => Number(m[1])));
+        return used.size === c.params.length && [...used].every((n) => n >= 1 && n <= c.params.length);
+    };
+
+    test('with no session, only headset sessions count by default, and any input can be asked for', async () => {
+        const { pool, calls } = stubPool();
+        const s = summarize(await fetchRawStats(pool));
+        assert.equal(s.input, 'headset');
+        assert.equal(s.sessionInput, null);
+        const filtered = calls.filter((c) => c.sql.includes('telemetry.session_inputs i'));
+        assert.equal(filtered.length, 3, 'counts, picks and rows written all filter by input');
+        for (const c of filtered) {
+            assert.equal(c.params.at(-1), 'headset');
+            assert.ok(placeholdersMatch(c), c.sql);
+        }
+        assert.ok(!calls.some((c) => c.sql.startsWith('SELECT input FROM')), 'no session was named');
+        const any = stubPool();
+        assert.equal(summarize(await fetchRawStats(any.pool, { input: 'any' })).input, 'any');
+        assert.equal(any.calls.filter((c) => c.params.at(-1) === 'any').length, 3);
+        await assert.rejects(fetchRawStats(stubPool().pool, { input: 'brain' as never }), RangeError);
+    });
+
+    test('a named session is read whatever its input, and its stored input is returned', async () => {
+        const { pool, calls } = stubPool('keyboard');
+        const s = summarize(await fetchRawStats(pool, { sessionId: 'say-when-dev:13', input: 'headset' }));
+        assert.equal(s.input, 'any');
+        assert.equal(s.sessionInput, 'keyboard');
+        for (const c of calls.filter((c) => c.sql.includes('telemetry.session_inputs i'))) {
+            assert.equal(c.params[0], 'say-when-dev:13');
+            assert.equal(c.params.at(-1), 'any');
+        }
+        assert.equal(summarize(await fetchRawStats(stubPool(null).pool, { sessionId: 'say-when-dev:13' })).sessionInput, null);
+        assert.equal(summarize(await fetchRawStats(stubPool('label-text').pool, { sessionId: 'say-when-dev:13' })).sessionInput, null);
+    });
+
+    test('the filter: a named session by equality alone; otherwise the test rule and the input rule together', () => {
+        const f = sessionFilter(4);
+        assert.equal(
+            f,
+            "(($1::text IS NOT NULL AND session_id = $1::text) OR ($1::text IS NULL AND ($2::boolean OR session_id NOT LIKE 'test-%') AND ($4::text = 'any' OR session_id IN (SELECT i.session_id FROM telemetry.session_inputs i WHERE i.input = $4::text))))",
+        );
     });
 });
 

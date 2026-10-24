@@ -3,7 +3,7 @@ export { connectTiger, poolConfig, type ConnectOptions, type TigerConnection } f
 export { CredentialError, DEFAULT_SERVICE_ID, loadTarget, parseConnectionString, redact, safeMessage, TIGER_READ_ONLY_OPTION, type PgTarget } from './credentials.js';
 export { loadPin, pinnedSsl, TlsPinError, type LoadedPin, type PinFile } from './tls.js';
 export { migrate, verifySchema, readMigrations, splitStatements, type MigrateReport, type VerifyReport } from './migrate.js';
-export { getStats, fetchRawStats, summarize, percentileCont, type DashboardStats, type RawStats, type StatsOptions } from './stats.js';
+export { getStats, fetchRawStats, summarize, percentileCont, type DashboardStats, type InputFilter, type RawStats, type StatsOptions } from './stats.js';
 export { createPipeline, type Pipeline, type PipelineOptions } from './pipeline.js';
 export { Tracker, restMasks, minuteStart, type RestState, type TrackerCounters } from './tracker.js';
 export { TelemetryWriter, type WriterOptions, type WriterStats, type Timers } from './writer.js';

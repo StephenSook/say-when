@@ -22,6 +22,7 @@ import {
     COMMANDS,
     ERRAND_STATUSES,
     GESTURE_ID_RE,
+    inputOf,
     NOTHING_TO_ACT_ON,
     oneOf,
     OPEN_CALL,
@@ -35,6 +36,7 @@ import {
     RESTING_PAUSES,
     SCAN_MODES,
     SCAN_OUTCOMES,
+    SESSION_METADATA,
     sessionKey,
     type ActionIn,
     type CommandName,
@@ -71,6 +73,8 @@ interface SessionTrack {
     started: Micros | null;
     ended: Micros | null;
     scan: ScanIn | null;
+    /** The session's input row (session_inputs) has been emitted. */
+    inputEmitted: boolean;
     readonly actions: Map<string, ActionIn>;
     readonly emittedStatuses: Set<string>;
     readonly segments: Segment[];
@@ -99,6 +103,8 @@ export interface TrackerCounters {
     clampedTransitions: number;
     /** Rows older than MAX_ROW_AGE behind the latest server time: dropped (raw retention would remove them anyway). */
     tooOld: number;
+    /** Rows of a session outside `onlySessions`: not written. */
+    otherSessions: number;
 }
 
 export interface TrackerOptions {
@@ -107,6 +113,11 @@ export interface TrackerOptions {
     readonly emit: (row: TelemetryRow) => void;
     /** How much history to keep for classification and the step index. Default 3 hours. */
     readonly historyMicros?: bigint;
+    /**
+     * Write rows only for these session ids (the writer's TELEMETRY_SESSIONS), for example to ingest chosen past
+     * sessions. Every session's state is still followed, so classification does not change. Default: every session.
+     */
+    readonly onlySessions?: ReadonlySet<bigint>;
 }
 
 const SECOND = 1_000_000n;
@@ -216,11 +227,15 @@ export class Tracker {
         restDisagreements: 0,
         clampedTransitions: 0,
         tooOld: 0,
+        otherSessions: 0,
     };
     private readonly history: bigint;
+    /** The session keys rows may be written for, or null for every session. */
+    private readonly onlyKeys: ReadonlySet<string> | null;
 
     constructor(private readonly options: TrackerOptions) {
         this.history = options.historyMicros ?? 3n * 3600n * SECOND;
+        this.onlyKeys = options.onlySessions ? new Set([...options.onlySessions].map((id) => sessionKey(options.database, id))) : null;
     }
 
     /** The latest server time observed. */
@@ -402,9 +417,14 @@ export class Tracker {
 
     private emit(row: TelemetryRow): void {
         // Rows far behind the latest server time would only be removed by raw retention, and refreshing an aggregate
-        // over them could replace buckets whose raw rows are already gone.
-        if (this.frontier !== null && row.row.time < this.frontier - MAX_ROW_AGE) {
+        // over them could replace buckets whose raw rows are already gone. Session metadata is not a raw row: its time
+        // is the session's start, which can be days before the session's current commands (SESSION_METADATA).
+        if (!SESSION_METADATA.has(row.table) && this.frontier !== null && row.row.time < this.frontier - MAX_ROW_AGE) {
             this.counters.tooOld++;
+            return;
+        }
+        if (this.onlyKeys && !this.onlyKeys.has(row.row.sessionId)) {
+            this.counters.otherSessions++;
             return;
         }
         this.options.emit(row);
@@ -435,6 +455,7 @@ export class Tracker {
                 started: null,
                 ended: null,
                 scan: null,
+                inputEmitted: false,
                 actions: new Map(),
                 emittedStatuses: new Set(),
                 segments: [],
@@ -589,6 +610,12 @@ export class Tracker {
         if (!s) return;
         if (row.kind === 'session_start' && (s.started === null || row.at < s.started)) s.started = row.at;
         if (row.kind === 'session_end' && (s.ended === null || row.at > s.ended)) s.ended = row.at;
+        // T1: the input word from the station's label, never the label itself, so keyboard and switch sessions can
+        // never be counted as headset statistics.
+        if (row.kind === 'session_start' && !s.inputEmitted) {
+            s.inputEmitted = true;
+            this.emit({ table: 'session_inputs', row: { time: row.at, sessionId: s.key, input: inputOf(row.outcome) } });
+        }
         if (live) this.transition(s, row.at);
     }
 

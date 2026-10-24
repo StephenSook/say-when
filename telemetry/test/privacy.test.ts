@@ -182,6 +182,9 @@ describe('privacy: no question, option, memory, form, name or number text reache
         assert.equal(pick?.pickKind, 'other');
         const call = rows.find((r) => r.table === 'action_outcomes' && (r.row as { kind: string }).kind === 'call')?.row as { result: string } | undefined;
         assert.equal(call?.result, 'other');
+        // The session label (here a sentence) is never stored: only the input word, and a label naming no input is unknown.
+        const inputs = rows.filter((r) => r.table === 'session_inputs').map((r) => r.row as { input: string });
+        assert.deepEqual(inputs.map((r) => r.input), ['unknown']);
     });
 
     test('the source subscribes to no view that carries content', () => {
@@ -209,7 +212,9 @@ describe('privacy: no question, option, memory, form, name or number text reache
 
     test('every text column in the schema is held to a shape or a word list by a CHECK', () => {
         const dir = new URL('../sql/', import.meta.url);
-        for (const file of readdirSync(dir).filter((f) => /^01\d_.*\.sql$/.test(f))) {
+        const tableFiles = readdirSync(dir).filter((f) => /^(01\d|060)_.*\.sql$/.test(f));
+        assert.ok(tableFiles.includes('060_session_inputs.sql'));
+        for (const file of tableFiles) {
             const sql = readFileSync(new URL(file, dir), 'utf8');
             const textColumns = [...sql.matchAll(/^\s+([a-z_]+) text\b/gm)].map((m) => m[1]!);
             assert.ok(textColumns.length > 0, file);
