@@ -10,6 +10,9 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
+export const AgentConsent = __t.object("AgentConsent", {});
+export type AgentConsent = __Infer<typeof AgentConsent>;
+
 export const AgentJob = __t.object("AgentJob", {
   id: __t.u64(),
   get kind() {
@@ -126,6 +129,13 @@ export const BoardCall = __t.object("BoardCall", {
   get transcript() {
     return __t.array(BoardCallLine);
   },
+  optionId: __t.u64(),
+  readbackDoneAt: __t.option(__t.timestamp()),
+  confirmOpensAt: __t.option(__t.timestamp()),
+  confirmClosesAt: __t.option(__t.timestamp()),
+  confirmGestureId: __t.string(),
+  stopGestureId: __t.string(),
+  held: __t.bool(),
 });
 export type BoardCall = __Infer<typeof BoardCall>;
 
@@ -167,11 +177,15 @@ export const BoardErrand = __t.object("BoardErrand", {
   readBackJson: __t.string(),
   confirmationText: __t.string(),
   screenshotUrl: __t.string(),
+  optionId: __t.u64(),
 });
 export type BoardErrand = __Infer<typeof BoardErrand>;
 
 export const BoardErrands = __t.object("BoardErrands", {});
 export type BoardErrands = __Infer<typeof BoardErrands>;
+
+export const BoardEvents = __t.object("BoardEvents", {});
+export type BoardEvents = __Infer<typeof BoardEvents>;
 
 export const BoardLedger = __t.object("BoardLedger", {});
 export type BoardLedger = __Infer<typeof BoardLedger>;
@@ -235,6 +249,12 @@ export const BoardQuestion = __t.object("BoardQuestion", {
 });
 export type BoardQuestion = __Infer<typeof BoardQuestion>;
 
+export const BoardSessionLedger = __t.object("BoardSessionLedger", {});
+export type BoardSessionLedger = __Infer<typeof BoardSessionLedger>;
+
+export const BoardWordTimings = __t.object("BoardWordTimings", {});
+export type BoardWordTimings = __Infer<typeof BoardWordTimings>;
+
 export const CallLine = __t.object("CallLine", {
   id: __t.u64(),
   callId: __t.u64(),
@@ -260,6 +280,7 @@ export const CallQueueItem = __t.object("CallQueueItem", {
   scriptDigest: __t.string(),
   cancelRequested: __t.bool(),
   cancelReason: __t.string(),
+  confirmedAt: __t.option(__t.timestamp()),
 });
 export type CallQueueItem = __Infer<typeof CallQueueItem>;
 
@@ -401,6 +422,13 @@ export const ConsentScope = __t.enum("ConsentScope", {
   BoardText: __t.unit(),
 });
 export type ConsentScope = __Infer<typeof ConsentScope>;
+
+export const ConsentState = __t.object("ConsentState", {
+  sessionId: __t.u64(),
+  memoryAllowed: __t.bool(),
+  webSearchAllowed: __t.bool(),
+});
+export type ConsentState = __Infer<typeof ConsentState>;
 
 export const CueEvent = __t.object("CueEvent", {
   sessionId: __t.u64(),
@@ -1017,4 +1045,17 @@ export const VoiceToken = __t.object("VoiceToken", {
   error: __t.string(),
 });
 export type VoiceToken = __Infer<typeof VoiceToken>;
+
+export const WordTiming = __t.object("WordTiming", {
+  eventId: __t.u64(),
+  sessionId: __t.u64(),
+  questionId: __t.u64(),
+  optionId: __t.u64(),
+  rank: __t.u8(),
+  stepSeq: __t.u64(),
+  startsMs: __t.array(__t.u32()),
+  endsMs: __t.array(__t.u32()),
+  at: __t.timestamp(),
+});
+export type WordTiming = __Infer<typeof WordTiming>;
 

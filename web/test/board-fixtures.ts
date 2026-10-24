@@ -1,8 +1,8 @@
 /**
  * Rows shaped exactly as the generated SpacetimeDB bindings give them (lib/data/module_bindings/types), so a schema
  * change breaks the tests at the typecheck. The values follow what the module writes: labels and event keys from
- * docs/spacetime.md 11.4, ledger kinds and outcomes from spacetime/src, and the config row as say-when-dev held it on
- * Oct 24 (owner and session aside). All content is made-up smoke content.
+ * docs/spacetime.md 11.4 and 14, ledger kinds and outcomes from spacetime/src, and the config row as say-when-dev held
+ * it on Oct 24 (owner and session aside). All content is made-up smoke content.
  */
 import { Identity, Timestamp } from 'spacetimedb';
 import type {
@@ -15,6 +15,7 @@ import type {
   Ledger,
   PipelineEvent as PipelineRow,
   ScanState as ScanRow,
+  WordTiming as WordTimingRow,
 } from '../lib/data/module_bindings/types';
 import type { BoardSnapshot } from '../lib/data/spacetime-map';
 
@@ -217,6 +218,7 @@ export function errand(partial: Partial<BoardErrand> = {}): BoardErrand {
     readBackJson: '',
     confirmationText: '',
     screenshotUrl: '',
+    optionId: 0n,
     ...partial,
   };
 }
@@ -245,6 +247,29 @@ export function call(partial: Partial<BoardCall> = {}): BoardCall {
     contactName: 'Contact',
     readBackText: '',
     transcript: [],
+    optionId: 0n,
+    readbackDoneAt: undefined,
+    confirmOpensAt: undefined,
+    confirmClosesAt: undefined,
+    confirmGestureId: '',
+    stopGestureId: '',
+    held: false,
+    ...partial,
+  };
+}
+
+/** A `board_word_timings` row (module v2): the station's word timings for the read whose speak step is `eventId`. */
+export function wordTiming(eventId: number, startsMs: number[], endsMs: number[], partial: Partial<WordTimingRow> = {}): WordTimingRow {
+  return {
+    eventId: BigInt(eventId),
+    sessionId: SESSION,
+    questionId: 21n,
+    optionId: 102n,
+    rank: 2,
+    stepSeq: 8n,
+    startsMs,
+    endsMs,
+    at: ts(5_300),
     ...partial,
   };
 }
@@ -269,6 +294,19 @@ export function midScan(partial: Partial<BoardSnapshot> = {}): BoardSnapshot {
       ledger(500, 'session_start', -5_000, { outcome: 'smoke' }),
       ledger(501, 'question', 0, { actor: 'Partner', questionId: 21n, outcome: 'asked', reason: 'typed' }),
     ],
+    wordTimings: [],
     ...partial,
   };
+}
+
+/**
+ * One read as the module writes it since v2 (docs/spacetime.md 14): a `started` speak step keyed
+ * `s<session>:read:<step>`, labelled "reading option" (or "yes or no prompt", with option 0 and rank 0), with the
+ * option, rank, pass, step and planned dwell in its counts.
+ */
+export function read(id: number, offsetMs: number, counts: { optionId: number; rank: number; pass?: number; stepSeq: number; durationMs?: number }): PipelineRow {
+  const prompt = counts.optionId === 0;
+  return event(id, `s6:read:${counts.stepSeq}`, 'speak', 'started', prompt ? 'yes or no prompt' : 'reading option', offsetMs, {
+    countsJson: JSON.stringify({ pass: 1, durationMs: 750, estimated: !prompt, ...counts }),
+  });
 }

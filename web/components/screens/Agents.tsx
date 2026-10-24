@@ -68,7 +68,7 @@ export function Agents() {
   const errandOption = useMemo(() => findOption(options, errand?.optionId ?? null), [options, errand?.optionId]);
 
   const headline =
-    focus === null ? null : focus.kind === 'errand' ? errandHeadline(focus.row, safety.state) : callHeadline(focus.row, safety.state);
+    focus === null ? null : focus.kind === 'errand' ? errandHeadline(focus.row, safety.state) : callHeadline(focus.row, safety.state, commands);
 
   let other: AgentRef | null = null;
   if (focus?.kind === 'errand' && call !== null) other = { kind: 'call', row: call };

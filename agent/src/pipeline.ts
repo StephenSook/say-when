@@ -15,7 +15,11 @@ import { callReducer } from './db/retry.js';
 import type { Logger } from './log.js';
 import type { Stage } from './types.js';
 
-/** The stages the sidecar reports. Listen, speak and select belong to the module and the station. */
+/**
+ * The stages the sidecar reports. Listen, speak and select belong to the module and the station: the module writes
+ * one speak step per read under its own keys (`s<session>:read:<step>`, module v2), so the sidecar writes no speak
+ * event at all. Its keys start with the job id, never with a prefix the module writes under (MODULE_EVENT_KEY).
+ */
 export type SidecarStage = Extract<Stage, 'search' | 'retrieve' | 'plan' | 'errand'>;
 
 export interface JobRef {

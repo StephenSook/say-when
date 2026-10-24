@@ -7,7 +7,9 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { DisconnectedError, SenderError, UnknownCallResultError } from 'spacetimedb';
 import { DbConnection } from '../lib/data/module_bindings';
+import ReportWordTimingsParams from '../lib/data/module_bindings/report_word_timings_reducer';
 import {
+  type ReportWordTimingsArgs,
   callErrorKind,
   callErrorText,
   isSenderMessage,
@@ -227,8 +229,14 @@ describe('a reducer the module may not have', () => {
     };
     const send = wordTimingsReducer({ reducers });
     assert.ok(send);
-    await send({ stepSeq: 5n, optionId: 9n, startsMs: [0, 200], endsMs: [180, 400] });
-    assert.deepEqual(seen, [['v2', { stepSeq: 5n, optionId: 9n, startsMs: [0, 200], endsMs: [180, 400] }]]);
+    await send({ sessionId: 3n, stepSeq: 5n, optionId: 9n, startsMs: [0, 200], endsMs: [180, 400] });
+    assert.deepEqual(seen, [['v2', { sessionId: 3n, stepSeq: 5n, optionId: 9n, startsMs: [0, 200], endsMs: [180, 400] }]]);
+  });
+
+  test('the page sends exactly the fields the generated report_word_timings takes', () => {
+    // The page's call shape must match the generated reducer's parameters, or the SDK serializes a field as undefined.
+    const sent: Record<keyof ReportWordTimingsArgs, true> = { sessionId: true, stepSeq: true, optionId: true, startsMs: true, endsMs: true };
+    assert.deepEqual(Object.keys(ReportWordTimingsParams).sort(), Object.keys(sent).sort());
   });
 
   test('the generated bindings in this build: heartbeat is there; report_word_timings may or may not be', () => {

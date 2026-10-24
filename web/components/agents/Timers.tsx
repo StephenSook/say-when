@@ -28,7 +28,10 @@ export function LiveDuration({ since }: { since: number }) {
 export interface CountdownProps {
   /** When the confirm window closes (the row's `confirmClosesAt`). */
   closesAt: number;
-  /** When it opened (the read-back ended). null: the bar starts full when this screen first saw it. */
+  /**
+   * When it opened: the row's `confirmOpensAt` (the read-back's end plus the quiet hold), else the read-back's end.
+   * null: the bar starts full when this screen first saw it.
+   */
   opensAt: number | null;
   /** What the bar measures, for screen readers. */
   label: string;
@@ -37,6 +40,8 @@ export interface CountdownProps {
 /**
  * The confirm window: a wait-colored bar that empties, and "6 s left". Nothing here releases
  * anything; only a CONFIRM does, and when the time runs out the row turns Stopped, nothing sent.
+ * The words count down to the close, as the state label does; the bar stays full until the window
+ * opens (during the quiet hold after the read-back) and then empties across the window.
  */
 export function Countdown({ closesAt, opensAt, label }: CountdownProps) {
   const now = useClockNow();
@@ -44,13 +49,13 @@ export function Countdown({ closesAt, opensAt, label }: CountdownProps) {
   if (now === null) return null;
   const start = opensAt !== null && opensAt < closesAt ? opensAt : Math.min(firstSeen, closesAt);
   const totalMs = Math.max(1_000, closesAt - start);
-  const leftMs = Math.min(totalMs, Math.max(0, closesAt - now));
+  const leftMs = Math.max(0, closesAt - now);
   const open = leftMs > 0;
   const seconds = Math.ceil(leftMs / 1000);
   return (
     <div className={styles.countdown}>
       <Bar
-        value={leftMs / 1000}
+        value={Math.min(totalMs, leftMs) / 1000}
         max={totalMs / 1000}
         tone="wait"
         label={label}

@@ -166,7 +166,7 @@ function confirmStep(
         ) : (
           <>
             {errand.confirmClosesAt !== null ? (
-              <Countdown closesAt={errand.confirmClosesAt} opensAt={errand.readAloudAt} label="Time left to confirm" />
+              <Countdown closesAt={errand.confirmClosesAt} opensAt={errand.confirmOpensAt ?? errand.readAloudAt} label="Time left to confirm" />
             ) : null}
             <Note>Only a double jaw clench sends it. If the time runs out, nothing is sent.</Note>
           </>

@@ -129,7 +129,7 @@ jobs:
           grep -qE '^# fail 0$' test.log
           pass=$(awk '/^# pass/ {print $3}' test.log)
           echo "passing tests: $pass"
-          test "$pass" -ge 158
+          test "$pass" -ge 164
 
   moss:
     name: Moss (memory and web retrieval)
@@ -184,7 +184,7 @@ jobs:
           echo "passing tests: $pass, failing: $failed"
           test "$failed" -eq 0
           # Floor on passing tests, so a run that finds no tests cannot pass.
-          test "$pass" -ge 155
+          test "$pass" -ge 177
 
   web:
     name: Web dashboard (typecheck, tests, production build)
@@ -210,7 +210,7 @@ jobs:
           grep -qE '^# fail 0$' test.log
           pass=$(awk '/^# pass/ {print $3}' test.log)
           echo "passing tests: $pass"
-          test "$pass" -ge 141
+          test "$pass" -ge 154
       - run: npm run build
 
   telemetry:
@@ -282,4 +282,4 @@ jobs:
           grep -qE '^# fail 0$' test.log
           pass=$(awk '/^# pass/ {print $3}' test.log)
           echo "passing tests: $pass"
-          test "$pass" -ge 191
+          test "$pass" -ge 212

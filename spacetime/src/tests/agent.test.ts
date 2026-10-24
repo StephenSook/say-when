@@ -149,10 +149,9 @@ test('agent_fail with nothing to read fails the question and frees the clock', (
   expect(question(db, q.id).status.tag).toBe('Failed');
   expect(scan(db).phase.tag).toBe('Idle');
   const errors = [...db.db.pipelineEvent.eventBySession.filter(scan(db).sessionId)].filter((e) => e.status === 'error');
-  expect(errors.map((e) => [e.stage, e.detail])).toEqual([
-    ['plan', 'failed: planner_timeout'],
-    ['select', 'failed'],
-  ]);
+  // Module v2: a select step means a pick, so a failed question shows on its plan step only (docs/spacetime.md 14).
+  expect(errors.map((e) => [e.stage, e.detail])).toEqual([['plan', 'failed: planner_timeout']]);
+  expect([...db.db.pipelineEvent.eventBySession.filter(scan(db).sessionId)].filter((e) => e.stage === 'select')).toEqual([]);
 });
 
 test('agent_progress writes a public, content-free event with a private payload, once per key, and extends the lease', () => {

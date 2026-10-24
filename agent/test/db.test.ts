@@ -4,47 +4,62 @@ import { describe, it } from 'node:test';
 import { DbCallError, toDbError } from '../src/db/db.js';
 import { MemoryDb } from '../src/db/memory-db.js';
 import { callReducer } from '../src/db/retry.js';
-import { SpacetimeAgentDb, toAgentQueueRow, TokenSaveError, type BuilderLike, type ConnectionLike } from '../src/db/spacetime-db.js';
+import { SpacetimeAgentDb, toAgentQueueRow, toCallQueueRow, TokenSaveError, type BuilderLike, type ConnectionLike } from '../src/db/spacetime-db.js';
 import { recordingLogger } from '../src/log.js';
 
 const named = (name: string, message = '') => Object.assign(new Error(message), { name });
 
+/** A generated table as the SDK shows it: onInsert passes (ctx, row), onUpdate (ctx, oldRow, row). */
 class FakeTable {
     rows: unknown[] = [];
-    private readonly listeners = new Set<(...args: unknown[]) => void>();
+    private readonly inserts = new Set<(...args: unknown[]) => void>();
+    private readonly deletes = new Set<(...args: unknown[]) => void>();
+    private readonly updates = new Set<(...args: unknown[]) => void>();
     iter() {
         return this.rows;
     }
     onInsert(cb: (...args: unknown[]) => void) {
-        this.listeners.add(cb);
+        this.inserts.add(cb);
     }
     removeOnInsert(cb: (...args: unknown[]) => void) {
-        this.listeners.delete(cb);
+        this.inserts.delete(cb);
     }
     onDelete(cb: (...args: unknown[]) => void) {
-        this.listeners.add(cb);
+        this.deletes.add(cb);
     }
     removeOnDelete(cb: (...args: unknown[]) => void) {
-        this.listeners.delete(cb);
+        this.deletes.delete(cb);
+    }
+    onUpdate(cb: (...args: unknown[]) => void) {
+        this.updates.add(cb);
+    }
+    removeOnUpdate(cb: (...args: unknown[]) => void) {
+        this.updates.delete(cb);
     }
     insert(row: unknown) {
         this.rows.push(row);
-        for (const cb of this.listeners) cb({}, row);
+        for (const cb of this.inserts) cb({}, row);
+    }
+    /** Replaces row `index` and calls the update listeners with the old and the new row. */
+    update(index: number, row: unknown) {
+        const old = this.rows[index];
+        this.rows[index] = row;
+        for (const cb of this.updates) cb({}, old, row);
     }
 }
 
 function fakeConnection() {
     const calls: { name: string; args: unknown }[] = [];
     const queries: string[] = [];
-    const tables: Record<string, FakeTable> & { agentQueue: FakeTable; deviceStatus: FakeTable; boardCalls: FakeTable } = {
+    const tables: Record<string, FakeTable> & { agentQueue: FakeTable; callQueue: FakeTable; agentConsent: FakeTable; deviceStatus: FakeTable } = {
         agentQueue: new FakeTable(),
         errandQueue: new FakeTable(),
         callQueue: new FakeTable(),
+        agentConsent: new FakeTable(),
         deviceStatus: new FakeTable(),
-        boardCalls: new FakeTable(),
     };
     let failWith: Error | null = null;
-    const state = { disconnects: 0 };
+    const state: { disconnects: number; subscriptionError: (ctx: unknown) => void } = { disconnects: 0, subscriptionError: () => undefined };
     const conn: ConnectionLike = {
         db: tables,
         reducers: {
@@ -60,7 +75,8 @@ function fakeConnection() {
                     applied = cb;
                     return builder;
                 },
-                onError() {
+                onError(cb: (ctx: unknown) => void) {
+                    state.subscriptionError = cb;
                     return builder;
                 },
                 subscribe(list: string[]) {
@@ -103,7 +119,8 @@ function fakeConnection() {
         onConnectError() {
             return this;
         },
-        onDisconnect() {
+        onDisconnect(cb) {
+            this.options.onDisconnect = cb;
             return this;
         },
         build() {
@@ -139,6 +156,19 @@ const bindingRow = {
     createdAt: { microsSinceUnixEpoch: 1_700_000_000_000_000n },
 };
 
+const callRow = {
+    callId: 4n,
+    status: { tag: 'Confirmed' },
+    claimAttempt: 0,
+    claimedByMe: false,
+    requestId: 'call-test-1',
+    contactId: 'leon',
+    scriptDigest: 'fedcba9876543210',
+    cancelRequested: false,
+    cancelReason: '',
+    confirmedAt: { microsSinceUnixEpoch: 1_700_000_000_000_000n } as unknown,
+};
+
 describe('the SpacetimeDB adapter', () => {
     it('connects, saves the token, subscribes to the agent views by their wire names, and reads binding rows', async () => {
         const fake = fakeConnection();
@@ -151,8 +181,8 @@ describe('the SpacetimeDB adapter', () => {
             'SELECT * FROM agent_queue',
             'SELECT * FROM errand_queue',
             'SELECT * FROM call_queue',
+            'SELECT * FROM agent_consent',
             'SELECT * FROM device_status',
-            'SELECT * FROM board_calls',
         ]);
         let changes = 0;
         db.onChange(() => changes++);
@@ -223,29 +253,89 @@ describe('the SpacetimeDB adapter', () => {
         assert.equal(db.isPairedAgent(), true);
     });
 
-    it('reads the time of a call\'s CONFIRM from board_calls, and null when it is not known', async () => {
+    it('reads the time of a call\'s CONFIRM from call_queue, and null when the row does not carry it', async () => {
         const fake = fakeConnection();
-        const log = recordingLogger();
-        const db = new SpacetimeAgentDb({ builder: () => fake.builder, uri: 'https://example.test', database: 'say-when-dev', log });
+        const db = new SpacetimeAgentDb({ builder: () => fake.builder, uri: 'https://example.test', database: 'say-when-dev', log: recordingLogger() });
         await db.connect();
-        fake.tables.boardCalls.insert({ callId: 4n, status: { tag: 'Confirmed' }, confirmedAt: { microsSinceUnixEpoch: 1_700_000_000_000_000n } });
-        fake.tables.boardCalls.insert({ callId: 5n, status: { tag: 'AwaitingConfirm' }, confirmedAt: undefined });
-        assert.equal(db.callConfirmedAt(4n), 1_700_000_000_000);
-        assert.equal(db.callConfirmedAt(5n), null);
-        assert.equal(db.callConfirmedAt(6n), null);
-        fake.tables.boardCalls.rows.unshift({ status: { tag: 'Confirmed' } });
-        assert.equal(db.callConfirmedAt(4n), null, 'a row that does not match the contract makes the time unknown');
-        assert.ok(log.entries.some((e) => e.level === 'error' && e.fields.view === 'board_calls' && e.fields.problem === 'missing field call_id'));
+        fake.tables.callQueue.insert({ ...callRow, callId: 4n, confirmedAt: { microsSinceUnixEpoch: 1_700_000_000_000_000n } });
+        fake.tables.callQueue.insert({ ...callRow, callId: 5n, confirmedAt: undefined });
+        const { confirmedAt: _old, ...noTime } = callRow;
+        fake.tables.callQueue.insert({ ...noTime, callId: 6n });
+        assert.deepEqual(
+            db.callQueue().map((r) => [r.callId, r.confirmedAtMs]),
+            [
+                [4n, 1_700_000_000_000],
+                [5n, null],
+                [6n, null],
+            ],
+            'unset, or missing in bindings older than module v2, is unknown',
+        );
+        assert.equal(toCallQueueRow({ ...callRow, confirmedAt: { toMillis: () => 1_700_000_000_123n } }).confirmedAtMs, 1_700_000_000_123);
+        assert.throws(() => toCallQueueRow({ ...callRow, confirmedAt: 'yesterday' }), /expected a timestamp/);
     });
 
-    it('says so when the bindings lack board_calls, and then knows no CONFIRM time', async () => {
+    it('reads the module\'s consent from agent_consent, and knows none without exactly one readable row', async () => {
         const fake = fakeConnection();
         const log = recordingLogger();
-        delete (fake.tables as Record<string, unknown>).boardCalls;
         const db = new SpacetimeAgentDb({ builder: () => fake.builder, uri: 'https://example.test', database: 'say-when-dev', log });
         await db.connect();
-        assert.equal(db.callConfirmedAt(4n), null);
-        assert.ok(log.entries.some((e) => e.level === 'error' && e.fields.view === 'board_calls'));
+        assert.equal(db.agentConsent(), null, 'no row: not known');
+        fake.tables.agentConsent.insert({ sessionId: 8n, memoryAllowed: true, webSearchAllowed: false });
+        assert.deepEqual(db.agentConsent(), { sessionId: 8n, memoryAllowed: true, webSearchAllowed: false });
+        fake.tables.agentConsent.rows[0] = { sessionId: 8n, webSearchAllowed: true };
+        assert.equal(db.agentConsent(), null, 'a row that does not match the contract is not consent');
+        assert.ok(log.entries.some((e) => e.level === 'error' && e.fields.view === 'agent_consent' && e.fields.problem === 'missing field memory_allowed'));
+        fake.tables.agentConsent.rows = [
+            { sessionId: 8n, memoryAllowed: true, webSearchAllowed: true },
+            { sessionId: 9n, memoryAllowed: true, webSearchAllowed: true },
+        ];
+        assert.equal(db.agentConsent(), null, 'two rows: not known');
+    });
+
+    it('tells onMemoryOff listeners of every row that turns memory off, also one followed at once by a new grant', async () => {
+        const fake = fakeConnection();
+        const db = new SpacetimeAgentDb({ builder: () => fake.builder, uri: 'https://example.test', database: 'say-when-dev', log: recordingLogger() });
+        await db.connect();
+        let off = 0;
+        let changes = 0;
+        db.onMemoryOff(() => off++);
+        db.onChange(() => changes++);
+        fake.tables.agentConsent.insert({ sessionId: 8n, memoryAllowed: true, webSearchAllowed: true });
+        assert.equal(off, 0, 'consent on: nothing to forget');
+        // Revoked and given again in one burst: the burst's single change reads memory on, the listener still heard.
+        fake.tables.agentConsent.update(0, { sessionId: 8n, memoryAllowed: false, webSearchAllowed: true });
+        fake.tables.agentConsent.update(0, { sessionId: 8n, memoryAllowed: true, webSearchAllowed: true });
+        assert.equal(off, 1, 'heard at once, inside the update');
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        assert.equal(db.agentConsent()?.memoryAllowed, true);
+        assert.ok(changes >= 1, 'a change to agent_consent is a change to the views');
+        fake.tables.agentConsent.insert({ sessionId: 9n, webSearchAllowed: true });
+        assert.equal(off, 2, 'a row that cannot be read counts as memory off');
+    });
+
+    it('counts a lost connection or a refused subscription as memory off', async () => {
+        const fake = fakeConnection();
+        const db = new SpacetimeAgentDb({ builder: () => fake.builder, uri: 'https://example.test', database: 'say-when-dev', log: recordingLogger() });
+        await db.connect();
+        let off = 0;
+        db.onMemoryOff(() => off++);
+        fake.tables.agentConsent.insert({ sessionId: 8n, memoryAllowed: true, webSearchAllowed: true });
+        assert.equal(off, 0);
+        (fake.builder.options.onDisconnect as (ctx: unknown, error?: Error) => void)({}, new Error('gone'));
+        assert.equal(off, 1, 'a revocation during the outage may never show');
+        assert.equal(db.isCurrent(), false);
+        fake.state.subscriptionError({});
+        assert.equal(off, 2, 'without the subscription no revocation can arrive');
+    });
+
+    it('says so when the bindings lack agent_consent, and then knows no consent', async () => {
+        const fake = fakeConnection();
+        const log = recordingLogger();
+        delete (fake.tables as Record<string, unknown>).agentConsent;
+        const db = new SpacetimeAgentDb({ builder: () => fake.builder, uri: 'https://example.test', database: 'say-when-dev', log });
+        await db.connect();
+        assert.equal(db.agentConsent(), null);
+        assert.ok(log.entries.some((e) => e.level === 'error' && e.fields.view === 'agent_consent' && /not allowed/.test(e.message)));
     });
 
     it('rejects a value the contract does not know', () => {
@@ -326,6 +416,42 @@ describe('the in-memory module', () => {
         );
         await db.call('agentFail', { jobId, attempt: 2, reasonCode: 'x', reason: 'y' });
         assert.equal(db.job(jobId)?.status, 'failed');
+    });
+
+    it('refuses an event key under a prefix the module writes, as the module does since v2', async () => {
+        const db = new MemoryDb();
+        const jobId = db.addOptionsJob({ questionText: 'q' });
+        await db.call('agentClaim', { jobId });
+        const event = (eventKey: string) => ({ jobId, attempt: 1, eventKey, stage: 'plan' as const, status: 'started' as const, detail: 'claude', ms: 0, countsJson: '{}', payloadJson: '' });
+        for (const key of ['s1:read:3', 'q2:select', 'c3:dialing', 'e4:submit', 'listen:5']) {
+            await assert.rejects(db.call('agentProgress', event(key)), (e: unknown) => e instanceof DbCallError && e.message === 'event_key uses a prefix the module writes', key);
+        }
+        await db.call('agentProgress', event(`${jobId}:1:1:plan:started`));
+        assert.equal(db.events.length, 1);
+    });
+
+    it('refuses a call claim 12 s after its CONFIRM, or with no CONFIRM time, as the module does since v2', async () => {
+        let now = 1_000_000;
+        const db = new MemoryDb({ now: () => now });
+        const fresh = db.addConfirmedCall({ requestId: 'r1', contactId: 'leon', digest: 'fedcba9876543210' });
+        const unknown = db.addConfirmedCall({ requestId: 'r2', contactId: 'leon', digest: 'fedcba9876543210', confirmedAtMs: null });
+        now += 12_000;
+        await assert.rejects(db.call('claimCall', { callId: fresh, digest: 'fedcba9876543210' }), (e: unknown) => e instanceof DbCallError && e.message === 'confirm expired');
+        await assert.rejects(db.call('claimCall', { callId: unknown, digest: 'fedcba9876543210' }), (e: unknown) => e instanceof DbCallError && e.message === 'confirm expired');
+        const inside = db.addConfirmedCall({ requestId: 'r3', contactId: 'leon', digest: 'fedcba9876543210' });
+        now += 11_999;
+        await db.call('claimCall', { callId: inside, digest: 'fedcba9876543210' });
+        assert.equal(db.calls.get(inside)?.status, 'dialing');
+    });
+
+    it('keeps an ended call\'s reason and shows a hold, as the module does since v2', async () => {
+        const db = new MemoryDb();
+        const callId = db.addConfirmedCall({ requestId: 'r1', contactId: 'leon', digest: 'fedcba9876543210' });
+        await db.call('claimCall', { callId, digest: 'fedcba9876543210' });
+        await db.call('reportCallStatus', { callId, attempt: 1, status: 'ended', result: 'answered', endReason: '', reasonCode: 'opt_out_hold', reason: 'Leon may not want more calls. Calls to Leon are on hold until someone checks.' });
+        assert.equal(db.calls.get(callId)?.reasonCode, 'opt_out_hold');
+        assert.match(db.calls.get(callId)?.reason ?? '', /on hold until someone checks/);
+        assert.equal(db.held(callId), true);
     });
 
     it('refuses a search event for a job without web search consent', async () => {

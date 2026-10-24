@@ -15,6 +15,10 @@ Phases, about 90 seconds in all:
   deadman   heartbeats stop (the module pauses itself) and restart (it resumes)
   bench     20 heartbeat round trips confirmed and 20 unconfirmed on one kept-alive connection
 
+Module v2 checks ride along (docs/spacetime.md 14): one speak step per option read with its rank, a select step only
+for a pick, the station's word timings on one read, the option id on board_errands, the pick kept through a pause
+and the end of the session, and the session-scoped board_events and board_session_ledger views.
+
   python3 scripts/smoke_e2e.py --station-token ~/.config/say-when/stdb_token_smoke_station \\
                                --agent-token ~/.config/say-when/stdb_token_smoke_agent [--revoke-devices]
 
@@ -87,7 +91,9 @@ def scan(sid: int) -> dict | None:
 
 
 def ledger_since(first_id: int, kind: str | None = None) -> list[dict]:
-    return [r for r in sql("SELECT * FROM board_ledger") if r["id"] > first_id and (kind is None or r["kind"] == kind)]
+    """Ledger rows after first_id, oldest first. SQL returns rows in no fixed order, so sort by id."""
+    rows = [r for r in sql("SELECT * FROM board_ledger") if r["id"] > first_id and (kind is None or r["kind"] == kind)]
+    return sorted(rows, key=lambda r: int(r["id"]))
 
 
 def last_ledger_id() -> int:
@@ -203,6 +209,16 @@ def outcome_of(first_id: int, gesture_status: int) -> str:
     return rows[-1]["outcome"] if rows else f"HTTP {gesture_status}, no ledger row"
 
 
+def events_of(question_id: int) -> list[dict]:
+    """One question's pipeline events from the session-scoped board view (module v2), oldest first."""
+    rows = [e for e in sql("SELECT * FROM board_events") if int(e["question_id"]) == question_id]
+    return sorted(rows, key=lambda e: int(e["id"]))
+
+
+def reads_of(events: list[dict]) -> list[dict]:
+    return [e for e in events if e["stage"] == "speak" and e["detail"] == "reading option"]
+
+
 def phase_clock(station: hs.Client, sid: int) -> None:
     rc, out = owner("ask_question", f"smoke-{secrets.token_hex(4)}", "Smoke test: which drink?", "typed", "0")
     t_ask = time.monotonic()
@@ -212,6 +228,13 @@ def phase_clock(station: hs.Client, sid: int) -> None:
     ended = wait_scan(sid, lambda s: s["phase"] == "idle" and s["outcome"] is not None, 90)
     record("two passes with no pick end in no pick", bool(ended) and ended["outcome"] == "noPick",
            f"outcome {ended['outcome'] if ended else 'none'} {time.monotonic() - t_ask:.1f} s after the ask")
+    events = events_of(int(ended["question_id"])) if ended else []
+    ranks = [json.loads(e["counts_json"]).get("rank") for e in reads_of(events)]
+    record("each option read is its own speak step with its rank (module v2)", ranks == [1, 2, 3, 4, 1, 2, 3, 4],
+           f"read ranks {ranks}")
+    selects = [e for e in events if e["stage"] == "select"]
+    record("a scan that ends with no pick writes no select step (module v2)", bool(ended) and not selects,
+           f"{len(selects)} select steps; the outcome is on scan_state")
 
 
 def phase_picks(station: hs.Client, sid: int) -> None:
@@ -229,12 +252,33 @@ def phase_picks(station: hs.Client, sid: int) -> None:
     s = wait_scan(sid, lambda s: s["phase"] == "reading" and s["answer_mode"] == "pick" and int(s["cursor"]) == 2
                   and int(s["question_id"]) > q_before, 40, 0.1)
     status = gesture(station, "YES", int(s["step_seq"]) - 1) if s else 0  # heard during option 1's window
-    wait_scan(sid, lambda s: s["phase"] == "idle" and int(s["question_id"]) > q_before and s["outcome"] is not None, 20)
+    done = wait_scan(sid, lambda s: s["phase"] == "idle" and int(s["question_id"]) > q_before and s["outcome"] is not None, 20)
     picks = ledger_since(first, "pick")
     late = int(picks[-1]["ms"]) if picks else -1
     record("a late YES inside the grace window picks the option the person heard",
            bool(picks) and int(picks[-1]["cursor"]) == 1 and late > 0,
            f"{outcome_of(first, status)}; picked rank {picks[-1]['cursor'] if picks else '?'} with late_by_ms {late}")
+
+    # Module v2: the pick is one select step naming the option, and the station's word timings attach to one read.
+    events = events_of(int(done["question_id"])) if done else []
+    selects = [e for e in events if e["stage"] == "select"]
+    counts = json.loads(selects[0]["counts_json"]) if len(selects) == 1 else {}
+    record("a pick writes one select step with the option id and rank (module v2)",
+           len(selects) == 1 and selects[0]["detail"] == "picked" and int(counts.get("optionId", 0)) > 0 and counts.get("rank") == 1,
+           f"{len(selects)} select steps, counts {counts}")
+    reads = reads_of(events)
+    if not reads:
+        record("the station's word timings attach to one read, once (module v2)", False, "no read step to attach to")
+        return
+    read = reads[0]
+    c = json.loads(read["counts_json"])
+    args = [sid, int(c["stepSeq"]), int(c["optionId"]), [0, 240], [220, 520]]
+    first_status, text, _, _ = station.call("report_word_timings", args)
+    again_status, _, _, _ = station.call("report_word_timings", [*args[:3], [5], [9]])  # a retry changes nothing
+    rows = [r for r in sql("SELECT * FROM board_word_timings") if int(r["event_id"]) == int(read["id"])]
+    record("the station's word timings attach to one read, once (module v2)",
+           first_status == 200 and again_status == 200 and len(rows) == 1 and rows[0]["starts_ms"] == [0, 240] and rows[0]["ends_ms"] == [220, 520],
+           f"HTTP {first_status} then {again_status}; rows {[(r['rank'], r['starts_ms'], r['ends_ms']) for r in rows]} {text[:80]}")
 
 
 def phase_errand(station: hs.Client, sid: int) -> None:
@@ -249,6 +293,8 @@ def phase_errand(station: hs.Client, sid: int) -> None:
            f"errand {e['errand_id']} previewed, digest {e['preview_digest']}" if e else "no preview")
     if not e:
         return
+    record("board_errands names the option the person picked (module v2)", int(e.get("option_id") or 0) > 0,
+           f"option_id {e.get('option_id')}")
     eid, digest = int(e["errand_id"]), e["preview_digest"]
     time.sleep(1.1)  # past the refractory window of the YES that picked it
     wrong = []
@@ -301,6 +347,10 @@ def phase_deadman(beats: Beats, sid: int) -> None:
     record("no heartbeat for the lease: the module pauses itself", bool(paused) and bool(rows),
            f"{rows[-1]['outcome']} {rows[-1]['ms']} ms after the last beat (server clocks; lease 1500 ms); "
            f"seen here {time.monotonic() - stopped:.1f} s after the beats stopped" if rows else "no pause")
+    # Module v2: the errand pick ended the last scan Picked, and a pause keeps that pick.
+    record("a paused scan keeps the pick it ended with (module v2)",
+           bool(paused) and paused["outcome"] == "picked" and paused["picked_option_id"] is not None,
+           f"outcome {paused['outcome'] if paused else None}, picked_option_id {paused['picked_option_id'] if paused else None}")
     beats.on.set()
     restarted = time.monotonic()
     resumed = wait_scan(sid, lambda s: s["phase"] != "paused", 15)
@@ -374,6 +424,15 @@ def main() -> int:
         beats.on.clear()
         status, _, _, _ = station.call("end_session", [])
         record("the station ends the session", status == 200, f"HTTP {status}")
+        s = scan(sid)
+        record("ending the session keeps the pick the scan ended with (module v2)",
+               bool(s) and s["outcome"] == "picked" and s["picked_option_id"] is not None,
+               f"outcome {s['outcome'] if s else None}, picked_option_id {s['picked_option_id'] if s else None}")
+        events, ledger = sql("SELECT * FROM board_events"), sql("SELECT * FROM board_session_ledger")
+        record("board_events and board_session_ledger hold only this session (module v2)",
+               bool(events) and bool(ledger) and all(int(r["session_id"]) == sid for r in events + ledger)
+               and any(r["kind"] == "session_end" for r in ledger),
+               f"{len(events)} events and {len(ledger)} ledger rows, all of session {sid}")
         status, text, ms, _ = hs.Client().request("GET", f"/v1/database/{DB}/route/stats")
         record("GET /route/stats answers with numbers recomputed from the ledger", status == 200, f"{ms:.0f} ms {text}")
         code = 0 if all(r[1] == "pass" for r in results) else 1

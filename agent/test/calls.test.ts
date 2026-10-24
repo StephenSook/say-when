@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { afterEach, describe, it } from 'node:test';
 
 import {
+    CANCELLED_SAY,
     cancelReasonOf,
     CLOCK_SKEW_MS,
     CONFIRM_MAX_AGE_MS,
@@ -57,6 +58,11 @@ describe('the call path', () => {
             ['assistant', 'recipient'],
         );
         assert.equal(h.dialer.placed.length, 1, 'one CONFIRM, one call');
+        assert.deepEqual(h.dialer.placedConfirmedAt, [h.db.calls.get(callId)?.confirmedAtMs], 'the Dialer is given the module\'s CONFIRM time');
+        // Module v2 keeps an ended call's reason: the Dialer's sentence goes through, and nothing reads as held.
+        assert.equal(h.db.calls.get(callId)?.reason, 'They picked up. The call has ended.');
+        assert.equal(h.db.calls.get(callId)?.reasonCode, '');
+        assert.equal(h.db.held(callId), false);
     });
 
     it('hangs up on STOP during the call', async () => {
@@ -93,6 +99,7 @@ describe('the call path', () => {
         await waitFor(() => h.db.calls.get(callId)?.status === 'ended', 3_000, 'ended');
         assert.equal(h.dialer.placed.length, 0);
         assert.equal(h.db.calls.get(callId)?.result, 'cancelled');
+        assert.equal(h.db.calls.get(callId)?.reason, CANCELLED_SAY);
     });
 
     it('hangs up a call whose dial lease lapsed, as the module asks', async () => {
@@ -146,13 +153,46 @@ describe('the call path', () => {
         assert.equal(h.dialer.placed.length, 0);
     });
 
-    it('refuses a call whose CONFIRM is too old by the module\'s clock, though the update arrived just now', async () => {
+    it('leaves a call whose CONFIRM is too old to the module: its claim refusal is final, nothing dialed or reported', async () => {
         const h = start(harness());
         // The view update was held up (a stalled connection, no reconnect): first seen now, confirmed long ago.
         const callId = h.db.addConfirmedCall({ ...CALL, confirmedAtMs: Date.now() - CONFIRM_MAX_AGE_MS - 20_000 });
-        await waitFor(() => h.db.calls.get(callId)?.status === 'refused', 3_000, 'refused');
-        assert.equal(h.db.calls.get(callId)?.reasonCode, 'confirm_expired');
+        const claims = () => h.db.attempted.filter((a) => a.name === 'claimCall').length;
+        await waitFor(() => claims() === 1, 3_000, 'claimed');
+        await settle(30);
+        // More looks at the views (a reconnect re-syncs them): the refused claim is never sent again.
+        h.db.setConnected(false);
+        h.db.setConnected(true);
+        await settle(40);
+        assert.equal(claims(), 1);
         assert.equal(h.dialer.placed.length, 0);
+        assert.equal(h.db.applied.filter((a) => a.name === 'reportCallStatus').length, 0, 'the module, not the sidecar, reports it');
+        assert.ok(h.log.entries.some((e) => e.fields.code === 'confirm_expired' && /module refused the call claim/.test(e.message)));
+        // The module's ConfirmWindow timer stops the call itself.
+        h.db.expireConfirmedCall(callId);
+        await settle(30);
+        assert.equal(h.db.calls.get(callId)?.status, 'stopped');
+        assert.equal(claims(), 1);
+    });
+
+    it('treats the module\'s confirm expired as final when a call waited for the line past the claim window', async () => {
+        const h = start(harness());
+        h.db.failNext('claimCall', 'refused', { message: 'line busy' });
+        const callId = h.db.addConfirmedCall({ ...CALL, confirmedAtMs: Date.now() - 2_000 });
+        await waitFor(() => h.db.attempted.some((a) => a.name === 'claimCall'), 3_000, 'claimed');
+        await settle(20);
+        // The live call took a while: by the time the line is free the CONFIRM is past the module's claim window.
+        const call = h.db.calls.get(callId);
+        if (call) call.confirmedAtMs = Date.now() - CONFIRM_MAX_AGE_MS - 1_000;
+        h.db.addConfirmedErrand({ formKey: 'care_team_request', formUrl: 'demo', formTitle: 'Care team request', fieldsJson: '[]', digest: '0123456789abcdef' });
+        await waitFor(() => h.db.attempted.filter((a) => a.name === 'claimCall').length === 2, 3_000, 'claimed again once the line was free');
+        await settle(30);
+        h.db.setConnected(false);
+        h.db.setConnected(true);
+        await settle(40);
+        assert.equal(h.db.attempted.filter((a) => a.name === 'claimCall').length, 2, 'confirm expired is final');
+        assert.equal(h.dialer.placed.length, 0);
+        assert.equal(h.db.calls.get(callId)?.status, 'confirmed', 'left to the module\'s timer');
     });
 
     it('dials a call confirmed a little while ago by the module\'s clock', async () => {
@@ -162,9 +202,10 @@ describe('the call path', () => {
         assert.equal(h.db.calls.get(callId)?.status, 'dialing');
     });
 
-    it('refuses a call when the time of its CONFIRM is not known', async () => {
+    it('refuses a call when its view does not show the time of its CONFIRM, though the module let the claim through', async () => {
         const h = start(harness());
-        const callId = h.db.addConfirmedCall({ ...CALL, confirmedAtMs: null });
+        // Bindings older than module v2: call_queue carries no confirmed_at; the module itself knows the time.
+        const callId = h.db.addConfirmedCall({ ...CALL, viewShowsConfirmedAt: false });
         await waitFor(() => h.db.calls.get(callId)?.status === 'refused', 3_000, 'refused');
         assert.equal(h.db.calls.get(callId)?.reasonCode, 'confirm_time_unknown');
         assert.equal(h.db.calls.get(callId)?.reason, UNCHECKED_SAY);
@@ -337,25 +378,29 @@ describe('the call path', () => {
         const refused = finalReport({ ...base, result: 'refused', refusal: { code: 'hold_file_error', reason: 'I could not record the call safely, so I did not call.' }, spoken: `I could not record the call safely, so I did not call.${held}` });
         assert.ok(refused.reason.endsWith(held.trim()), 'a held refusal keeps the hold sentence');
         assert.ok(finalReport({ ...base, result: 'unknown', spoken: `I could not tell how the call ended.${held}` }).reason.endsWith(held.trim()));
-        assert.equal(finalReport({ ...base, held: false, result: 'answered', spoken: 'The call has ended.' }).reason, '', 'no hold, nothing extra');
+        const plain = finalReport({ ...base, held: false, result: 'answered', spoken: 'The call has ended.' });
+        assert.deepEqual([plain.reasonCode, plain.reason], ['', 'The call has ended.'], 'no hold: no code, and the result sentence goes through as it is');
     });
 
     it('reports a call that ended on hold, and logs that it is held without the name', async () => {
         const h = start(harness());
-        h.db.addConfirmedCall(CALL);
+        const callId = h.db.addConfirmedCall(CALL);
         await waitFor(() => h.dialer.placed.length === 1, 3_000, 'placed');
         h.dialer.handle?.finish({ result: 'answered', optedOut: true, held: true, spoken: `The call has ended. Calls to ${SECRET.contactName} are on hold until someone checks.` });
         await waitFor(() => h.db.applied.some((a) => a.name === 'reportCallStatus' && (a.args as { status: string }).status === 'ended'), 3_000, 'reported');
         const report = h.db.applied.find((a) => a.name === 'reportCallStatus' && (a.args as { status: string }).status === 'ended')?.args as { reasonCode: string; reason: string };
         assert.equal(report.reasonCode, 'opt_out_hold');
         assert.match(report.reason, /on hold until someone checks/);
+        // Module v2 keeps the ended call's code and sentence, so the board shows the hold.
+        assert.equal(h.db.calls.get(callId)?.reasonCode, 'opt_out_hold');
+        assert.equal(h.db.held(callId), true);
         assert.ok(h.log.entries.some((e) => e.message === 'call finished' && e.fields.held === true));
         assert.ok(!h.log.text().toLowerCase().includes(SECRET.contactName.toLowerCase()), 'the name stays out of the log');
     });
 
     it('maps outcomes to the module\'s statuses, an unclear dial as failed with result unknown', () => {
         const base = { requestId: 'r', dialed: true as const, callId: null, endReason: null, cancelReason: null, refusal: null, optedOut: false, held: false, spoken: 'I could not tell.', summary: null, ms: 1 };
-        assert.deepEqual(finalReport({ ...base, result: 'no_answer' }), { status: 'ended', result: 'no_answer', endReason: '', reasonCode: '', reason: '' });
+        assert.deepEqual(finalReport({ ...base, result: 'no_answer', spoken: 'Leon did not answer.' }), { status: 'ended', result: 'no_answer', endReason: '', reasonCode: '', reason: 'Leon did not answer.' });
         assert.equal(finalReport({ ...base, result: 'unknown', dialed: 'unknown' }).reasonCode, 'dial_unknown');
         assert.equal(finalReport({ ...base, result: 'unknown' }).status, 'failed');
         assert.equal(cancelReasonOf('auto_pause'), 'auto_pause');

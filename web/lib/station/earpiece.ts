@@ -496,20 +496,20 @@ export class Earpiece<Clip extends ClipLike = ClipLike> {
       if (this.lags.length > 20) this.lags.shift();
       this.arrivals.delete(key(optionStartSeq));
     }
-    this.sendWordTimings(optionStartSeq, optionId, clip);
+    if (this.scan) this.sendWordTimings(this.scan.sessionId, optionStartSeq, optionId, clip);
     this.deps.onChange?.();
   }
 
-  private sendWordTimings(stepSeq: bigint, optionId: bigint, clip: Clip): void {
+  private sendWordTimings(sessionId: bigint, stepSeq: bigint, optionId: bigint, clip: Clip): void {
     if (this.timingsOff) return;
-    const id = key(stepSeq);
+    const id = `${sessionId}:${stepSeq}`;
     if (this.timingsSent.has(id)) return;
     const timings = cleanWordTimings(clip.words);
     if (!timings) return;
     const call = this.deps.wordTimings();
     if (!call) return;
     this.timingsSent.add(id);
-    sendWithResend(() => call({ stepSeq, optionId, ...timings }), {
+    sendWithResend(() => call({ sessionId, stepSeq, optionId, ...timings }), {
       maxAgeMs: REPORT_RESEND_MS,
       waitForLive: (ms) => this.deps.waitForLive(ms),
       sleep: this.deps.sleep,

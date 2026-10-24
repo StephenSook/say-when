@@ -299,6 +299,7 @@ describe('boardRows: the live SpacetimeDB board as the dashboard rows', () => {
       confirmationText: 'Smoke test: the gate released it; nothing was sent anywhere.',
       screenshotUrl: null,
       confirmClosesAt: ms(23_000),
+      confirmOpensAt: ms(15_000),
       reason: null,
       reasonCode: null,
       confirmCommandId: 'smoke-confirm-1a2b3c4d',
@@ -320,7 +321,7 @@ describe('boardRows: the live SpacetimeDB board as the dashboard rows', () => {
     assert.equal(errandHeadline(e, rows.safety.state).text, 'Waiting for the person to confirm. Nothing has been sent.');
   });
 
-  test('a select step is the pick: "picked" gets its option from the rank, and an errand row gets the picked option', () => {
+  test('rows written before module v2: a select step that names no option is dropped, and an errand without an option id gets the pick', () => {
     const rows = boardRows(
       midScan({
         questions: [
@@ -351,7 +352,7 @@ describe('boardRows: the live SpacetimeDB board as the dashboard rows', () => {
     assert.equal(conversationOf(rows).agent?.sentence, 'Filling in the form. Nothing is sent yet.');
   });
 
-  test('a scan that ended with no pick reads as no pick on every screen, never as a pick', () => {
+  test('a scan that ended with no pick reads as no pick on every screen, never as a pick (and an old "no pick" step names no option)', () => {
     const rows = boardRows(
       midScan({
         questions: [question({ status: { tag: 'NoPick' }, outcome: { tag: 'NoPick' } })],
@@ -469,7 +470,7 @@ describe('boardRows: the live SpacetimeDB board as the dashboard rows', () => {
     assert.equal(menu.mode, 'menu');
     assert.equal(menu.phase, 'veto');
     assert.equal(menu.pickedOptionId, '103');
-    // end_session keeps the outcome but clears the scan's picked id (spacetime/src/index.ts); the question keeps it.
+    // Before module v2, end_session kept the outcome but cleared the scan's picked id; the question keeps it.
     const ended = boardRows(
       midScan({
         scanStates: [scan({ phase: { tag: 'Idle' }, outcome: { tag: 'Picked' }, pickedOptionId: undefined })],

@@ -292,15 +292,16 @@ describe('playback driven by scan_state', () => {
     assert.equal(h.out.stops, 2);
   });
 
-  test('one report_word_timings per read, keyed by the read step, with cleaned timings', async () => {
+  test('one report_word_timings per read, keyed by the session and read step, with cleaned timings', async () => {
     const h = await ready();
     h.ear.onScan(scan({ phase: 'reading', cursor: 1, stepSeq: 2n, optionStartSeq: 2n }), 1_000);
     h.ear.onScan(scan({ phase: 'window', cursor: 1, stepSeq: 3n, optionStartSeq: 2n }), 2_000);
     h.ear.onScan(scan({ phase: 'reading', cursor: 2, stepSeq: 4n, optionStartSeq: 4n }), 3_000);
     await flush();
+    // The module accepts only the active session's reads, so every report names the session the read belongs to.
     assert.deepEqual(h.timings, [
-      { stepSeq: 2n, optionId: 11n, startsMs: [0], endsMs: [300] },
-      { stepSeq: 4n, optionId: 12n, startsMs: [0], endsMs: [300] },
+      { sessionId: 3n, stepSeq: 2n, optionId: 11n, startsMs: [0], endsMs: [300] },
+      { sessionId: 3n, stepSeq: 4n, optionId: 12n, startsMs: [0], endsMs: [300] },
     ]);
   });
 

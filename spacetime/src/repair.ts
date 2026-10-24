@@ -5,7 +5,7 @@ import type { Timestamp } from 'spacetimedb';
 import { activeSession } from './auth';
 import { getConfig } from './config';
 import type { Ctx } from './ctx';
-import { armCallTimer, armErrandTimer } from './consent';
+import { armCallTimer, armErrandTimer, CALL_CLAIM_MS } from './consent';
 import { isAfter, onceAt, plusMs } from './util';
 
 function notBefore(ctx: Ctx, ts: Timestamp): Timestamp {
@@ -75,9 +75,11 @@ export function ensureTimers(ctx: Ctx): string[] {
       repaired.push(`errand_lease:${e.id}`);
     }
   }
+  // A Confirmed call's ConfirmWindow row guards its claim (module v2): CALL_CLAIM_MS after the CONFIRM.
   const callKinds = {
     Prepared: 'Readback',
     AwaitingConfirm: 'ConfirmWindow',
+    Confirmed: 'ConfirmWindow',
     Dialing: 'Lease',
     Ringing: 'Lease',
     Connected: 'Lease',
@@ -88,9 +90,11 @@ export function ensureTimers(ctx: Ctx): string[] {
       const when =
         kind === 'Readback'
           ? plusMs(c.createdAt, cfg.readbackDeadlineMs)
-          : kind === 'ConfirmWindow'
-            ? (c.confirmClosesAt ?? ctx.timestamp)
-            : plusMs(c.dialedAt ?? c.updatedAt, cfg.callLeaseMs);
+          : status === 'Confirmed'
+            ? plusMs(c.confirmedAt ?? c.updatedAt, CALL_CLAIM_MS)
+            : kind === 'ConfirmWindow'
+              ? (c.confirmClosesAt ?? ctx.timestamp)
+              : plusMs(c.dialedAt ?? c.updatedAt, cfg.callLeaseMs);
       const seq = kind === 'Lease' ? c.claimAttempt : c.windowSeq;
       armCallTimer(ctx, c.id, kind, seq, notBefore(ctx, when));
       repaired.push(`call_timer:${c.id}`);

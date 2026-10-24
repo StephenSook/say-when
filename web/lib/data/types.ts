@@ -151,9 +151,13 @@ export interface MossHit {
   savedAt?: number;
 }
 
-/** Word timings from Cartesia, measured from the start of the clip (cartesia/src/tts.ts). */
+/**
+ * Word timings from Cartesia, measured from the start of the clip (cartesia/src/tts.ts). On live data they come from
+ * the module's `board_word_timings` (docs/spacetime.md 14), which keeps the numbers only, never the words, so `word`
+ * is absent there: the screen places the i-th timing on the i-th word it shows.
+ */
 export interface WordTiming {
-  word: string;
+  word?: string;
   startMs: number;
   endMs: number;
 }
@@ -202,9 +206,21 @@ export interface PlanDetail extends DetailBase {
   followUp?: boolean;
 }
 
+/**
+ * A speak step. Since module v2 (docs/spacetime.md 14) every read in the earpiece is its own `started` step, labelled
+ * "reading option" (or "yes or no prompt"), whose counts name the option (`optionId`, `rank`; neither for the prompt),
+ * the `pass`, the scan's `stepSeq` and the planned `durationMs`. The scan's own "scan ended" step closes the run.
+ */
 export interface SpeakDetail extends DetailBase {
   optionId?: string;
+  /** 1-based. Absent for the yes or no prompt. */
   rank?: number;
+  /** Which pass through the options this read belongs to, 1-based. */
+  pass?: number;
+  /** The scan step this read began at (`scan_state.step_seq`). */
+  stepSeq?: number;
+  /** true when `durationMs` is planned from an estimated clip length, not a measured clip. */
+  estimated?: boolean;
   text?: string;
   /** 'earpiece' is heard by the person only; 'aloud' is the spoken reply the room hears. */
   channel?: 'earpiece' | 'aloud';
@@ -219,9 +235,11 @@ export interface SpeakDetail extends DetailBase {
   stoppedBy?: CommandName;
 }
 
+/** A select step is the pick itself: since module v2 it is written only for a pick, naming the option (docs/spacetime.md 14). */
 export interface SelectDetail extends DetailBase {
   optionId?: string;
   rank?: number;
+  pass?: number;
   text?: string;
   kind?: OptionKind;
 }
@@ -327,6 +345,11 @@ export interface Errand {
   screenshotUrl: string | null;
   /** When the confirm window closes. The countdown bar shows only when this is set. draft */
   confirmClosesAt: number | null;
+  /**
+   * When the confirm window opens: the read-back's end plus the quiet hold, moved again if a CONFIRM came too soon
+   * (docs/spacetime.md 4.3). The countdown runs from here. Absent: from `readAloudAt`.
+   */
+  confirmOpensAt?: number | null;
   /** One plain sentence for Stopped, Refused or Failed. draft */
   reason: string | null;
   /** The Actor's refusal code, such as 'captcha' or 'not_allowed'. draft */
@@ -395,12 +418,21 @@ export interface CallRequest {
   endReason: string | null;
   /** One plain sentence for Stopped or Refused. draft */
   reason: string | null;
+  /** The module's code for that reason, such as 'window_closed' or 'confirm_expired'. Absent when the source does not say. */
+  reasonCode?: string | null;
+  /**
+   * The call agent put this contact on hold until someone checks (an opt-out or an unreadable hold file;
+   * docs/spacetime.md 14, `board_calls.held`). Absent when the source does not say.
+   */
+  held?: boolean;
   /** The recipient agreed to be called and to have the transcript shown. draft */
   consentOnFile: boolean;
   /** The script finished playing in the earpiece; the confirm window opened. draft */
   readAloudAt: number | null;
   /** When the confirm window closes. The countdown bar shows only when this is set. draft */
   confirmClosesAt: number | null;
+  /** When the confirm window opens (after the quiet hold). The countdown runs from here. Absent: from `readAloudAt`. */
+  confirmOpensAt?: number | null;
   /** The CONFIRM command event that released this call. draft */
   confirmCommandId: string | null;
   /** The NO, STOP or HEADSET_OFF command event that stopped it before dialing, or hung it up. draft */
@@ -483,7 +515,7 @@ export interface ScanState {
   maxPasses: number;
   /** null while scanning. Once set, the scan has ended: stop the countdown and ignore `stepEndsAt`. */
   outcome: ScanOutcome | null;
-  /** Set by YES: during the veto, and after the pick. */
+  /** Set by YES: during the veto, and after the pick, through a later pause and the end of the session. */
   pickedOptionId: string | null;
 }
 

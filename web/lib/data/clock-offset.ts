@@ -125,6 +125,7 @@ export function shiftRows(rows: DataRows, delta: number): DataRows {
     errands: rows.errands.map((errand) => ({
       ...errand,
       confirmClosesAt: moveOrNull(errand.confirmClosesAt, delta),
+      ...(errand.confirmOpensAt === undefined ? {} : { confirmOpensAt: moveOrNull(errand.confirmOpensAt, delta) }),
       createdAt: move(errand.createdAt, delta),
       previewedAt: moveOrNull(errand.previewedAt, delta),
       readAloudAt: moveOrNull(errand.readAloudAt, delta),
@@ -136,6 +137,7 @@ export function shiftRows(rows: DataRows, delta: number): DataRows {
       ...call,
       readAloudAt: moveOrNull(call.readAloudAt, delta),
       confirmClosesAt: moveOrNull(call.confirmClosesAt, delta),
+      ...(call.confirmOpensAt === undefined ? {} : { confirmOpensAt: moveOrNull(call.confirmOpensAt, delta) }),
       createdAt: move(call.createdAt, delta),
       confirmedAt: moveOrNull(call.confirmedAt, delta),
       dialedAt: moveOrNull(call.dialedAt, delta),

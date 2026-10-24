@@ -4,6 +4,7 @@
 export {
     CallRunner,
     cancelReasonOf,
+    CANCELLED_SAY,
     CLOCK_SKEW_MS,
     CONFIRM_MAX_AGE_MS,
     CONFIRM_TO_DIAL_MS,
@@ -16,7 +17,7 @@ export {
     type CallRunnerDeps,
 } from './calls.js';
 export { DEFAULTS, loadEnvFiles, readConfig, type AgentConfig, type ConfigResult, type EnvCheck } from './config.js';
-export { BOARD_CALLS, camel, DETAIL_PATTERN, LIMITS, REDUCERS, VIEWS, type ReducerSpec, type ViewSpec } from './contract.js';
+export { CALL_CLAIM_MS, camel, DETAIL_PATTERN, LIMITS, MODULE_EVENT_KEY, REDUCERS, VIEWS, type ReducerSpec, type ViewSpec } from './contract.js';
 export { DbCallError, toDbError, type AgentDb, type DbErrorKind } from './db/db.js';
 export { MemoryDb, type CallRecord, type ErrandRecord, type PipelineRecord, type PublishRecord } from './db/memory-db.js';
 export { callReducer, MAX_CLAIM_TRIES, neverSent, type CallOutcome, type RetryOptions, type Verified } from './db/retry.js';
@@ -24,6 +25,7 @@ export { DeadlineError, withDeadline } from './deadline.js';
 export {
     ContractError,
     SpacetimeAgentDb,
+    toAgentConsent,
     toAgentQueueRow,
     toCallQueueRow,
     toErrandQueueRow,

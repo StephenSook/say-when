@@ -112,8 +112,12 @@ export async function sendWithResend<T>(send: (attempt: number) => Promise<T>, o
 
 // ---------- Reducers a module version may not have ----------
 
-/** `report_word_timings` arrives with module v2 (docs/station.md 2.9). Its generated call shape. */
+/**
+ * `report_word_timings` arrives with module v2 (docs/station.md 2.9). Its generated call shape: the session is named
+ * because step numbers restart in each session, and the module accepts only the active one.
+ */
 export interface ReportWordTimingsArgs {
+  sessionId: bigint;
   stepSeq: bigint;
   optionId: bigint;
   startsMs: number[];

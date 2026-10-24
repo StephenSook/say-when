@@ -22,6 +22,7 @@ import {
   callBadge,
   callEndReason,
   callFailedSentence,
+  callHoldNote,
   callPlan,
   pauseWords,
   rowReason,
@@ -66,7 +67,7 @@ function callSteps(call: CallRequest, commands: readonly CommandEvent[], safety:
     confirmStep(call, plan.confirm, notCalled, ended, commands, safety),
     ringStep(call, plan, notCalled, ended),
     talkStep(call, plan, safety),
-    endStep(call, plan.end),
+    endStep(call, plan.end, commands),
   ];
 }
 
@@ -135,7 +136,7 @@ function confirmStep(
         ) : (
           <>
             {call.confirmClosesAt !== null ? (
-              <Countdown closesAt={call.confirmClosesAt} opensAt={call.readAloudAt} label="Time left to confirm the call" />
+              <Countdown closesAt={call.confirmClosesAt} opensAt={call.confirmOpensAt ?? call.readAloudAt} label="Time left to confirm the call" />
             ) : null}
             <Note>Only a double jaw clench places the call. If the time runs out, nobody is called.</Note>
           </>
@@ -214,7 +215,19 @@ function talkStep(call: CallRequest, plan: CallPlan, safety: SafetyWord): Step {
   }
 }
 
-function endStep(call: CallRequest, status: RunStatus): Step {
+/** The end step's reason, then the hold sentence when the contact is now on hold and the reason does not say so. */
+function endNotes(call: CallRequest, reason: string | null): ReactNode {
+  const hold = callHoldNote(call, reason);
+  if (reason === null && hold === null) return undefined;
+  return (
+    <>
+      {reason !== null ? <Note>{reason}</Note> : null}
+      {hold !== null ? <Note>{hold}</Note> : null}
+    </>
+  );
+}
+
+function endStep(call: CallRequest, status: RunStatus, commands: readonly CommandEvent[]): Step {
   const step = { key: 'end', status };
   if (status === 'not_started') return { ...step, label: numbered(5, 'Ended, with the reason') };
   if (status === 'failed') {
@@ -222,16 +235,15 @@ function endStep(call: CallRequest, status: RunStatus): Step {
       ...step,
       label: numbered(5, 'Call failed'),
       time: clock(call.endedAt),
-      detail: <Note>{callFailedSentence(call)}</Note>,
+      detail: endNotes(call, callFailedSentence(call)),
       statusWord: callStatusWord(call),
     };
   }
-  const reason = callEndReason(call);
   return {
     ...step,
     label: numbered(5, 'Ended'),
     time: clock(call.endedAt),
-    detail: reason ? <Note>{reason}</Note> : undefined,
+    detail: endNotes(call, callEndReason(call, commands)),
     statusWord: callStatusWord(call),
   };
 }

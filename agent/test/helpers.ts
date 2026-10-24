@@ -381,6 +381,8 @@ export class FakeHandle implements CallHandleLike {
 export class FakeDialer implements DialerPort {
     readonly prepared: CallRequest[] = [];
     readonly placed: { requestId: string; digest: string }[] = [];
+    /** The CONFIRM time each place() was given, by the module's clock. */
+    readonly placedConfirmedAt: number[] = [];
     readonly cancels: CancelReason[] = [];
     refusePrepare = false;
     refusePlace = false;
@@ -402,8 +404,9 @@ export class FakeDialer implements DialerPort {
         };
     }
 
-    place(requestId: string, digest: string): { ok: true; handle: CallHandleLike } | { ok: false; refusal: { code: 'do_not_call'; reason: string } } {
+    place(requestId: string, digest: string, confirmedAtMs: number): { ok: true; handle: CallHandleLike } | { ok: false; refusal: { code: 'do_not_call'; reason: string } } {
         this.placed.push({ requestId, digest });
+        this.placedConfirmedAt.push(confirmedAtMs);
         if (this.refusePlace) return { ok: false, refusal: { code: 'do_not_call', reason: 'That person asked not to be called, so I did not call.' } };
         this.handle = new FakeHandle(requestId);
         return { ok: true, handle: this.handle };

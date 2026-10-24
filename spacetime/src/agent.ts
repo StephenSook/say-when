@@ -39,9 +39,18 @@ export interface ProgressInput {
   payloadJson: string;
 }
 
+/**
+ * The key prefixes the module writes its own steps under (`listen:<request>`, `q<question>:`, `e<errand>:`,
+ * `c<call>:`, `s<session>:read:`; docs/spacetime.md 11.4 and 14). An event key is used once, so an agent key with
+ * one of these would claim the module's step first and the module's own write would be skipped. The sidecar's keys
+ * start with the job id (`<job_id>:<attempt>:...`).
+ */
+const MODULE_KEY_RE = /^(listen:|[qecs][0-9]+:)/;
+
 /** `agent_progress`: one pipeline event (and its private payload), and a longer lease. */
 export function agentProgress(ctx: Ctx, job: AgentJob, p: ProgressInput): void {
   requireMatch(p.eventKey, KEY_RE, 'event_key');
+  if (MODULE_KEY_RE.test(p.eventKey)) throw new SenderError('event_key uses a prefix the module writes');
   if (!(STAGES as readonly string[]).includes(p.stage)) throw new SenderError(`stage must be one of ${STAGES.join(', ')}`);
   if (!(STAGE_STATUSES as readonly string[]).includes(p.status)) throw new SenderError('status must be started, ok or error');
   requireMatch(p.detail, DETAIL_RE, 'detail');

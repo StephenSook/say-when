@@ -700,6 +700,27 @@ export const spentGesture = table(
 );
 export type SpentGesture = Infer<typeof spentGesture.rowType>;
 
+/**
+ * The station's word timings for one option read (module v2, docs/spacetime.md 14): the speak step's event id and
+ * numbers only, never the words. One row per read, written once by `report_word_timings`; the board reads them
+ * through `board_word_timings`. Added after the first publish: a new table is a safe migration.
+ */
+export const wordTiming = table(
+  { indexes: [{ accessor: 'timingBySession', algorithm: 'btree', columns: ['sessionId'] }] },
+  t.row('WordTiming', {
+    eventId: t.u64().primaryKey(),
+    sessionId: t.u64(),
+    questionId: t.u64(),
+    optionId: t.u64(),
+    rank: t.u8(),
+    stepSeq: t.u64(),
+    startsMs: t.array(t.u32()),
+    endsMs: t.array(t.u32()),
+    at: t.timestamp(),
+  }),
+);
+export type WordTiming = Infer<typeof wordTiming.rowType>;
+
 const spacetimedb = schema(
   {
     config,
@@ -728,6 +749,7 @@ const spacetimedb = schema(
     idleTimer,
     pairingTimer,
     spentGesture,
+    wordTiming,
   },
   {
     // Optional, so a teammate can publish a dev database with no secrets. Values arrive from shell variables

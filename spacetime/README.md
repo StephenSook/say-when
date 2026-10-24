@@ -2,17 +2,20 @@
 
 The live backend for NeuroLingo (formerly Say When): one TypeScript module on SpacetimeDB 2.13.0 that holds the scan clock, the dead-man pause, the consent gate for errands and calls, the agent's job queue, and the data every screen shows. Every device and the agent talk to it, and to nothing else, for live state. The full design, with every table, reducer and rule, is [`docs/spacetime.md`](../docs/spacetime.md); this file says how to build, publish, pair and connect, and what Maincloud showed when we ran it.
 
-## The live database
+## The two databases
 
-| | |
-|---|---|
-| Host | `https://maincloud.spacetimedb.com` (the SDK opens `wss://` on the same host) |
-| Database | `say-when-dev`, identity `c200da44f7506b54809eb198b17556591cfb8035b08503b560171bb492f4b92e` |
-| What it is for | development and smoke tests. Not locked. The demo database `say-when-demo` is published at the schema freeze (`docs/spacetime.md` 9.4) and does not exist yet |
-| Published | Sat Oct 24, 2026, 1:09 AM PDT, from this folder by Stephen's CLI login, which `init` made the owner |
-| Environment | none. `CARTESIA_API_KEY` is not set, so `mint_voice_token` answers `voice_key_missing` and never a token |
-| Data in it | four smoke sessions with made-up questions ("Smoke test: which drink?"), three made-up errands that went nowhere, revoked smoke devices and revoked smoke consents. `purge_session 1` (2, 3, 4) deletes a session's rows |
-| Dashboard | https://spacetimedb.com/say-when-dev (owner login: logs, SQL console, usage) |
+**`say-when-demo` is for the demo. `say-when-dev` is for testing.** Both run the same module (v2) on the same host, `https://maincloud.spacetimedb.com` (the SDK opens `wss://` on the same host), and both are owned by Stephen's CLI login, which `init` stored as `config.owner`.
+
+| | `say-when-demo` (the demo) | `say-when-dev` (testing) |
+|---|---|---|
+| What it is for | The demo and judging only. Every device and the agent sidecar point here for the demo. Never run the smoke test, a stand-in agent or any test against it | Development, tests and the smoke test. `smoke_e2e.py` and the stand-in agent refuse any database whose name does not end in `-dev` |
+| Identity | `c200268dfe80c543bc9505c4b9fc98e86ff998d2d5a69ae898c913def1bfbbab` | `c200da44f7506b54809eb198b17556591cfb8035b08503b560171bb492f4b92e` |
+| Published | Sat Oct 24, 2026, 7:28 AM PDT: created new from this folder with module v2, then `ensure_timers` ran clean. Not locked yet | Sat Oct 24, 2026, 1:09 AM PDT. Module v2 republished 6:42 AM PDT (an automatic migration: a new table and new or regrown views; no data deleted; `docs/spacetime.md` 14.3) |
+| Data in it | Empty (checked 7:30 AM PDT): every table has 0 rows except the `config` row with its defaults: sharing off, no active session (`active_session_id` 0), no devices, no consents, no sessions. `GET /route/ping` and `/route/stats` answered 200 with no key | Smoke and test sessions 1 to 12 with made-up questions ("Smoke test: which drink?"), made-up errands that went nowhere, 16 revoked smoke devices and 22 revoked smoke consents. Every session has ended and sharing is off. Session 12 is the last smoke run. `purge_session <id>` deletes an ended session's rows |
+| Environment | none | none |
+| Dashboard | https://spacetimedb.com/say-when-demo | https://spacetimedb.com/say-when-dev (owner login: logs, SQL console, usage) |
+
+With no `CARTESIA_API_KEY` set, `mint_voice_token` answers `voice_key_missing` and never a token, on both. Before the demo, the owner gets `say-when-demo` ready as in [Get the demo database ready](#get-the-demo-database-ready-owner-before-the-demo).
 
 ## What it does that a plain database would not (PLAN D12)
 
@@ -50,7 +53,7 @@ Node 22. From this folder:
 ```bash
 npm ci
 npm run typecheck              # the module, the scripts and the generated bindings
-npm test                       # vitest with the 2.12+ module test harness: 155 tests, no server needed
+npm test                       # vitest with the 2.12+ module test harness: 177 tests, no server needed
 spacetime build --module-path .
 ```
 
@@ -68,6 +71,15 @@ nice -n 15 spacetime call --no-config --server maincloud say-when-dev ensure_tim
 ```
 
 A breaking schema change on the dev database only: add `--delete-data=on-conflict` (it also wipes env values and re-runs `init`). Never on the demo database, and never publish to the demo database during judging.
+
+The demo database was created with the same command and name `say-when-demo` (Oct 24, 7:28 AM PDT), then `ensure_timers`:
+
+```bash
+env -u CARTESIA_API_KEY nice -n 15 spacetime publish say-when-demo --no-config --module-path spacetime --server maincloud --yes=remote
+nice -n 15 spacetime call --no-config --server maincloud say-when-demo ensure_timers
+```
+
+A later module change goes to `say-when-dev` first, passes the tests and the smoke test there, and only then goes to `say-when-demo` with the same command. It must be an automatic migration (`docs/spacetime.md` 9.4: add tables, reducers and views; add a column only at the end with a default). If the CLI says the change will break existing clients, add `break-clients` (`--yes=remote,break-clients`) only when every demo client is about to reload with new bindings anyway. If the CLI says the change cannot migrate, stop: do not wipe the demo database.
 
 **Adding the Cartesia key** (smoke step S1 passed, so the key belongs in the module env; nobody has done this yet). The key comes from the Keychain or the team vault into a shell variable for this one command, is checked for length (a Keychain item can be empty and still exit 0), and is never written to a file or printed:
 
@@ -105,6 +117,21 @@ spacetime call --no-config --server maincloud say-when-dev grant_consent board_t
 spacetime call --no-config --server maincloud say-when-dev set_timing '{"response_window_ms":4000}'
 ```
 
+The commands above name `say-when-dev`; for the demo, the same commands name `say-when-demo`.
+
+### Get the demo database ready (owner, before the demo)
+
+`say-when-demo` starts empty: no devices, no consent, sharing off, no session. Nothing in it works for the demo until the owner does these, in order, with `--no-config --server maincloud say-when-demo` on every call:
+
+1. Add the Cartesia key with the publish command in [Adding the Cartesia key](#publish-owner-only), naming `say-when-demo` (an `--env-only` publish, or the full publish while the module is unchanged).
+2. Point every client at it: `NEXT_PUBLIC_SPACETIMEDB_DB=say-when-demo` for the deployed web app, `SPACETIMEDB_DB=say-when-demo` for the agent sidecar.
+3. Pair the demo devices (station, partner phone, speaker, agent) with `approve_pairing <code> false`, using role words as labels, never a person's name. The agent pairs with `SPACETIMEDB_DB=say-when-demo npm run pair` and keeps a separate token file from the dev one (`AGENT_TOKEN_FILE`).
+4. Grant the consent rows the demo needs: `errand <form_key>` for each demo form, `call <contact_id>` for each consenting contact (consent under the NeuroLingo name, PLAN D13), `web_search ""` and `memory ""` if the agent may use them, and `board_text ""` only if the board should show text.
+5. Set the wearer's timing from calibration with `set_timing`.
+6. `spacetime lock say-when-demo` (it only blocks deletion).
+
+Do not start a session or turn sharing on until the demo begins.
+
 ## Connect
 
 ### The web app
@@ -112,7 +139,7 @@ spacetime call --no-config --server maincloud say-when-dev set_timing '{"respons
 ```bash
 # web/.env.local and the deployed project's settings. Neither value is a secret.
 NEXT_PUBLIC_SPACETIMEDB_HOST=https://maincloud.spacetimedb.com
-NEXT_PUBLIC_SPACETIMEDB_DB=say-when-dev
+NEXT_PUBLIC_SPACETIMEDB_DB=say-when-dev     # say-when-demo for the demo deployment
 ```
 
 The bindings are `spacetime/bindings/web` (generated from this module, never edited). One connection per page:
@@ -156,7 +183,7 @@ What the wire looks like (all seen on `say-when-dev`):
 
 ### The agent sidecar
 
-The sidecar in `agent/` connects over WebSocket as the Agent role: `SPACETIMEDB_URI` (default `https://maincloud.spacetimedb.com`), `SPACETIMEDB_DB` (default `say-when-dev`), `AGENT_TOKEN_FILE` (default `agent/.agent-token`, gitignored). Its generated bindings are `spacetime/bindings/agent`. The contract it follows is `docs/spacetime.md` 3.6 and 7.4: read `agent_queue` and `errand_queue`, `agent_claim` a Pending job, then write with `(job_id, attempt)`; claim a Confirmed errand with its `confirmed_digest`; drop any work whose write fails with `stale attempt`.
+The sidecar in `agent/` connects over WebSocket as the Agent role: `SPACETIMEDB_URI` (default `https://maincloud.spacetimedb.com`), `SPACETIMEDB_DB` (default `say-when-dev`; `say-when-demo` for the demo, with its own token file), `AGENT_TOKEN_FILE` (default `agent/.agent-token`, gitignored). Its generated bindings are `spacetime/bindings/agent`. The contract it follows is `docs/spacetime.md` 3.6 and 7.4: read `agent_queue` and `errand_queue`, `agent_claim` a Pending job, then write with `(job_id, attempt)`; claim a Confirmed errand with its `confirmed_digest`; drop any work whose write fails with `stale attempt`.
 
 `npm run smoke -- watch --act-as-agent` in this folder is a stand-in that follows the same contract with made-up content, for testing without Apify, Moss or Claude. It refuses to run against a database whose name does not end in `-dev`.
 
@@ -170,7 +197,9 @@ python3 scripts/smoke_e2e.py --station-token ~/.config/say-when/stdb_token_smoke
                              --agent-token ~/.config/say-when/stdb_token_smoke_agent --revoke-devices
 ```
 
-Last run, Oct 24 1:41 AM PDT (session 4): 17 of 17 checks passed, as did the run before it (session 3).
+Last run, Oct 24 7:26 AM PDT (session 12, module v2, with the web, agent and Cartesia changes for v2 in the tree): 25 of 25 checks passed, the 17 earlier ones and 8 for module v2 (one speak step per read, a select step only for a pick, word timings on one read, `board_errands.option_id`, the pick kept through a pause and the session end, and the session-scoped `board_events` and `board_session_ledger`). The dead-man pause came 1501 ms after the last beat; scheduled ticks ran a median 2 ms late (max 3 ms, 24 steps). The smoke devices and consents were revoked afterwards (the station's token then got 530 "not allowed") and the token files deleted. Earlier: 25 of 25 at 6:43 AM (session 8); before module v2, 17 of 17 (sessions 3 and 4, and session 5 after the review).
+
+The ledger checks sort rows by id, because SQL returns rows in no fixed order: before that, a run could fail "every wrong release is recorded and ignored" on order alone while every expected outcome was there.
 
 Watch the clock on its own (read-only, any database): `npm run smoke -- watch --seconds 60`.
 
@@ -230,8 +259,27 @@ Regenerate after every schema change. With `spacetime.json` present, a `spacetim
 - A real `mint_voice_token` with the key, calls (`claim_call`, `report_call_status`) on Maincloud, the two-minute idle pause on Maincloud, and a republish while a scan is running.
 - The web app and the real agent sidecar against `say-when-dev` (their own workflows).
 - The adversarial review's rules (`docs/spacetime.md` section 13) are tested in the suite and the 17-check smoke passed on them, but the call and idle rules have not run on Maincloud, and the last two fixes (section 13 rows 20 and 21) had no second-model review.
+- `say-when-demo`: no device, agent or web page has connected to it yet. Only its routes and anonymous SQL were read after the publish, and nothing was written to it except by `ensure_timers` (which wrote no rows).
+- Module v2 (section 14): the call rules (the 12 s claim window and its timer, `held`, an ended call's reason), `agent_consent` and a late word-timing report from an earlier session have not run on Maincloud; the module tests cover them. The fixes for the second Codex round (the session id on `report_word_timings`, Module-written reads only, the agent key guard) had no third review.
 
 ## Review notes for client builders
+
+### Module v2 (`docs/spacetime.md` section 14)
+
+Regenerate or copy the bindings first (`npm run bindings` in `web/`; the agent and telemetry load `bindings/agent` directly): the rows of `board_calls`, `board_errands` and `call_queue` grew, and the SDK reads rows one after another, so an old copy misreads those views after the publish.
+
+- **Session-scoped board views.** `board_events` is `pipeline_event` and `board_session_ledger` is `board_ledger`, each with the board session's rows only (the active session, kept after it ends). Same row types, so a dashboard can swap them in and drop its own session filter. The unscoped table and view are still there.
+- **A select step means a pick.** `q<id>:select` is written only for a pick, with counts `optionId`, `rank` and `pass`. None of these, no pick, stopped, cancelled and failed write no select step; read `scan_state.outcome` (or the question's outcome on `public_board`), and a failed question's `plan` error step.
+- **One speak step per read.** Key `s<session>:read:<step_seq>`, actor `Module`, status `started`, label `reading option` or `yes or no prompt`, counts `optionId` (0 for the prompt), `rank` (0 for the prompt), `pass`, `stepSeq`, `durationMs`, `estimated`.
+- **Word timings.** The station calls `report_word_timings(session_id, step_seq, option_id, starts_ms, ends_ms)` for a read: the active session (`scan_state.session_id`), the `step_seq` the read began at, its option (0 for a yes or no prompt), and whole milliseconds into the clip, 1 to 100 words, in order, each end at or after its start and at most 30000. A report for an earlier read of the same session still lands; one row per read, and a repeat changes nothing. The board reads them from `board_word_timings` by `event_id` (the read's `pipeline_event` id). Numbers only, never the words.
+- **Agent event keys.** `agent_progress` refuses an `event_key` under a prefix the module writes (`listen:`, `q<n>:`, `e<n>:`, `c<n>:`, `s<n>:`). The sidecar's keys start with the job id.
+- **The pick stays.** `scan_state.picked_option_id` and `picked_rank` stay when a picked scan is paused, resumed or its session ends. A pause during the veto still cancels the pick.
+- **Calls on the board.** `board_calls` adds `option_id`, `readback_done_at`, `confirm_opens_at`, `confirm_closes_at`, `confirm_gesture_id`, `stop_gesture_id` and `held`; `board_errands` adds `option_id`. `held` means the Dialer put the contact on hold: say "Calls to <name> are on hold until someone checks." (the name is `contact_name`, "Contact" with sharing off).
+- **Ended calls keep their reason.** An `ended` report's listed reason code (`opt_out_hold`, `hold_file_error`) and its sentence are stored now; any other code on an ended call is dropped.
+- **A stale CONFIRM cannot dial.** `call_queue` adds `confirmed_at`. `claim_call` throws `confirm expired` once the CONFIRM is 12 s old (final: never retry), and a call nobody claimed by then is Stopped with `confirm_expired` ("Too much time passed after the confirm. No call was made.").
+- **Consent for the agent.** `agent_consent` gives an Agent one row, `{ session_id, memory_allowed, web_search_allowed }`, the consent it works under now; forget the kept conversation as soon as `memory_allowed` is false.
+
+### The adversarial review (section 13)
 
 The review (`docs/spacetime.md` section 13) changed a few things a client can see:
 
