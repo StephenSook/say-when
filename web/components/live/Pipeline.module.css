@@ -52,6 +52,8 @@
   font-size: var(--text-title);
   font-weight: var(--weight-strong);
   line-height: var(--leading-tight);
+  /* Never split a step name mid-word; the body allows break-word only for long URLs. */
+  overflow-wrap: normal;
 }
 
 .tool {
@@ -165,6 +167,24 @@
 
 .linkDone .linkLabel {
   color: var(--fg);
+}
+
+/*
+ * 1101 to 1399 px (a 1280 px laptop or projector): narrower links and a slightly smaller step
+ * name keep all six names whole on one line. Wider screens keep the full 72 px links and 20 px names.
+ */
+@media (min-width: 1101px) and (max-width: 1399px) {
+  .item {
+    flex-basis: 60px;
+  }
+
+  .link {
+    width: 60px;
+  }
+
+  .name {
+    font-size: clamp(15px, 1.4vw, var(--text-title));
+  }
 }
 
 /* Under 1100 px: top to bottom, the counts on the links (docs/ui.md). */

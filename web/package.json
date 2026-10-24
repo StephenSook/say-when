@@ -11,7 +11,8 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "next typegen && tsc --noEmit",
-    "test": "tsx --test test/*.test.ts"
+    "test": "tsx --test test/*.test.ts",
+    "bindings": "node scripts/sync-bindings.mjs"
   },
   "dependencies": {
     "next": "16.4.3",

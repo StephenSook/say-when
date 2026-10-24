@@ -19,8 +19,10 @@
  *   measured offset (lib/data/clock-offset.ts), so countdowns and running times stay right even when
  *   the two clocks disagree (docs/spacetime.md 2.1).
  *
- * The table mapping lives in lib/data/spacetime-bindings.ts. Until that file is wired to the
- * generated bindings, it exports null and this source reports Offline with the reason 'no-bindings'.
+ * The subscriptions live in lib/data/spacetime-bindings.ts (the generated bindings in
+ * lib/data/module_bindings) and the row mapping in lib/data/spacetime-map.ts. A bindings file that
+ * exports nothing is Offline with the reason 'no-bindings'; a bindings chunk that does not download is
+ * Offline with the reason 'network'.
  */
 import type { DbConnectionBuilder, DbConnectionImpl, RowTypedQuery } from 'spacetimedb';
 import { createClockOffset, shiftRows } from './clock-offset';
@@ -244,8 +246,9 @@ export function createSpacetimeSource(settings: SpacetimeSettings, deps: Spaceti
           connect();
         },
         (error: unknown) => {
+          // The bindings exist; their chunk did not download (a dropped network or a stale page).
           if (!running || startId !== attemptId) return;
-          goOffline('no-bindings', errorText(error));
+          goOffline('network', `Could not load the SpacetimeDB client: ${errorText(error) ?? 'unknown error'}`);
         },
       );
     },

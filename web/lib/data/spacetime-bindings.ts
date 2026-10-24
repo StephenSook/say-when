@@ -1,68 +1,86 @@
 /**
- * The bridge between the generated SpacetimeDB bindings and the dashboard's types.
+ * The bridge between the generated SpacetimeDB bindings and the dashboard's types. lib/data/spacetime.ts loads this
+ * file with a dynamic import, so the SDK and the bindings ship in their own chunk and load only in SpacetimeDB mode.
  *
- * TODO(PLAN 1.1 and 1.2): not wired yet, so this exports null. With null, the SpacetimeDB source reports
- * Offline ("This build has no SpacetimeDB tables wired in yet") and never falls back to the sample replay.
- * The module in spacetime/ and its generated web bindings in spacetime/bindings/web now exist (docs/spacetime.md
- * section 11); the module is not published yet, so nothing here could be checked against a live database.
+ * The bindings in ./module_bindings are a byte-for-byte copy of spacetime/bindings/web, made by `npm run bindings`
+ * after every `spacetime generate`, so this app builds on its own (CI and the host install only web/).
+ * test/module-bindings.test.ts fails while the copy differs from the generated folder.
  *
- * The module design is docs/spacetime.md. Section 7.1 lists what each screen subscribes to and maps
- * every `DataRows` field onto its tables and views; follow that table. In short:
+ * The dashboard is an anonymous reader (docs/spacetime.md 1.3): no token, no pairing, no reducer calls. It subscribes
+ * to what docs/spacetime.md 7.1 lists for the dashboards, through the generated query builder:
  *
- *   questions       public_board (text is null while the board does not share question text)
- *   pipelineEvents  pipeline_event merged with board_payloads by event_id
- *   options         public_board[].options (text from label)
- *   errands         board_errands       calls  board_calls (contact name only)
- *   commands        board_ledger rows with kind 'gesture'
- *   scan            scan_state plus the scanned question in public_board
- *   safety          scan_state.pause_reason: HeadsetOff is 'headset_off'; Stop, Idle, Operator and
- *                   HeadsetLost are 'paused'
+ *   config          the board's session (active_session_id) and the sharing toggle
+ *   scan_state      the scan clock and the pause reason
+ *   pipeline_event  the content-free steps
+ *   device_status   whether the station is online, for the headset chip
+ *   public_board    the last 20 questions with their scanned options ("Question N", "Option N" with sharing off)
+ *   board_payloads  the content behind the steps, only while sharing is on
+ *   board_errands   errands          board_calls  calls (a contact name only)
+ *   board_ledger    the ledger; its gesture rows are the command events
  *
- * Steps once the module in spacetime/ is published:
- *
- * 1. Generate the web bindings (docs/spacetime.md 7.1), then point `./module_bindings` at them through a
- *    path alias or a copy:
- *
- *      spacetime generate --no-config --lang typescript --out-dir spacetime/bindings/web --module-path spacetime
- *
- * 2. Replace the export below with something like this, using the generated accessor names:
- *
- *      import { DbConnection, tables } from './module_bindings';
- *      import { isCommand, pipelineDetail, sortedBy, timestampToMillis } from './spacetime-map';
- *      import { maskPhoneNumbers } from '../format';
- *      import type { SpacetimeBindings } from './spacetime';
- *
- *      export const bindings: SpacetimeBindings<DbConnection> = {
- *        builder: () => DbConnection.builder(),
- *        queries: [tables.config, tables.scanState, tables.pipelineEvent, tables.deviceStatus,
- *                  tables.publicBoard, tables.boardPayloads, tables.boardErrands, tables.boardCalls, tables.boardLedger],
- *        watch(conn, onChange) {
- *          const watched = [conn.db.scanState, conn.db.pipelineEvent, conn.db.publicBoard, ...];
- *          const onRow = () => onChange();
- *          for (const table of watched) { table.onInsert(onRow); table.onDelete(onRow); table.onUpdate?.(onRow); }
- *          return () => { for (const table of watched) { table.removeOnInsert(onRow); table.removeOnDelete(onRow); table.removeOnUpdate?.(onRow); } };
- *        },
- *        read(conn) { ...map each source as in docs/spacetime.md 7.1... },
- *      };
- *
- *    Rules for the mapping:
- *    - Generated TypeScript bindings use camelCase. Timestamps arrive as `Timestamp` objects: use timestampToMillis.
- *      Enum tags map to snake case (`AwaitingConfirm` to `awaiting_confirm`).
- *    - Commands are the D11 names only (YES, NO, CONFIRM, STOP, HEADSET_OFF). isCommand drops anything else.
- *    - Build each event's detail with pipelineDetail(stage, status, row.detail, row.countsJson, payloadJson):
- *      it keeps the producer's label, renames counts that would hide a payload list, fills a failed
- *      step's error, and strips memory text from retrieve hits (shared memory text arrives only as `sharedText`).
- *    - Keep row times on the server clock. The source moves them onto the laptop clock (lib/data/clock-offset.ts).
- *    - Map `call_request.cancel_requested` to `cancelRequested` if board_calls carries it.
- *    - Never map a phone number into these types. Run transcript lines through maskPhoneNumbers.
- *    - Register audio-critical callbacks once at connect, not in a render (docs/spacetime.md 7.1).
- *
- * 3. Set NEXT_PUBLIC_SPACETIMEDB_HOST (for example https://maincloud.spacetimedb.com, or
- *    http://localhost:3000 for `spacetime start`) and NEXT_PUBLIC_SPACETIMEDB_DB (the database name) in
- *    web/.env.local and in the deployed project's settings.
- *
- * 4. Run `npm run typecheck` and `npm run build` in web/, open /conversation and check the chip says Live.
+ * `cue_event` (chimes and toasts) is left out: no screen shows a cue yet, and an event table has no rows to read.
+ * lib/data/spacetime-map.ts `boardRows` maps every row onto lib/data/types.ts.
  */
+import { DbConnection, tables } from './module_bindings';
 import type { SpacetimeBindings } from './spacetime';
+import { boardRows } from './spacetime-map';
 
-export const bindings: SpacetimeBindings | null = null;
+/** The row callbacks every subscribed table offers at runtime (spacetimedb 2.13.0 `TableCacheImpl`). */
+interface WatchedTable {
+  onInsert(callback: () => void): void;
+  removeOnInsert(callback: () => void): void;
+  onDelete(callback: () => void): void;
+  removeOnDelete(callback: () => void): void;
+  onUpdate(callback: () => void): void;
+  removeOnUpdate(callback: () => void): void;
+}
+
+function watchedTables(conn: DbConnection): WatchedTable[] {
+  const db = conn.db;
+  return [db.config, db.scanState, db.pipelineEvent, db.deviceStatus, db.publicBoard, db.boardPayloads, db.boardErrands, db.boardCalls, db.boardLedger];
+}
+
+export const bindings: SpacetimeBindings<DbConnection> = {
+  builder: () => DbConnection.builder(),
+  queries: [
+    tables.config,
+    tables.scanState,
+    tables.pipelineEvent,
+    tables.deviceStatus,
+    tables.publicBoard,
+    tables.boardPayloads,
+    tables.boardErrands,
+    tables.boardCalls,
+    tables.boardLedger,
+  ],
+  watch(conn, onChange) {
+    const changed = () => onChange();
+    const watched = watchedTables(conn);
+    for (const table of watched) {
+      table.onInsert(changed);
+      table.onDelete(changed);
+      table.onUpdate(changed);
+    }
+    return () => {
+      for (const table of watched) {
+        table.removeOnInsert(changed);
+        table.removeOnDelete(changed);
+        table.removeOnUpdate(changed);
+      }
+    };
+  },
+  read(conn) {
+    const db = conn.db;
+    return boardRows({
+      config: [...db.config.iter()],
+      scanStates: [...db.scanState.iter()],
+      pipelineEvents: [...db.pipelineEvent.iter()],
+      devices: [...db.deviceStatus.iter()],
+      questions: [...db.publicBoard.iter()],
+      payloads: [...db.boardPayloads.iter()],
+      errands: [...db.boardErrands.iter()],
+      calls: [...db.boardCalls.iter()],
+      ledger: [...db.boardLedger.iter()],
+    });
+  },
+};

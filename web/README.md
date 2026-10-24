@@ -13,9 +13,21 @@ npm run dev         # http://localhost:3000 plays the sample replay
 npm run typecheck   # next typegen, then tsc; works on a fresh clone
 npm test            # node:test through tsx
 npm run build
+npm run bindings    # after every spacetime generate: copies spacetime/bindings/web into lib/data/module_bindings
 ```
 
 Routes: `/live`, `/agents`, `/conversation` (also `/`), and `/partner` for the phone. Keys 1, 2 and 3 switch the dashboard screens.
+
+### Against the live database
+
+The dashboard reads the SpacetimeDB module on Maincloud as an anonymous viewer: no token, no pairing, no login. Neither setting is a secret. Put them in `web/.env.local` for `next dev`, or pass them to the build, since Next.js writes `NEXT_PUBLIC_` values into the bundle at build time; on a host, set them in the project's settings.
+
+```bash
+NEXT_PUBLIC_SPACETIMEDB_HOST=https://maincloud.spacetimedb.com NEXT_PUBLIC_SPACETIMEDB_DB=say-when-dev npm run build
+npx next start -p 3217     # http://localhost:3217/conversation shows say-when-dev, chip Live
+```
+
+The board shows the module's current or most recent session (`config.active_session_id`). To watch it move, run the module's smoke test from `spacetime/` (owner only, made-up content, about 90 s; `spacetime/README.md`, "Smoke test"); it starts a session, plays a station and a stand-in agent, ends the session and revokes its devices. `?replay=1` still plays the bannered sample replay on the same build.
 
 ## Where the rows come from
 
@@ -25,7 +37,14 @@ Routes: `/live`, `/agents`, `/conversation` (also `/`), and `/partner` for the p
 | Sample replay | `next dev`, or `?replay=1` on any build | A loop of sample rows under the banner "Sample replay, not live data". The chip says Replay, never Live. |
 | None | a production build with no settings, or `?replay=0` | "Not connected. No live data source is set up for this page." |
 
-The SpacetimeDB module (`spacetime/`) and its generated web bindings (`spacetime/bindings/web`) exist, but this app is not wired to them yet, so a build with settings reports Offline: "This build has no SpacetimeDB tables wired in yet". `lib/data/spacetime-bindings.ts` lists the steps to wire them in. Once wired, the source moves every row time from the server's clock onto the laptop's clock (`lib/data/clock-offset.ts`), so countdowns stay right when the two clocks disagree.
+### How the live rows are wired
+
+- **Bindings.** `lib/data/module_bindings` is a byte-for-byte copy of the module's generated web bindings (`spacetime/bindings/web`), so this app builds on its own: CI and the host install only `web/`. `npm run bindings` makes the copy, and `test/module-bindings.test.ts` fails while the two folders differ. Never edit the copy.
+- **Subscriptions** (`lib/data/spacetime-bindings.ts`, loaded with a dynamic import, so the SDK ships in its own chunk): the public tables `config`, `scan_state`, `pipeline_event` and `device_status`, and the anonymous views `public_board`, `board_payloads`, `board_errands`, `board_calls` and `board_ledger` (`docs/spacetime.md` 7.1). `cue_event` is left out: no screen shows a cue yet.
+- **Mapping** (`lib/data/spacetime-map.ts`, `boardRows`): only the board's session (`config.active_session_id`); ids as strings; times in ms, moved onto the laptop's clock by the source (`lib/data/clock-offset.ts`); enum tags in snake case. Questions and options from `public_board`; pipeline steps from `pipeline_event` with their shared payloads from `board_payloads`; errands and calls from their board views; commands from the ledger's gesture rows (an ignored one carries its reason in words); the scan clock from `scan_state`; the headset state from the scan's pause reason and the station's `device_status`.
+- **Where the module and the screens differ, the mapping bridges it:** the module writes a select step for every scan ending ("picked", "none of these", "no pick", ...), while a select step on the screens is the pick, so only "picked" steps are kept (a scan that ended without a pick shows from the scan row) and each gets its option id and kind from the question's options by rank. Errand and call rows carry no option id, so they get their question's picked option. A speak step gets its channel from its label ("aloud" or the earpiece). After a pause or the end of a session the scan row forgets its pick, so the question's pick fills it in. "Headset on" needs a live session with its station online and healthy; otherwise the chip says "Headset unknown".
+- **Privacy.** Words reach the screens only while the room's sharing toggle is on (the module's views hold them back otherwise): with it off the screens show "Question N", "Option N", "Form" and "Contact". Memory text arrives only as `sharedText`. Free text goes through `maskPhoneNumbers`, and only http and https addresses become links or images.
+- **Connection states are real:** Connecting until the subscription applies, then Live; a dropped socket shows Reconnecting with the last rows, Offline after 10 s, and Live again once the SDK's own reconnect replays the subscription.
 
 The replay script is loaded with a dynamic import inside the effect that starts it, so it ships in its own chunk and a deployed page downloads it only with `?replay=1`.
 
@@ -92,7 +111,7 @@ Hooks, from `@/lib/data/provider`:
 | `useHref(path)` | an in-app link that keeps `?replay` |
 | `useNow(ms)` (`@/lib/use-now`) | a shared ticking clock, 0 during the server render |
 
-Pure helpers: `lib/data/derive.ts` (`latestByStage`, `latestOfStage`, `timeToFirstOption`, `optionUnderCursor`, `pickedOption`, `litCommand`, `spokenReply`, `wordIndexAt`, `scanProgress`, `hitDisplay`), `lib/status.ts` (`STATUS_WORDS`, `statusFromPipeline`, `statusFromErrand`, `statusFromCall`, `callStatusWord`), `lib/commands.ts` (`COMMAND_INFO`, `commandChipLabel`, `commandWord`) and `lib/format.ts` (times, counts, `maskPhoneNumbers`). For the SpacetimeDB mapping: `lib/data/spacetime-map.ts` (`pipelineDetail` builds an event's detail from its label, `counts_json` and the board's payload) and `lib/data/clock-offset.ts`.
+Pure helpers: `lib/data/derive.ts` (`latestByStage`, `latestOfStage`, `timeToFirstOption`, `optionUnderCursor`, `pickedOption`, `litCommand`, `spokenReply`, `wordIndexAt`, `scanProgress`, `hitDisplay`), `lib/status.ts` (`STATUS_WORDS`, `statusFromPipeline`, `statusFromErrand`, `statusFromCall`, `callStatusWord`), `lib/commands.ts` (`COMMAND_INFO`, `commandChipLabel`, `commandWord`) and `lib/format.ts` (times, counts, `maskPhoneNumbers`). For the SpacetimeDB mapping: `lib/data/spacetime-map.ts` (`boardRows` turns the subscribed tables and views into these rows; `pipelineDetail` and `liveDetail` build an event's detail from its label, `counts_json` and the board's payload) and `lib/data/clock-offset.ts`.
 
 Shared parts, from `@/components/ui`: `StatusMark`, `StepList`, `Row` and `RowList`, `Chip`, `Card`, `Bar`, `Spinner`, `StatusLine`, `TextLink`, `Dialog`, `PillInput` and the icons. From `@/components/shell`: `ConnectionChip`, `ConnectionGate`, `HeadsetChip`, `safetySentence`.
 
@@ -102,9 +121,13 @@ Rules for every screen: one clear focus with big labels, the docs/ui.md words, w
 
 `npm test` runs the unit tests and `test/writing.test.ts`, which walks every source file in web/ and fails on an en or em dash, a curly quote, a word from the team's blocklist, the old product name, a retired command name, or a claim that goes beyond the two headset signals. `test/screen-models.test.ts` runs every screen's model over a loop of the sample replay, every 100 ms, and fails on a broken value on screen or on option words reaching the partner's phone.
 
+For the live data: `test/board-map.test.ts` maps rows built with the generated binding types (`test/board-fixtures.ts`) and runs the screen models over them; `test/board-recorded.test.ts` does the same over rows recorded from `say-when-dev` during a smoke session (`test/fixtures/board-recorded.json`: made-up smoke content, identities zeroed); `test/spacetime.test.ts` checks the real bindings file subscribes to the nine tables and views and watches and reads each one; `test/module-bindings.test.ts` checks the bindings copy.
+
 ## Limits
 
 - Fields marked "draft" in `lib/data/types.ts` are the screens' needs, not yet in PLAN.md. PLAN 1.2 locks the contracts. The types already include the changes `docs/spacetime.md` section 7.1 asks of the web app.
-- Live SpacetimeDB data has never reached these screens: the generated bindings are not wired in, and the module is not published yet.
-- The word marked in the option being read uses Cartesia's word timings when a speak event carries them, as the sample replay does. The module does not publish per-option timings yet, so on live data the mark is an estimate spread over the clip, and its tooltip says so.
-- "Hold to ask" on the phone opens the microphone and shows its level, but speech to text is not wired in, so the note under it says nothing is sent.
+- Checked against `say-when-dev` on Oct 24 with the module's smoke test (sessions 6 and 7, made-up content, no wearer): Live data, Agents, Conversation and the phone followed the scan, the picks, an errand from preview to sent, the room's sharing toggle and the dead-man pause. Not seen live yet: a call (the module's call rows), a real agent sidecar's search and recall steps with their payloads, and a real station reporting clips.
+- `board_calls` has no read-back time, confirm window or command ids, so a call's countdown bar and "stopped by" line cannot show on live data. `board_errands` and `board_calls` have no option id; the mapping takes the question's pick.
+- With the room's sharing toggle off, "Said out loud" stays at "Nothing yet": the reply's words are private, and the screen has no words for "a reply was said, its words are not shared".
+- The word marked in the option being read uses Cartesia's word timings when a speak event carries them, as the sample replay does. The module does not publish per-option timings yet, so on live data the mark is an estimate spread over the clip, and its tooltip says so. Likewise the Speaking step reads "An option": the module writes one speak step per scan, not one per option.
+- "Hold to ask" on the phone opens the microphone and shows its level, but speech to text is not wired in, so the note under it says nothing is sent. The dashboard is a reader: it calls no reducer, so the phone cannot send a typed question either.

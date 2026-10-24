@@ -3,8 +3,8 @@
  *
  * DRAFT until PLAN 1.2 locks the contracts. These follow "Shared Contracts" in PLAN.md (D11 command
  * names) and fill the gaps listed at the end of docs/ui.md ("Contract gaps for PLAN 1.2"). Anything
- * marked "draft" is not in PLAN.md yet. When the SpacetimeDB module lands, lib/data/spacetime-bindings.ts
- * maps the generated rows onto these types, so the screens do not change.
+ * marked "draft" is not in PLAN.md yet. lib/data/spacetime-map.ts (`boardRows`) maps the live module's
+ * generated rows onto these types, so the screens read live rows and the sample replay alike.
  *
  * Conventions:
  * - Times on rows (`at`, `askedAt`, `createdAt`, ...) are epoch milliseconds.
