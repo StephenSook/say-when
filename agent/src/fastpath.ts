@@ -11,7 +11,17 @@
 import type { OptionInput } from './types.js';
 
 /** Why a question did or did not take the fast path. Fixed codes, safe to log: they never quote the question. */
-export type YesNoReason = 'smoke_tag' | 'auxiliary' | 'empty' | 'no_auxiliary' | 'or_choice' | 'wh_word' | 'statement' | 'several_sentences';
+export type YesNoReason =
+    | 'smoke_tag'
+    | 'auxiliary'
+    | 'empty'
+    | 'no_auxiliary'
+    | 'choice'
+    | 'wh_word'
+    | 'errand_verb'
+    | 'request'
+    | 'statement'
+    | 'several_sentences';
 
 export interface YesNoVerdict {
     yesNo: boolean;
@@ -25,15 +35,29 @@ export const AUXILIARIES: readonly string[] = [
 
 /** The smoke tests' marker for a yes or no question (spacetime/scripts/watch-scan.ts, docs/station.md 7.5). */
 const SMOKE_TAG = '[yes_no]';
-/** A choice between things: "tea or coffee". */
-const CHOICE = /\b(or|either|versus|vs)\b/;
+/** A choice between things: "tea or coffee", "pick between them", "would you rather". */
+const CHOICE = /\b(or|either|versus|vs|between|rather|choose|chooses|chose|chosen|choosing|pick|picks|picked|picking)\b/;
+/**
+ * Anything the planner could turn into an errand or a call option ("Can you send the care team a request?"). A stock
+ * Yes would only say "Yes." and do nothing, so these always go to the planner.
+ */
+const ERRAND_VERB =
+    /\b(call|calls|called|calling|phone|phones|phoned|phoning|text|texts|texted|texting|message|messages|messaged|messaging|email|emails|emailed|emailing|send|sends|sent|sending|book|books|booked|booking|order|orders|ordered|ordering|remind|reminds|reminded|reminding|reminder|schedule|schedules|scheduled|scheduling|buy|buys|bought|buying|fill|fills|filled|filling)\b/;
+/** "Can you", "could you", "would you", "will you": the start of a request unless the verb is on REQUEST_SAFE. */
+const REQUEST_START = /^(can|could|would|will) you\b/;
+/**
+ * The only verbs after "can/could/would/will you" that keep a question yes or no: what the person hears, feels,
+ * wants or is able to do. Anything else ("would you mind", "could you hand me", "can you please") reads as a request.
+ */
+const REQUEST_SAFE: readonly string[] = ['hear', 'see', 'feel', 'like', 'want', 'need', 'remember', 'understand', 'sleep', 'breathe', 'eat', 'drink', 'swallow', 'taste', 'smell', 'move', 'come', 'be'];
 /** A wh-question, also an embedded one ("Do you know where it is?"). */
 const WH_WORD = /\b(what|whats|when|where|which|who|whom|whose|why|how|whether)\b/;
 /** A sentence break followed by more words: two questions, or a question and a statement. */
 const SENTENCE_BREAK = /[.?!;]\s+\S/;
 
 /**
- * True only for a question that begins with an auxiliary verb, offers no "or" choice, has no wh-word, is one
+ * True only for a question that begins with an auxiliary verb, offers no choice ("or", "between", "pick"), has no
+ * wh-word, names no errand or call verb ("call", "send", "order"), is not a request ("could you hand me"), is one
  * sentence and does not end like a statement ("." or "!"); or for any question carrying the smoke tag.
  */
 export function classifyYesNo(question: string): YesNoVerdict {
@@ -48,8 +72,13 @@ export function classifyYesNo(question: string): YesNoVerdict {
     const body = text.replace(/^[^a-z]+/, '');
     const first = /^[a-z]+(?:'[a-z]+)?/.exec(body)?.[0] ?? '';
     if (!AUXILIARIES.includes(first)) return { yesNo: false, reason: 'no_auxiliary' };
-    if (CHOICE.test(body)) return { yesNo: false, reason: 'or_choice' };
+    if (CHOICE.test(body)) return { yesNo: false, reason: 'choice' };
     if (WH_WORD.test(body)) return { yesNo: false, reason: 'wh_word' };
+    if (ERRAND_VERB.test(body)) return { yesNo: false, reason: 'errand_verb' };
+    if (REQUEST_START.test(body)) {
+        const verb = /^[a-z]+ you ([a-z]+)/.exec(body)?.[1] ?? '';
+        if (!REQUEST_SAFE.includes(verb)) return { yesNo: false, reason: 'request' };
+    }
     const end = body.replace(/["'“”)\s]+$/, '');
     if (end.endsWith('.') || end.endsWith('!')) return { yesNo: false, reason: 'statement' };
     if (SENTENCE_BREAK.test(end)) return { yesNo: false, reason: 'several_sentences' };

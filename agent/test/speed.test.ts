@@ -10,7 +10,11 @@ import { ApifyHttpError } from '@say-when/apify-client';
 import { readConfig } from '../src/config.js';
 import { classifyYesNo, stockYesNo } from '../src/fastpath.js';
 import { validatePlan } from '../src/planner/validate.js';
-import { fourOptions, harness, LEON, memoryHit, reply, settle, waitFor, yesNo, type Harness } from './helpers.js';
+import type { CallContact } from '../src/types.js';
+import { fourOptions, harness, memoryHit, reply, settle, waitFor, yesNo, type Harness } from './helpers.js';
+
+/** A consented call contact for the draft tests. */
+const CARE_TEAM: CallContact = { contactId: 'care_team', name: 'the care team' };
 
 let open: Harness | null = null;
 afterEach(async () => {
@@ -36,10 +40,8 @@ const POSITIVES = [
     'Could you sleep last night?',
     'Will you come with us?',
     'Would you like to go outside?',
-    'Should I call the nurse?',
     'Shall we go?',
     'Have you eaten yet?',
-    'Has Leon called?',
     'Had you met her before?',
     'May I sit here?',
     'Might you be cold?',
@@ -47,13 +49,36 @@ const POSITIVES = [
     '“Are you cold?”',
     'Smoke test: tired? [yes_no]',
     'Smoke test: tea or coffee? [yes_no]',
+    // True yes or no questions that must stay fast after the request and errand rules (review round 1).
+    'Do you want water?',
+    'Are you cold?',
+    'Is the Berkeley Public Library open on Sunday?',
+    'Would you be cold outside?',
 ];
 
 const NEGATIVES: [string, string][] = [
     ['Tea or coffee?', 'no_auxiliary'],
-    ['Do you want tea or coffee?', 'or_choice'],
-    ['Would you rather walk, or take the bus?', 'or_choice'],
-    ['Do you want either one?', 'or_choice'],
+    ['Do you want tea or coffee?', 'choice'],
+    ['Would you rather walk, or take the bus?', 'choice'],
+    ['Do you want either one?', 'choice'],
+    // Review round 1: requests and choices the planner could turn into an option, never stock Yes and No.
+    ['Can you pick between tea and coffee?', 'choice'],
+    ['Would you rather stay inside?', 'choice'],
+    ['Can you choose one for me?', 'choice'],
+    ['Could you call the pharmacy about the request?', 'errand_verb'],
+    ['Can you send the care team a request?', 'errand_verb'],
+    ['Should I call the nurse?', 'errand_verb'],
+    ['Has the nurse called?', 'errand_verb'],
+    ['Do you want to order lunch?', 'errand_verb'],
+    ['Did you text your mom?', 'errand_verb'],
+    ['Do you want me to book a table?', 'errand_verb'],
+    ['Can you remind me later?', 'errand_verb'],
+    ['Will you fill out the form?', 'errand_verb'],
+    ['Was the email sent?', 'errand_verb'],
+    ['Would you mind opening the window?', 'request'],
+    ['Can you please help me?', 'request'],
+    ['Could you hand me the cup?', 'request'],
+    ['Will you tell the nurse?', 'request'],
     ['What do you want for lunch?', 'no_auxiliary'],
     ['Do you know where the station is?', 'wh_word'],
     ['Can you tell me how you feel?', 'wh_word'],
@@ -160,7 +185,17 @@ describe('the yes or no fast path', () => {
         assert.equal(h.api.calls.length, 1, 'Claude writes the options');
         assert.equal(h.db.publishes.at(-1)?.answerMode, 'pick');
         assert.ok(h.db.publishes.every((p) => p.options.every((o) => o.provenance !== 'stock')));
-        assert.match(h.log.text(), /yes or no fast path not taken job=\d+ why=or_choice/);
+        assert.match(h.log.text(), /yes or no fast path not taken job=\d+ why=choice/);
+    });
+
+    it('leaves a request for an errand or a call to the planner, so the person can pick the action itself', async () => {
+        const h = start(harness({ yesNoFast: true }));
+        h.api.reply(fourOptions());
+        const jobId = h.db.addOptionsJob({ questionText: 'Can you send the care team a request?' });
+        await waitFor(() => h.db.job(jobId)?.status === 'done');
+        assert.equal(h.api.calls.length, 1, 'Claude writes the options');
+        assert.ok(h.db.publishes.every((p) => p.options.every((o) => o.provenance !== 'stock')));
+        assert.match(h.log.text(), /yes or no fast path not taken job=\d+ why=errand_verb/);
     });
 
     it('never answers a menu turn with stock options', async () => {
@@ -340,7 +375,7 @@ describe('draft first', () => {
     });
 
     it('offers no call in a draft', async () => {
-        const h = start(harness({ draftFirst: true, contacts: [LEON] }));
+        const h = start(harness({ draftFirst: true, contacts: [CARE_TEAM] }));
         const release = h.search.hold();
         h.api.reply(picks(['Sure.', 'Not today.']));
         h.api.reply(picks(['Yes, the cafe opens at 9.', 'Not today.'], [['w1'], []]));
