@@ -24,6 +24,7 @@ import type {
   PipelineEvent as BoardPipelineRow,
   ScanState as BoardScanRow,
   SourceRef as BoardSourceRef,
+  WordTiming as BoardWordTimingRow,
 } from './module_bindings/types';
 import {
   COMMANDS,
@@ -52,6 +53,7 @@ import {
   type Stage,
   type StageDetailMap,
   type TranscriptLine,
+  type WordTiming,
 } from './types';
 
 /** A SpacetimeDB Timestamp (spacetimedb 2.13.0 `Timestamp.toMillis(): bigint`) as epoch milliseconds. */
@@ -194,15 +196,16 @@ export function sortedBy<T>(rows: Iterable<T>, time: (row: T) => number): T[] {
 
 /**
  * Every row the anonymous dashboard subscribes to, as the generated bindings give them. The board views cover the
- * board's session only (`config.active_session_id`, kept after the session ends); the public tables and the ledger
- * hold every session, so `boardRows` keeps the board session's rows and drops the rest.
+ * board's session only (`config.active_session_id`, kept after the session ends). `scan_state` is a public table with
+ * one row per session, so `boardRows` keeps the board session's row and drops the rest; it filters the session views
+ * the same way, which costs nothing and keeps a recording of the older unscoped rows right.
  */
 export interface BoardSnapshot {
   /** `config`: one row, id 0. */
   config: readonly BoardConfig[];
   /** `scan_state`: one row per session. */
   scanStates: readonly BoardScanRow[];
-  /** `pipeline_event`: content-free steps, every session. */
+  /** `board_events` (module v2): the board session's content-free steps, the `pipeline_event` rows of that session. */
   pipelineEvents: readonly BoardPipelineRow[];
   /** `device_status`: whether the station is online. */
   devices: readonly BoardDevice[];
@@ -214,8 +217,14 @@ export interface BoardSnapshot {
   errands: readonly BoardErrand[];
   /** `board_calls`: the board session's calls. Never a phone number. */
   calls: readonly BoardCall[];
-  /** `board_ledger`: the content-free ledger, every session. Its gesture rows are the command events. */
+  /** `board_session_ledger` (module v2): the board session's content-free ledger. Its gesture rows are the command events. */
   ledger: readonly BoardLedgerRow[];
+  /**
+   * `board_word_timings` (module v2): the station's word timings for the board session's reads, keyed by the read's
+   * speak step (`event_id`). Numbers only, so they show whatever the sharing toggle says. Absent in recordings made
+   * before module v2.
+   */
+  wordTimings?: readonly BoardWordTimingRow[];
 }
 
 type Micros = { readonly microsSinceUnixEpoch: bigint };
@@ -401,8 +410,8 @@ function maskPayloadText(value: unknown, key: string | null, depth: number): unk
 /**
  * One live pipeline event's detail: `pipelineDetail` over the label, `counts_json` and the shared payload, then
  * - phone numbers hidden in the payload's free text;
- * - ids in a payload (`optionId`, `errandId`, `callId`, numbers in the module's JSON) as the screens' string ids,
- *   with 0 meaning none;
+ * - ids in a payload or the counts (`optionId`, `errandId`, `callId`, numbers in the module's JSON) as the screens'
+ *   string ids, with 0 meaning none; a `rank` of 0 means none too (a read of the yes or no prompt has no option);
  * - the errand or call an errand or call step belongs to, from its event key (`e<id>:...`, `c<id>:...`,
  *   docs/spacetime.md 11.4), since those steps carry no payload;
  * - the audio channel of a speak step from its label when no shared payload says it: "aloud" is the reply said out
@@ -422,6 +431,7 @@ export function liveDetail<S extends Stage>(
       else delete detail[key];
     }
   }
+  if (typeof detail.rank === 'number' && !(detail.rank > 0)) delete detail.rank;
   const owner = /^([ec])(\d+):/.exec(row.eventKey);
   if (owner && stage === 'errand' && owner[1] === 'e' && detail.errandId === undefined) detail.errandId = owner[2];
   if (owner && stage === 'call' && owner[1] === 'c' && detail.callId === undefined) detail.callId = owner[2];
@@ -429,6 +439,32 @@ export function liveDetail<S extends Stage>(
     detail.channel = detail.label === 'aloud' ? 'aloud' : 'earpiece';
   }
   return detail as StageDetailMap[S];
+}
+
+/** No word ends later than this into its clip; the module refuses longer (docs/spacetime.md 14, `MAX_WORD_MS`). */
+const MAX_WORD_MS = 30_000;
+
+/**
+ * A `board_word_timings` row as word timings for one read: `starts_ms[i]` and `ends_ms[i]` are milliseconds into the
+ * clip for the i-th word. Numbers only, never the words (docs/spacetime.md 14). The module checks the same rules on
+ * the way in; this check keeps a malformed row off the word mark: null unless the two lists pair up, in order, each
+ * end at or after its start and at most 30 s into the clip.
+ */
+export function wordTimingsFromBoard(row: Pick<BoardWordTimingRow, 'startsMs' | 'endsMs'>): WordTiming[] | null {
+  const starts: unknown = row.startsMs;
+  const ends: unknown = row.endsMs;
+  if (!Array.isArray(starts) || !Array.isArray(ends) || starts.length === 0 || starts.length !== ends.length) return null;
+  const words: WordTiming[] = [];
+  let previous = 0;
+  for (let i = 0; i < starts.length; i++) {
+    const startMs: unknown = starts[i];
+    const endMs: unknown = ends[i];
+    if (typeof startMs !== 'number' || typeof endMs !== 'number' || !Number.isFinite(startMs) || !Number.isFinite(endMs)) return null;
+    if (startMs < previous || endMs < startMs || endMs > MAX_WORD_MS) return null;
+    previous = startMs;
+    words.push({ startMs, endMs });
+  }
+  return words;
 }
 
 function liveEvent<S extends Stage>(stage: S, status: PipelineStatus, row: BoardPipelineRow, payloadJson: string | undefined): PipelineEvent {
@@ -485,9 +521,10 @@ function optionsFromBoard(row: BoardQuestion): AnswerOption[] {
 }
 
 /**
- * The option YES picked on a question, when it is of `kind`. An errand or a call row is made the moment the person
- * picks its option, and that pick ends the question's scan (docs/spacetime.md 4.1 and 10.1 item 8), so the
- * question's picked option is the row's own option. The board views leave the option id off those rows.
+ * The option YES picked on a question, when it is of `kind`: the fallback for errand and call rows recorded before
+ * module v2, which carry no option id. An errand or a call row is made the moment the person picks its option, and
+ * that pick ends the question's scan (docs/spacetime.md 4.1 and 10.1 item 8), so the question's pick is the row's own
+ * option. Since module v2 the rows name it themselves (`option_id`, docs/spacetime.md 14), and that wins.
  */
 function pickedOptionOfKind(question: BoardQuestion | undefined, kind: BoardOption['kind']['tag']): string | null {
   if (!question || question.pickedOptionId === undefined) return null;
@@ -495,16 +532,21 @@ function pickedOptionOfKind(question: BoardQuestion | undefined, kind: BoardOpti
   return picked && picked.kind.tag === kind ? idText(picked.optionId) : null;
 }
 
+/** A string column the row may lack (a recording made before the module added it): trimmed, null when empty. */
+function optionalCode(value: string | undefined): string | null {
+  return typeof value === 'string' ? value.trim() || null : null;
+}
+
 /**
- * A `board_errands` row as an errand. Its option id comes from its question's pick (`pickedOptionOfKind`), and its
- * read-back, result and screenshot are empty unless sharing is on.
+ * A `board_errands` row as an errand. Its option id is the row's own `option_id` (module v2), and its read-back,
+ * result and screenshot are empty unless sharing is on.
  */
 function errandFromBoard(row: BoardErrand, question: BoardQuestion | undefined): Errand {
   const shared = row.textShared;
   return {
     id: idText(row.errandId),
     questionId: optionalId(row.questionId),
-    optionId: pickedOptionOfKind(question, 'Errand'),
+    optionId: optionalId(row.optionId) ?? pickedOptionOfKind(question, 'Errand'),
     form: shownText(row.formTitle) ?? 'Form',
     status: ERRAND_STATUSES[row.status.tag],
     previewDigest: row.previewDigest.trim() || null,
@@ -513,6 +555,7 @@ function errandFromBoard(row: BoardErrand, question: BoardQuestion | undefined):
     confirmationText: shared ? shownText(row.confirmationText) : null,
     screenshotUrl: shared ? webUrl(row.screenshotUrl) : null,
     confirmClosesAt: timestampToMillis(row.confirmClosesAt),
+    confirmOpensAt: timestampToMillis(row.confirmOpensAt),
     reason: shownText(row.reason),
     reasonCode: row.reasonCode.trim() || null,
     confirmCommandId: row.confirmGestureId.trim() || null,
@@ -527,6 +570,16 @@ function errandFromBoard(row: BoardErrand, question: BoardQuestion | undefined):
   };
 }
 
+/**
+ * A call's end reason as words, or null. The call agent reports Cartesia's own end reason, which is a code such as
+ * `api_cancelled` or `dial_no_answer` (cartesia/src/call.ts), not a sentence; `result` already says the same thing
+ * in the screens' words, so a bare code is dropped rather than shown as a sentence.
+ */
+function endReasonWords(value: string): string | null {
+  const text = shownText(value);
+  return text === null || /^[a-z0-9]+(?:_[a-z0-9]+)*$/.test(text) ? null : text;
+}
+
 function transcriptLine(callId: string, line: BoardCallLine, index: number): TranscriptLine | null {
   if (line.role !== 'assistant' && line.role !== 'recipient') return null;
   const text = shownText(line.text);
@@ -535,9 +588,10 @@ function transcriptLine(callId: string, line: BoardCallLine, index: number): Tra
 }
 
 /**
- * A `board_calls` row as a call: a contact name only ("Contact" with sharing off), never a number. Its option id
- * comes from its question's pick; the row carries no read-back time, confirm window or command ids, so those stay
- * null.
+ * A `board_calls` row as a call: a contact name only ("Contact" with sharing off), never a number. Since module v2
+ * (docs/spacetime.md 14) the row names its option, the read-back time, the confirm window, the CONFIRM that released
+ * it, the command that stopped or hung it up, and whether the contact is on hold; all of it is content-free. A row
+ * recorded before v2 lacks them: its option comes from its question's pick and the rest stays null.
  */
 function callFromBoard(row: BoardCall, question: BoardQuestion | undefined): CallRequest {
   const shared = row.textShared;
@@ -546,19 +600,22 @@ function callFromBoard(row: BoardCall, question: BoardQuestion | undefined): Cal
   return {
     id,
     questionId: optionalId(row.questionId),
-    optionId: pickedOptionOfKind(question, 'Call'),
+    optionId: optionalId(row.optionId) ?? pickedOptionOfKind(question, 'Call'),
     contactName: shownText(row.contactName) ?? 'Contact',
     scriptDigest: row.scriptDigest.trim() || null,
     readBackText: shared ? shownText(row.readBackText) : null,
     status: CALL_STATUSES[row.status.tag],
     result: CALL_RESULTS.has(result) ? (result as CallResult) : null,
-    endReason: shared ? shownText(row.endReason) : null,
+    endReason: shared ? endReasonWords(row.endReason) : null,
     reason: shownText(row.reason),
+    reasonCode: optionalCode(row.reasonCode),
+    held: row.held === true,
     consentOnFile: row.consentOnFile,
-    readAloudAt: null,
-    confirmClosesAt: null,
-    confirmCommandId: null,
-    stopCommandId: null,
+    readAloudAt: timestampToMillis(row.readbackDoneAt),
+    confirmClosesAt: timestampToMillis(row.confirmClosesAt),
+    confirmOpensAt: timestampToMillis(row.confirmOpensAt),
+    confirmCommandId: optionalCode(row.confirmGestureId),
+    stopCommandId: optionalCode(row.stopGestureId),
     cancelRequested: row.cancelRequested,
     createdAt: millis(row.createdAt),
     confirmedAt: timestampToMillis(row.confirmedAt),
@@ -594,8 +651,9 @@ function commandsFromLedger(ledger: readonly BoardLedgerRow[]): CommandEvent[] {
 }
 
 /**
- * The scan clock from `scan_state`, plus the scanned question in `public_board`: once a scan ends picked, the
- * module may clear the scan's own picked id (`end_session` does), and the question still names the pick.
+ * The scan clock from `scan_state`. Since module v2 a scan that ended Picked keeps its `picked_option_id` through a
+ * pause, a resume and the end of the session (docs/spacetime.md 14), so the pick survives a pause. For rows written
+ * before v2, which cleared it, the scanned question in `public_board` still names the pick.
  */
 function scanFromBoard(row: BoardScanRow, questions: readonly BoardQuestion[]): ScanState {
   const outcome = row.outcome ? SCAN_OUTCOMES[row.outcome.tag] : null;
@@ -642,19 +700,21 @@ function safetyFromBoard(scan: BoardScanRow | undefined, devices: readonly Board
 }
 
 /**
- * The module writes one select step when a scan ends, whatever the ending: "picked", "none of these", "no pick",
- * "stopped", "cancelled" or "failed" (docs/spacetime.md 11.4). On the screens a select step is the pick itself, as
- * in the sample replay, so a step with any other label would read as a pick of "an option". Only "picked" steps are
- * kept: a scan that ended without a pick shows from the scan row's outcome and the speak step "scan ended", and a
- * failed question from its plan step.
+ * A select step is the pick itself, and the module says so explicitly: since module v2 it writes a select step only
+ * for a pick, with the option's id, rank and pass in the counts even while sharing is off (docs/spacetime.md 14);
+ * none of these, no pick, stopped, cancelled and failed write none, and stay on the scan row's outcome, the question
+ * and the plan step. The label is not read. A select step that names no option is not a pick and is dropped: only a
+ * row written before v2 can be one (its counts named only the pass).
  */
-function isShownStep(row: BoardPipelineRow): boolean {
-  return row.stage !== 'select' || row.detail.trim() === 'picked';
+function isPickStep(stage: Stage, detail: Record<string, unknown>): boolean {
+  if (stage !== 'select') return true;
+  // `liveDetail` has already made a positive option id a string id and dropped a zero one.
+  return (typeof detail.optionId === 'string' && detail.optionId !== '') || (typeof detail.rank === 'number' && detail.rank > 0);
 }
 
 /**
- * A pick's option id and kind, from the question's options by rank when no shared payload names it. Ids and kinds
- * are not content, so the screens know which option was picked while sharing is off.
+ * A pick's kind, and its id when only the rank names it, from the question's options. Ids and kinds are not content,
+ * so the screens know which option was picked while sharing is off.
  */
 function withPickedOption(detail: StageDetailMap['select'], question: BoardQuestion | undefined): StageDetailMap['select'] {
   if (!question) return detail;
@@ -684,14 +744,27 @@ export function boardRows(board: BoardSnapshot): DataRows {
   const scan = board.scanStates.find((row) => row.sessionId === sessionId);
   const payloads = new Map<bigint, string>();
   for (const row of board.payloads) payloads.set(row.eventId, row.payloadJson);
+  const timings = new Map<bigint, WordTiming[]>();
+  for (const row of ofSession(board.wordTimings ?? [])) {
+    const words = wordTimingsFromBoard(row);
+    if (words !== null) timings.set(row.eventId, words);
+  }
 
   const pipelineEvents: PipelineEvent[] = [];
   for (const row of byTime(ofSession(board.pipelineEvents), (event) => event.at, (event) => event.id)) {
     const stage = row.stage;
     const status = asPipelineStatus(row.status);
-    if (!isStage(stage) || status === null || !isShownStep(row)) continue;
+    if (!isStage(stage) || status === null) continue;
     const event = liveEvent(stage, status, row, payloads.get(row.id));
-    pipelineEvents.push(event.stage === 'select' ? { ...event, detail: withPickedOption(event.detail, questionById.get(row.questionId)) } : event);
+    if (!isPickStep(event.stage, event.detail as Record<string, unknown>)) continue;
+    if (event.stage === 'select') {
+      pipelineEvents.push({ ...event, detail: withPickedOption(event.detail, questionById.get(row.questionId)) });
+    } else if (event.stage === 'speak' && event.detail.words === undefined && timings.has(row.id)) {
+      // The station's word timings for this read (docs/spacetime.md 14): the word mark on Live conversation.
+      pipelineEvents.push({ ...event, detail: { ...event.detail, words: timings.get(row.id) } });
+    } else {
+      pipelineEvents.push(event);
+    }
   }
 
   return {

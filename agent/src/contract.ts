@@ -68,7 +68,7 @@ export interface ViewSpec {
     fields: readonly string[];
 }
 
-/** The per-identity views the sidecar subscribes to (docs/spacetime.md section 5). */
+/** The per-identity views the sidecar subscribes to (docs/spacetime.md sections 5 and 14). */
 export const VIEWS = {
     agentQueue: {
         wire: 'agent_queue',
@@ -102,7 +102,25 @@ export const VIEWS = {
     },
     callQueue: {
         wire: 'call_queue',
-        fields: ['call_id', 'status', 'claim_attempt', 'claimed_by_me', 'request_id', 'contact_id', 'script_digest', 'cancel_requested', 'cancel_reason'],
+        // `confirmed_at` (module v2, docs/spacetime.md 14.1 row 6): the CONFIRM's time by the module's clock. A call
+        // must not follow its CONFIRM by long (src/calls.ts), and `claim_call` refuses one 12 s old or older.
+        fields: [
+            'call_id',
+            'status',
+            'claim_attempt',
+            'claimed_by_me',
+            'request_id',
+            'contact_id',
+            'script_digest',
+            'cancel_requested',
+            'cancel_reason',
+            'confirmed_at',
+        ],
+    },
+    agentConsent: {
+        // Module v2 (docs/spacetime.md 14.1 row 8): one row for an Agent, the consent it works under now.
+        wire: 'agent_consent',
+        fields: ['session_id', 'memory_allowed', 'web_search_allowed'],
     },
 } as const satisfies Record<string, ViewSpec>;
 
@@ -112,10 +130,14 @@ export type ViewName = keyof typeof VIEWS;
 export const DEVICE_STATUS = { wire: 'device_status', fields: ['identity', 'role'] } as const;
 
 /**
- * The public call board (docs/spacetime.md section 5), read for one thing: when the person confirmed a call, by the
- * module's clock. `call_queue` does not carry that time, and a call must not follow its CONFIRM by long (src/calls.ts).
+ * Event keys the module writes under (`listen:`, `q<n>:`, `e<n>:`, `c<n>:`, `s<n>:`), which `agent_progress` refuses
+ * since module v2 (spacetime/src/agent.ts MODULE_KEY_RE). The sidecar's keys start with the job id, so they never
+ * match; test/contract.test.ts checks this against the module source.
  */
-export const BOARD_CALLS = { wire: 'board_calls', fields: ['call_id', 'confirmed_at'] } as const;
+export const MODULE_EVENT_KEY = /^(listen:|[qecs][0-9]+:)/;
+
+/** How long after the CONFIRM `claim_call` still accepts a call (spacetime/src/consent.ts CALL_CLAIM_MS). */
+export const CALL_CLAIM_MS = 12_000;
 
 /** Vocabulary the module checks (docs/spacetime.md 2.9 and spacetime/src/util.ts). */
 export const DETAIL_PATTERN = /^[a-z0-9 :_-]{1,120}$/;

@@ -4,6 +4,9 @@
 //   aborted, and anything it still tries to write is refused as a stale attempt.
 // - `errand_queue`: hands Confirmed errands to the ErrandRunner.
 // - `call_queue`: hands Confirmed calls and cancel requests to the CallRunner.
+// - `agent_consent` (module v2): whenever it shows memory consent off, the kept conversation is forgotten, with or
+//   without a job running, and also when a revocation is followed at once by a new grant (onMemoryOff). A lost
+//   connection or a fresh load of the views forgets it too, since a revocation during the gap may leave no trace.
 // Failures are reported with `agent_fail` and a sentence for the person; the job never hangs.
 
 import { CallRunner } from './calls.js';
@@ -67,6 +70,9 @@ export class Orchestrator {
     private ticking = false;
     private again = false;
     private unsubscribe: (() => void) | null = null;
+    private watchingConsent = false;
+    /** The view load (`syncCount`) the last look saw, or null before the first look. */
+    private sync: number | null = null;
 
     constructor(
         private readonly deps: JobDeps,
@@ -83,6 +89,12 @@ export class Orchestrator {
     }
 
     start(): void {
+        // A memory revocation forgets the kept conversation at once, even one followed by a new grant before the
+        // next look at the views. Never removed (stop() included): forgetting is always safe.
+        if (!this.watchingConsent) {
+            this.watchingConsent = true;
+            this.deps.db.onMemoryOff(() => this.deps.conversation.clear());
+        }
         this.unsubscribe = this.deps.db.onChange(() => this.tick());
         this.tick();
     }
@@ -140,6 +152,13 @@ export class Orchestrator {
         const { db, log } = this.deps;
         let jobs: readonly AgentQueueRow[] = [];
         try {
+            // The module's consent, read on every look: memory off, or no readable consent while the views are
+            // current, means nothing the person said is kept. So does a fresh load of the views (a reconnect): a
+            // revocation during the gap may have been given again before it, leaving nothing in agent_consent.
+            const sync = db.syncCount();
+            const reloaded = this.sync !== null && sync !== this.sync;
+            this.sync = sync;
+            if (reloaded || (db.isCurrent() && db.agentConsent()?.memoryAllowed !== true)) this.deps.conversation.clear();
             jobs = db.agentQueue();
             this.errands.reconcile(db.errandQueue());
             this.calls.reconcile(db.callQueue());

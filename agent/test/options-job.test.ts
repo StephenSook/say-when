@@ -590,6 +590,7 @@ describe('consent revoked while a job runs', () => {
         await waitFor(() => h.db.job(remember)?.status === 'cancelled', 3_000, 'the revocation cancelled the Remember job');
         assert.ok(await h.orchestrator.idle(3_000));
         // Consent is given again; the next question must not carry what was kept before the revocation.
+        h.db.grantConsent('memory');
         const later = h.db.addOptionsJob({ questionText: 'Are you cold?', askedBy: alex });
         await waitFor(() => h.db.job(later)?.status === 'done');
         assert.doesNotMatch(h.api.userMessage(1), /a little sleepy|Are you tired/);
@@ -615,6 +616,7 @@ describe('consent revoked while a job runs', () => {
         const first = h.db.addOptionsJob({ questionText: 'Are you tired?', askedBy: alex });
         await waitFor(() => h.db.job(first)?.status === 'done');
         // A later question under memory consent: what was kept before the withdrawal is gone.
+        h.db.grantConsent('memory');
         const later = h.db.addOptionsJob({ questionText: 'Are you cold?', askedBy: alex });
         await waitFor(() => h.db.job(later)?.status === 'done');
         assert.doesNotMatch(h.api.userMessage(1), /Are you tired/);
@@ -641,6 +643,7 @@ describe('consent revoked while a job runs', () => {
         const remember = h.db.addRememberJob({ questionText: 'Are you tired?', replyText: 'Yes, a little sleepy.', askedBy: alex });
         await waitFor(() => h.db.job(remember)?.status === 'cancelled', 3_000, 'cancelled during the write');
         assert.ok(await h.orchestrator.idle(3_000));
+        h.db.grantConsent('memory');
         const later = h.db.addOptionsJob({ questionText: 'Are you cold?', askedBy: alex });
         await waitFor(() => h.db.job(later)?.status === 'done');
         assert.doesNotMatch(h.api.userMessage(1), /a little sleepy|Are you tired/);
@@ -654,6 +657,107 @@ describe('consent revoked while a job runs', () => {
         await waitFor(() => h.db.attempted.some((a) => a.name === 'agentProgress'), 3_000, 'the step started');
         assert.ok(await h.orchestrator.idle(3_000));
         assert.equal(h.memory.written.length, 0);
+    });
+});
+
+describe('consent as the module shows it (agent_consent, module v2)', () => {
+    const alex = 'a1'.repeat(32);
+
+    /** Keeps one spoken reply in the conversation with Alex, and waits until no job runs. */
+    async function keepOneReply(h: Harness): Promise<void> {
+        const remember = h.db.addRememberJob({ questionText: 'Want tea?', replyText: 'Yes, with lemon please.', askedBy: alex });
+        await waitFor(() => h.db.job(remember)?.status === 'done');
+        assert.ok(await h.orchestrator.idle(3_000));
+    }
+
+    it('keeps the conversation when consent does not change (the control for the tests below)', async () => {
+        const h = start(harness());
+        await keepOneReply(h);
+        h.api.reply(yesNo());
+        const later = h.db.addOptionsJob({ questionText: 'Are you cold?', askedBy: alex });
+        await waitFor(() => h.db.job(later)?.status === 'done');
+        assert.match(h.api.userMessage(0), /with lemon/);
+    });
+
+    it('forgets the conversation when memory consent is revoked and given again with no job running', async () => {
+        const h = start(harness());
+        await keepOneReply(h);
+        // Revoked and given again before the sidecar looks at the views: no job's flags ever show it.
+        h.db.revokeConsent('memory');
+        h.db.grantConsent('memory');
+        h.api.reply(yesNo());
+        const later = h.db.addOptionsJob({ questionText: 'Are you cold?', askedBy: alex });
+        await waitFor(() => h.db.job(later)?.status === 'done');
+        assert.equal(h.db.job(later)?.memoryAllowed, true, 'the new job has memory consent');
+        assert.doesNotMatch(h.api.userMessage(0), /with lemon|Want tea/);
+    });
+
+    it('forgets the conversation when memory consent is revoked and given again while the connection is down', async () => {
+        const h = start(harness());
+        await keepOneReply(h);
+        h.db.setConnected(false);
+        // Neither change reaches the sidecar: when the views come back, agent_consent shows memory allowed.
+        h.db.revokeConsent('memory');
+        h.db.grantConsent('memory');
+        h.db.setConnected(true);
+        h.api.reply(yesNo());
+        const later = h.db.addOptionsJob({ questionText: 'Are you cold?', askedBy: alex });
+        await waitFor(() => h.db.job(later)?.status === 'done');
+        assert.doesNotMatch(h.api.userMessage(0), /with lemon|Want tea/);
+    });
+
+    it('forgets the conversation on a fresh load of the views, even if no memory-off call ever came', async () => {
+        const h = harness();
+        // The orchestrator's own rule, without the db's memory-off calls (the adapter makes them on a disconnect).
+        h.db.onMemoryOff = () => () => undefined;
+        start(h);
+        await keepOneReply(h);
+        h.db.setConnected(false);
+        h.db.revokeConsent('memory');
+        h.db.grantConsent('memory');
+        h.db.setConnected(true);
+        await settle(20);
+        h.api.reply(yesNo());
+        const later = h.db.addOptionsJob({ questionText: 'Are you cold?', askedBy: alex });
+        await waitFor(() => h.db.job(later)?.status === 'done');
+        assert.doesNotMatch(h.api.userMessage(0), /with lemon|Want tea/);
+    });
+
+    it('forgets the conversation at the next look once agent_consent shows memory off, with no job running', async () => {
+        const h = start(harness());
+        await keepOneReply(h);
+        // Only the view changes (no listener call, no job): the next look at the views forgets.
+        h.db.consent.memory = false;
+        h.db.grantConsent('web_search');
+        await settle(20);
+        h.db.grantConsent('memory');
+        h.api.reply(yesNo());
+        const later = h.db.addOptionsJob({ questionText: 'Are you cold?', askedBy: alex });
+        await waitFor(() => h.db.job(later)?.status === 'done');
+        assert.doesNotMatch(h.api.userMessage(0), /with lemon|Want tea/);
+    });
+
+    it('uses no memory and sends no search when agent_consent cannot be read, whatever the job flags say', async () => {
+        const h = start(harness());
+        h.db.consentRowShown = false;
+        h.api.reply(fourOptions());
+        const jobId = h.db.addOptionsJob({ questionText: 'Is the pharmacy on Bancroft still open?', memoryAllowed: true, webSearchAllowed: true });
+        await waitFor(() => h.db.job(jobId)?.status === 'done', 3_000, 'published');
+        assert.equal(h.memory.recalls.length, 0, 'Moss was not asked');
+        assert.equal(h.search.calls.length, 0, 'the question never went out');
+        assert.match(h.api.userMessage(), /Memory items: none\./);
+        assert.match(h.api.userMessage(), /Web results: none\./);
+    });
+
+    it('stops memory when agent_consent shows it off before the job\'s own flag does', async () => {
+        const h = start(harness());
+        h.db.consent.memory = false;
+        h.api.reply(fourOptions());
+        const jobId = h.db.addOptionsJob({ questionText: 'Is the pharmacy on Bancroft still open?', memoryAllowed: true });
+        await waitFor(() => h.db.job(jobId)?.status === 'done', 3_000, 'published');
+        assert.equal(h.memory.recalls.length, 0);
+        assert.ok(!h.api.userMessage().includes(SECRET.privateMemory));
+        assert.equal(h.search.calls.length, 1, 'web search consent still holds (the control)');
     });
 });
 

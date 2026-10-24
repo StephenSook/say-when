@@ -42,4 +42,11 @@ export default __t.row({
   get transcript() {
     return __t.array(BoardCallLine);
   },
+  optionId: __t.u64().name("option_id"),
+  readbackDoneAt: __t.option(__t.timestamp()).name("readback_done_at"),
+  confirmOpensAt: __t.option(__t.timestamp()).name("confirm_opens_at"),
+  confirmClosesAt: __t.option(__t.timestamp()).name("confirm_closes_at"),
+  confirmGestureId: __t.string().name("confirm_gesture_id"),
+  stopGestureId: __t.string().name("stop_gesture_id"),
+  held: __t.bool(),
 });

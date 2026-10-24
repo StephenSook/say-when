@@ -12,9 +12,10 @@
 // bindings plug in at one place, src/db/bindings.ts. Every view, reducer and field name comes from
 // src/contract.ts, which test/contract.test.ts checks against docs/spacetime.md and the generated bindings.
 
-import { BOARD_CALLS, camel, DEVICE_STATUS, REDUCERS, VIEWS, type ViewName } from '../contract.js';
+import { camel, DEVICE_STATUS, REDUCERS, VIEWS, type ViewName } from '../contract.js';
 import type { Logger } from '../log.js';
 import type {
+    AgentConsent,
     AgentQueueRow,
     CallQueueRow,
     CallStatus,
@@ -113,6 +114,11 @@ export class SpacetimeAgentDb implements AgentDb {
     private notifyQueued = false;
     private readonly contractWarned = new Set<string>();
     private readonly onRow = () => this.notify();
+    private readonly memoryOffListeners = new Set<() => void>();
+    // `agent_consent` rows are read as they arrive, not once per burst, so a revocation followed at once by a new
+    // grant is still seen (onInsert passes (ctx, row), onUpdate (ctx, oldRow, row)).
+    private readonly onConsentInsert = (...args: unknown[]) => this.consentRowArrived(args[1]);
+    private readonly onConsentUpdate = (...args: unknown[]) => this.consentRowArrived(args[2]);
     private closed = false;
     private syncs = 0;
 
@@ -181,6 +187,9 @@ export class SpacetimeAgentDb implements AgentDb {
                     this.connected = false;
                     this.applied = false;
                     if (!this.closed) log.warn('SpacetimeDB connection lost; reconnecting', { error: error?.name ?? 'none' });
+                    // A revocation during the outage may never show (one given again before the reconnect leaves
+                    // nothing behind in agent_consent), so losing the connection counts as memory off.
+                    this.memoryOff();
                 });
             builder.build();
         });
@@ -232,20 +241,16 @@ export class SpacetimeAgentDb implements AgentDb {
         return this.read('callQueue', toCallQueueRow);
     }
 
-    callConfirmedAt(callId: bigint): number | null {
-        const table = this.table(BOARD_CALLS.wire);
-        if (!table) return null;
-        for (const row of table.iter()) {
-            try {
-                const r = row as Record<string, unknown>;
-                if (u64Of(field(r, 'call_id')) === callId) return millisOf(optionalField(r, 'confirmed_at'));
-            } catch (error) {
-                // Not known, so the call is refused rather than dialed on a guess.
-                this.warnContract(BOARD_CALLS.wire, error);
-                return null;
-            }
-        }
-        return null;
+    agentConsent(): AgentConsent | null {
+        // One row for an Agent. Anything else (none, several, or one that does not match the contract) is unknown,
+        // and unknown never counts as consent.
+        const rows = this.read('agentConsent', toAgentConsent);
+        return rows.length === 1 ? (rows[0] ?? null) : null;
+    }
+
+    onMemoryOff(listener: () => void): () => void {
+        this.memoryOffListeners.add(listener);
+        return () => this.memoryOffListeners.delete(listener);
     }
 
     onChange(listener: () => void): () => void {
@@ -294,7 +299,7 @@ export class SpacetimeAgentDb implements AgentDb {
 
     private subscribe(conn: ConnectionLike): void {
         // Views appear like tables in subscriptions (docs/spacetime.md 7.1). Untested against Maincloud.
-        const queries = [VIEWS.agentQueue.wire, VIEWS.errandQueue.wire, VIEWS.callQueue.wire, DEVICE_STATUS.wire, BOARD_CALLS.wire].map(
+        const queries = [VIEWS.agentQueue.wire, VIEWS.errandQueue.wire, VIEWS.callQueue.wire, VIEWS.agentConsent.wire, DEVICE_STATUS.wire].map(
             (wire) => `SELECT * FROM ${wire}`,
         );
         conn.subscriptionBuilder()
@@ -308,23 +313,31 @@ export class SpacetimeAgentDb implements AgentDb {
             .onError(() => {
                 this.applied = false;
                 this.options.log.error('the agent subscription was refused; check the view names and that this identity is paired as Agent');
+                // Without the subscription a revocation cannot reach the sidecar: memory counts as off.
+                this.memoryOff();
             })
             .subscribe(queries);
     }
 
     private watch(conn: ConnectionLike): void {
-        if (!this.tableOf(conn, BOARD_CALLS.wire)) {
-            this.options.log.error('a view is missing from the generated bindings; confirmed calls will be refused', { view: BOARD_CALLS.wire });
-        }
         for (const view of Object.values(VIEWS)) {
             const table = this.tableOf(conn, view.wire);
             if (!table) {
-                this.options.log.error('a view is missing from the generated bindings', { view: view.wire });
+                this.options.log.error(
+                    view.wire === VIEWS.agentConsent.wire
+                        ? 'a view is missing from the generated bindings; memory and web search count as not allowed'
+                        : 'a view is missing from the generated bindings',
+                    { view: view.wire },
+                );
                 continue;
             }
             table.onInsert(this.onRow);
             table.onDelete?.(this.onRow);
             table.onUpdate?.(this.onRow);
+            if (view.wire === VIEWS.agentConsent.wire) {
+                table.onInsert(this.onConsentInsert);
+                table.onUpdate?.(this.onConsentUpdate);
+            }
         }
     }
 
@@ -335,6 +348,35 @@ export class SpacetimeAgentDb implements AgentDb {
             table.removeOnInsert(this.onRow);
             table.removeOnDelete?.(this.onRow);
             table.removeOnUpdate?.(this.onRow);
+            if (view.wire === VIEWS.agentConsent.wire) {
+                table.removeOnInsert(this.onConsentInsert);
+                table.removeOnUpdate?.(this.onConsentUpdate);
+            }
+        }
+    }
+
+    /**
+     * An `agent_consent` row as it arrives. Memory consent off, or a row that cannot be read, tells every onMemoryOff
+     * listener at once: forgetting is the safe side. This runs inside the SDK's message handler, so nothing is thrown.
+     */
+    private consentRowArrived(row: unknown): void {
+        let off = true;
+        try {
+            off = !toAgentConsent(row as Record<string, unknown>).memoryAllowed;
+        } catch (error) {
+            this.warnContract(VIEWS.agentConsent.wire, error);
+        }
+        if (off) this.memoryOff();
+    }
+
+    /** Tells every onMemoryOff listener. Called from SDK callbacks, so a listener's error goes no further. */
+    private memoryOff(): void {
+        for (const listener of [...this.memoryOffListeners]) {
+            try {
+                listener();
+            } catch {
+                // A listener's failure must not reach the SDK; forgetting is all the listeners do.
+            }
         }
     }
 
@@ -536,5 +578,15 @@ export function toCallQueueRow(row: Record<string, unknown>): CallQueueRow {
         scriptDigest: strOf(field(row, 'script_digest')),
         cancelRequested: boolOf(field(row, 'cancel_requested')),
         cancelReason: strOf(field(row, 'cancel_reason')),
+        // Optional: unset reads as unknown, and an unknown CONFIRM time never dials (src/calls.ts).
+        confirmedAtMs: millisOf(optionalField(row, 'confirmed_at')),
+    };
+}
+
+export function toAgentConsent(row: Record<string, unknown>): AgentConsent {
+    return {
+        sessionId: u64Of(field(row, 'session_id')),
+        memoryAllowed: boolOf(field(row, 'memory_allowed')),
+        webSearchAllowed: boolOf(field(row, 'web_search_allowed')),
     };
 }

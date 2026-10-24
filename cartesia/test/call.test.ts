@@ -238,10 +238,11 @@ const request = (clock: { t: number }, extra: Record<string, unknown> = {}) => (
 const count = (calls: FetchCall[], method: string, suffix: string) => calls.filter((c) => c.method === method && new URL(c.url).pathname.endsWith(suffix)).length;
 const dials = (calls: FetchCall[]) => calls.filter((c) => c.method === 'POST' && new URL(c.url).pathname === '/agents/calls').length;
 
+/** Prepares the call and places it for a CONFIRM made just now. */
 function prepareAndPlace(h: ReturnType<typeof harness>, extra: Record<string, unknown> = {}) {
     const prepared = h.dialer.prepare(request(h.clock, extra));
     assert.ok(prepared.ok, 'prepare should pass');
-    const placed = h.dialer.place(prepared.call.requestId, prepared.call.digest);
+    const placed = h.dialer.place(prepared.call.requestId, prepared.call.digest, h.clock.t);
     assert.ok(placed.ok, 'place should pass');
     return { prepared: prepared.call, handle: placed.handle };
 }
@@ -377,7 +378,7 @@ describe('Dialer guards', () => {
         const h = harness();
         const prepared = h.dialer.prepare(request(h.clock));
         assert.ok(prepared.ok);
-        const placed = h.dialer.place('call_1', '0000000000000000');
+        const placed = h.dialer.place('call_1', '0000000000000000', h.clock.t);
         assert.ok(!placed.ok && placed.refusal.code === 'digest_mismatch');
         assert.equal(h.fetch.calls.length, 0);
     });
@@ -469,7 +470,7 @@ describe('Dialer calls', () => {
         const again = h.dialer.prepare(request(h.clock, { errand: { title: 'Care team request', sentAt: MORNING - 60_000 } }));
         assert.ok(again.ok);
         assert.equal(again.call.digest, first.prepared.digest);
-        const placed = h.dialer.place(again.call.requestId, again.call.digest);
+        const placed = h.dialer.place(again.call.requestId, again.call.digest, h.clock.t);
         assert.ok(!placed.ok && placed.refusal.code === 'already_used');
         assert.equal(dials(h.fetch.calls), 1);
     });
@@ -479,7 +480,7 @@ describe('Dialer calls', () => {
         const first = prepareAndPlace(h);
         const second = h.dialer.prepare(request(h.clock, { requestId: 'call_2', errand: { title: 'Lunch order', sentAt: h.clock.t - 1000 } }));
         assert.ok(second.ok);
-        const placed = h.dialer.place('call_2', second.call.digest);
+        const placed = h.dialer.place('call_2', second.call.digest, h.clock.t);
         assert.ok(!placed.ok && placed.refusal.code === 'line_busy');
         await first.handle.done;
     });
@@ -715,8 +716,128 @@ describe('Dialer review fixes', () => {
     });
 });
 
+describe('the time of the CONFIRM', () => {
+    const ready = (h: ReturnType<typeof harness>) => {
+        const prepared = h.dialer.prepare(request(h.clock));
+        assert.ok(prepared.ok, 'prepare should pass');
+        return prepared.call;
+    };
+    const route = (calls: FetchCall[]) => calls.map((c) => `${c.method} ${new URL(c.url).pathname}`);
+
+    it('refuses at the confirm a CONFIRM more than 30 seconds old, before any network call or hold', async () => {
+        const h = harness();
+        const call = ready(h);
+        const stale = h.dialer.place(call.requestId, call.digest, h.clock.t - 30_001);
+        assert.deepEqual(stale, { ok: false, refusal: { code: 'expired', reason: REFUSALS.expired } });
+        assert.equal(h.fetch.calls.length, 0);
+        assert.deepEqual(h.journal.actions(), []);
+        assert.ok(h.events.some((event) => event.detail === 'refused: expired'));
+        // A stale CONFIRM does not use up the read-back: one exactly 30 seconds old still places it.
+        const placed = h.dialer.place(call.requestId, call.digest, h.clock.t - 30_000);
+        assert.ok(placed.ok);
+        assert.equal((await placed.handle.done).result, 'answered');
+        assert.equal(dials(h.fetch.calls), 1);
+    });
+
+    it('refuses a CONFIRM time it cannot check: missing, not a number, or more than 5 seconds ahead of its clock', () => {
+        for (const confirmedAt of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, undefined, null, '2026-10-24T18:00:00Z', 'ahead']) {
+            const h = harness();
+            const call = ready(h);
+            const value = confirmedAt === 'ahead' ? h.clock.t + 5_001 : confirmedAt;
+            const placed = h.dialer.place(call.requestId, call.digest, value as number);
+            assert.deepEqual(placed, { ok: false, refusal: { code: 'confirm_time_unknown', reason: REFUSALS.confirm_time_unknown } }, String(confirmedAt));
+            assert.equal(h.fetch.calls.length, 0, String(confirmedAt));
+            assert.deepEqual(h.journal.actions(), [], String(confirmedAt));
+        }
+        assert.equal(/\d/.test(REFUSALS.confirm_time_unknown), false);
+    });
+
+    it('counts the 30 seconds from the CONFIRM, not from place(): a late CONFIRM and a slow agent check place no call', async () => {
+        // The CONFIRM was 20 seconds before place(), and reading the published agent takes 11 seconds more.
+        const slowCheck: Scenario = { agentHook: ({ clock }) => void (clock.t += 11_000) };
+        const h = harness({ scenario: slowCheck });
+        const call = ready(h);
+        const placed = h.dialer.place(call.requestId, call.digest, h.clock.t - 20_000);
+        assert.ok(placed.ok);
+        const outcome = await placed.handle.done;
+        assert.equal(outcome.result, 'refused');
+        assert.equal(outcome.refusal?.code, 'expired');
+        assert.equal(outcome.dialed, false);
+        assert.equal(outcome.spoken, REFUSALS.expired);
+        assert.equal(dials(h.fetch.calls), 0);
+        // The same check after a CONFIRM made at place() dials.
+        const fresh = harness({ scenario: slowCheck });
+        const again = ready(fresh);
+        const ok = fresh.dialer.place(again.requestId, again.digest, fresh.clock.t);
+        assert.ok(ok.ok);
+        assert.equal((await ok.handle.done).result, 'answered');
+        assert.equal(dials(fresh.fetch.calls), 1);
+    });
+
+    it('checks the age of the CONFIRM again with nothing between that check and the dial request', async () => {
+        // 24 seconds old at place(); writing the pending hold, after every earlier check has passed, takes 6 seconds
+        // (exactly 30 seconds old at the dial: it dials) or 6.001 seconds (one millisecond too old: it does not).
+        for (const [writeMs, dialed] of [
+            [6_000, true],
+            [6_001, false],
+        ] as const) {
+            const box: { clock?: { t: number } } = {};
+            const h = harness({ hooks: { onSaveHold: (record) => void (record.action === 'pending' && box.clock && (box.clock.t += writeMs)) } });
+            box.clock = h.clock;
+            const call = ready(h);
+            const placed = h.dialer.place(call.requestId, call.digest, h.clock.t - 24_000);
+            assert.ok(placed.ok);
+            const outcome = await placed.handle.done;
+            assert.equal(dials(h.fetch.calls), dialed ? 1 : 0, String(writeMs));
+            if (dialed) {
+                assert.equal(outcome.result, 'answered');
+                continue;
+            }
+            assert.equal(outcome.refusal?.code, 'expired');
+            assert.equal(outcome.dialed, false);
+            assert.deepEqual(route(h.fetch.calls), ['GET /v1/agents/agent_test', 'GET /voices']);
+            // Nothing went out, so the pending hold is released and the contact is free.
+            assert.equal(outcome.held, false);
+            assert.deepEqual(h.journal.actions(), ['pending', 'release']);
+            assert.equal(h.journal.holds().size, 0);
+        }
+    });
+
+    it('accepts a CONFIRM up to 5 seconds ahead of its clock, and still allows at most 30 seconds from place()', async () => {
+        const h = harness();
+        const call = ready(h);
+        const placed = h.dialer.place(call.requestId, call.digest, h.clock.t + 5_000);
+        assert.ok(placed.ok);
+        assert.equal((await placed.handle.done).result, 'answered');
+        // A CONFIRM that reads 4 seconds ahead never stretches the window past 30 seconds after place().
+        const slow = harness({ scenario: { agentHook: ({ clock }) => void (clock.t += 30_001) } });
+        const again = ready(slow);
+        const late = slow.dialer.place(again.requestId, again.digest, slow.clock.t + 4_000);
+        assert.ok(late.ok);
+        assert.equal((await late.handle.done).refusal?.code, 'expired');
+        assert.equal(dials(slow.fetch.calls), 0);
+    });
+
+    it('refuses a window or a clock allowance that would loosen or switch off the check', () => {
+        for (const maxConfirmToDialMs of [Number.NaN, 0, -1, 30_001, Number.POSITIVE_INFINITY, '30000']) {
+            assert.throws(() => harness({ config: { maxConfirmToDialMs } as unknown as Partial<DialerConfig> }), /maxConfirmToDialMs/, String(maxConfirmToDialMs));
+        }
+        for (const confirmClockSkewMs of [Number.NaN, -1, 5_001, Number.POSITIVE_INFINITY, '0']) {
+            assert.throws(() => harness({ config: { confirmClockSkewMs } as unknown as Partial<DialerConfig> }), /confirmClockSkewMs/, String(confirmClockSkewMs));
+        }
+        // Tighter values are allowed and used.
+        const strict = harness({ config: { maxConfirmToDialMs: 10_000, confirmClockSkewMs: 0 } });
+        const call = ready(strict);
+        const ahead = strict.dialer.place(call.requestId, call.digest, strict.clock.t + 1);
+        assert.ok(!ahead.ok && ahead.refusal.code === 'confirm_time_unknown');
+        const old = strict.dialer.place(call.requestId, call.digest, strict.clock.t - 10_001);
+        assert.ok(!old.ok && old.refusal.code === 'expired');
+        assert.equal(strict.fetch.calls.length, 0);
+    });
+});
+
 const ANSWERED = { status: 'completed', end_reason: 'agent_hangup' };
-const heard = (transcript: { role: string; text: string }[]) => harness({ scenario: { statuses: [{ status: 'started', transcript }, ANSWERED] } });
+const heard =(transcript: { role: string; text: string }[]) => harness({ scenario: { statuses: [{ status: 'started', transcript }, ANSWERED] } });
 
 describe('Dialer round 2 fixes', () => {
     it('a STOP or HEADSET-OFF sent from the dialing update places no call', async () => {
@@ -973,7 +1094,7 @@ describe('holds', () => {
                 continue;
             }
             assert.ok(prepared.ok);
-            const placed = h.dialer.place(prepared.call.requestId, prepared.call.digest);
+            const placed = h.dialer.place(prepared.call.requestId, prepared.call.digest, h.clock.t);
             if (failAt === 2) {
                 assert.ok(!placed.ok && placed.refusal.code === 'hold_file_error');
                 continue;
@@ -1063,7 +1184,7 @@ describe('holds', () => {
         const ready = second.dialer.prepare(request(second.clock, { requestId: 'call_b' }));
         assert.ok(ready.ok);
         assert.equal((await prepareAndPlace(first).handle.done).held, true);
-        const placed = second.dialer.place(ready.call.requestId, ready.call.digest);
+        const placed = second.dialer.place(ready.call.requestId, ready.call.digest, second.clock.t);
         assert.ok(!placed.ok && placed.refusal.code === 'opt_out_hold');
         const fresh = later(second, 'leon', 'call_b2');
         assert.ok(!fresh.ok && fresh.refusal.code === 'opt_out_hold');

@@ -60,6 +60,7 @@ import ReplySpokenReducer from "./reply_spoken_reducer";
 import ReportCallStatusReducer from "./report_call_status_reducer";
 import ReportClipReadyReducer from "./report_clip_ready_reducer";
 import ReportReadbackDoneReducer from "./report_readback_done_reducer";
+import ReportWordTimingsReducer from "./report_word_timings_reducer";
 import RequestPairingReducer from "./request_pairing_reducer";
 import RevokeConsentReducer from "./revoke_consent_reducer";
 import RevokeDeviceReducer from "./revoke_device_reducer";
@@ -72,11 +73,15 @@ import * as MintVoiceTokenProcedure from "./mint_voice_token_procedure";
 import * as SmokeFetchProcedure from "./smoke_fetch_procedure";
 
 // Import all table schema definitions
+import AgentConsentRow from "./agent_consent_table";
 import AgentQueueRow from "./agent_queue_table";
 import BoardCallsRow from "./board_calls_table";
 import BoardErrandsRow from "./board_errands_table";
+import BoardEventsRow from "./board_events_table";
 import BoardLedgerRow from "./board_ledger_table";
 import BoardPayloadsRow from "./board_payloads_table";
+import BoardSessionLedgerRow from "./board_session_ledger_table";
+import BoardWordTimingsRow from "./board_word_timings_table";
 import CallQueueRow from "./call_queue_table";
 import ConfigRow from "./config_table";
 import CueEventRow from "./cue_event_table";
@@ -152,6 +157,13 @@ const tablesSchema = __schema({
       { name: 'scan_state_session_id_key', constraint: 'unique', columns: ['sessionId'] },
     ],
   }, ScanStateRow),
+  agentConsent: __table({
+    name: 'agent_consent',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, AgentConsentRow),
   agentQueue: __table({
     name: 'agent_queue',
     indexes: [
@@ -173,6 +185,13 @@ const tablesSchema = __schema({
     constraints: [
     ],
   }, BoardErrandsRow),
+  boardEvents: __table({
+    name: 'board_events',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, BoardEventsRow),
   boardLedger: __table({
     name: 'board_ledger',
     indexes: [
@@ -187,6 +206,20 @@ const tablesSchema = __schema({
     constraints: [
     ],
   }, BoardPayloadsRow),
+  boardSessionLedger: __table({
+    name: 'board_session_ledger',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, BoardSessionLedgerRow),
+  boardWordTimings: __table({
+    name: 'board_word_timings',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, BoardWordTimingsRow),
   callQueue: __table({
     name: 'call_queue',
     indexes: [
@@ -259,6 +292,7 @@ const reducersSchema = __reducers(
   __reducerSchema("report_call_status", ReportCallStatusReducer),
   __reducerSchema("report_clip_ready", ReportClipReadyReducer),
   __reducerSchema("report_readback_done", ReportReadbackDoneReducer),
+  __reducerSchema("report_word_timings", ReportWordTimingsReducer),
   __reducerSchema("request_pairing", RequestPairingReducer),
   __reducerSchema("revoke_consent", RevokeConsentReducer),
   __reducerSchema("revoke_device", RevokeDeviceReducer),

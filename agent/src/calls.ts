@@ -1,21 +1,28 @@
 // The call path (stretch; PLAN D4 and D11, docs/spacetime.md 4.4 and 7.4 step 7).
 //
 // - A call option was prepared by the Dialer when the planner offered it, so its read-back and digest exist.
-// - The module shows the call Confirmed in `call_queue` after the read-back and a fresh CONFIRM. The sidecar claims
-//   it with the digest, then calls `dialer.place(requestId, digest)`. The Dialer re-checks consent, the do-not-call
-//   list and calling hours before it dials.
-// - Freshness. The Dialer starts its own 30 s confirm-to-dial window when `place()` is called, so that window
-//   cannot see a slow sidecar or a view update that arrived late. Right before the dial, after the claim, the
-//   sidecar checks two clocks and dials only if both say the CONFIRM is recent:
-//   1. The module's: the CONFIRM's time from the public `board_calls` view (`call_queue` does not carry it), at most
-//      CONFIRM_MAX_AGE_MS old by this laptop's clock. Unknown, or ahead of this clock by more than CLOCK_SKEW_MS
-//      (the clocks disagree), counts as not recent.
-//   2. This sidecar's: at most CONFIRM_TO_PLACE_MS since it first saw the call Confirmed. A Confirmed call that was
-//      already there when the views were loaded (startup or a reconnect) is of unknown age.
-//   A call that is not recent is claimed and reported refused, never dialed; the person hears why and can ask again.
-//   A placed call that has not dialed by CONFIRM_TO_DIAL_MS after the CONFIRM is cancelled (watchDialDeadline).
+// - The module shows the call Confirmed in `call_queue` after the read-back and a fresh CONFIRM, with the CONFIRM's
+//   time (`confirmed_at`, module v2). The sidecar claims it with the digest, then calls
+//   `dialer.place(requestId, digest, confirmedAtMs)`. The Dialer re-checks consent, the do-not-call list and calling
+//   hours before it dials.
+// - Freshness, in three places:
+//   1. The module: `claim_call` refuses a CONFIRM CALL_CLAIM_MS (12 s) old or older with `confirm expired`, and its
+//      ConfirmWindow timer then stops the call itself (`confirm_expired`). That refusal is final here: the call is
+//      never claimed again, never dialed, and the module, not the sidecar, reports it.
+//   2. This sidecar, right before the dial, after the claim: it dials only if two clocks say the CONFIRM is recent.
+//      a. The module's: the CONFIRM's time from `call_queue`, at most CONFIRM_MAX_AGE_MS old by this laptop's
+//         clock. Unknown, or ahead of this clock by more than CLOCK_SKEW_MS (the clocks disagree), counts as not
+//         recent.
+//      b. This sidecar's: at most CONFIRM_TO_PLACE_MS since it first saw the call Confirmed. A Confirmed call that
+//         was already there when the views were loaded (startup or a reconnect) is of unknown age.
+//      A call that is not recent is claimed and reported refused, never dialed; the person hears why and can ask
+//      again. A placed call that has not dialed by CONFIRM_TO_DIAL_MS after the CONFIRM is cancelled
+//      (watchDialDeadline).
+//   3. The Dialer, which is given the CONFIRM's time with `place()` for its own window.
 // - Ringing, connected and the end are reported in order; transcript lines (numbers already masked by the Dialer)
-//   go to the private `call_line` table. A held contact's sentence goes with the final report (finalReport).
+//   go to the private `call_line` table. The final report carries the Dialer's sentence for how the call ended, and
+//   a held contact's hold sentence with its code (finalReport), which the module keeps since v2 and shows as
+//   `board_calls.held`.
 // - STOP, HEADSET_OFF, the idle pause or an operator set `cancel_requested`: the sidecar calls
 //   `dialer.cancelActive(reason)`, or never dials if the call was not placed yet. One CONFIRM, one call, no retries.
 // - A claim that provably never reached the module (the connection was down for every try) is tried again on a
@@ -38,11 +45,11 @@ const CANCEL_REASONS: readonly CancelReason[] = ['stop', 'headset_off', 'auto_pa
 export const CONFIRM_TO_PLACE_MS = 10_000;
 
 /**
- * The oldest a CONFIRM may be when the call is placed, by the module's clock. After `place()` the Dialer still
+ * The oldest a CONFIRM may be when the call is placed, by the module's clock: the module's own claim window
+ * (`CALL_CLAIM_MS` in spacetime/src/consent.ts, checked by test/contract.test.ts). After `place()` the Dialer still
  * checks its Cartesia agent and voice (two requests, with 10 s and 15 s timeouts) and writes its hold file before it
- * dials, and it measures its own 30 s window from `place()`, not from the CONFIRM. So a placed call is also watched:
- * if it has not dialed by CONFIRM_TO_DIAL_MS after the CONFIRM (less CLOCK_SKEW_MS), the sidecar cancels it, and
- * the Dialer's last check before its outbound request stops it.
+ * dials. So a placed call is also watched: if it has not dialed by CONFIRM_TO_DIAL_MS after the CONFIRM (less
+ * CLOCK_SKEW_MS), the sidecar cancels it, and the Dialer's last check before its outbound request stops it.
  */
 export const CONFIRM_MAX_AGE_MS = 12_000;
 
@@ -61,15 +68,19 @@ export const UNCHECKED_SAY = 'I could not check when you confirmed, so I did not
 /** Spoken when the connection to the module was down at the moment of the dial. At most 300 characters. */
 export const OFFLINE_SAY = 'I lost the connection, so I did not call. Ask again if you still want the call.';
 
+/** A STOP that arrived while the claim was out: the Dialer's own sentence for a call cancelled before it dialed. */
+export const CANCELLED_SAY = 'Cancelled. No call was made.';
+
 export function cancelReasonOf(value: string): CancelReason {
     return (CANCEL_REASONS as readonly string[]).includes(value) ? (value as CancelReason) : 'operator';
 }
 
 /**
- * The final report for a Dialer outcome. When the Dialer put the contact on hold (`held`: a possible refusal was
- * heard, the end is unknown, or the hold file could not be written), the report carries the Dialer's sentence,
- * which ends "Calls to <name> are on hold until someone checks.", so the station and the dashboard can say so. The
- * module keeps `reason` for failed and refused calls; for an ended call it does not yet (README, Known limits).
+ * The final report for a Dialer outcome. `reason` is the Dialer's sentence for how the call ended (the name in it
+ * stays in the module's private call row). When the Dialer put the contact on hold (`held`: a possible refusal was
+ * heard, the end is unknown, or the hold file could not be written), that sentence ends "Calls to <name> are on hold
+ * until someone checks.", and an ended call also carries `opt_out_hold` or `hold_file_error`. The module keeps the
+ * reason of every final report since v2, and shows the hold as `board_calls.held` (spacetime/src/consent.ts isHeld).
  */
 export function finalReport(outcome: CallOutcome): Report {
     const endReason = (outcome.endReason ?? '').slice(0, LIMITS.endReason);
@@ -94,9 +105,14 @@ export function finalReport(outcome: CallOutcome): Report {
                 reason: outcome.spoken.slice(0, LIMITS.reason),
             };
         default:
-            if (!outcome.held) return { status: 'ended', result: outcome.result, endReason, reasonCode: '', reason: '' };
-            // On hold after a call that went through: a possible refusal was heard, or the hold file failed.
-            return { status: 'ended', result: outcome.result, endReason, reasonCode: outcome.optedOut ? 'opt_out_hold' : 'hold_file_error', reason: spoken };
+            return {
+                status: 'ended',
+                result: outcome.result,
+                endReason,
+                // On hold after a call that went through: a possible refusal was heard, or the hold file failed.
+                reasonCode: outcome.held ? (outcome.optedOut ? 'opt_out_hold' : 'hold_file_error') : '',
+                reason: spoken,
+            };
     }
 }
 
@@ -329,6 +345,15 @@ export class CallRunner {
             return { ok: false, final: false };
         }
         this.waitingForLine.delete(key);
+        if (outcome.kind === 'refused' && outcome.message === 'confirm expired') {
+            // Module v2: the CONFIRM is CALL_CLAIM_MS old or older (checked before `line busy`). Final: the call is
+            // never claimed again or dialed, and the module stops it itself (`confirm_expired`) when its timer runs.
+            this.deps.log.info('the module refused the call claim because the confirm is too old; the module stops the call', {
+                call: row.callId,
+                code: 'confirm_expired',
+            });
+            return { ok: false, final: true };
+        }
         const tries = (this.tries.get(key) ?? 0) + 1;
         this.tries.set(key, tries);
         const again = neverSent(outcome) && tries < MAX_CLAIM_TRIES;
@@ -342,12 +367,12 @@ export class CallRunner {
 
     /**
      * Cancels a placed call that has not dialed by CONFIRM_TO_DIAL_MS after its CONFIRM (by the module's clock, less
-     * the allowed clock difference). The Dialer still checks its agent and voice after `place()`, and its own window
-     * starts at `place()`; this bounds the time from the CONFIRM to the outbound request.
+     * the allowed clock difference). The Dialer still checks its agent and voice after `place()`; its own 30 s window
+     * runs from the CONFIRM's time (or from `place()` when that is earlier) and is checked again right before its
+     * outbound request. This timer is a second guard on the time from the CONFIRM to the dial.
      */
-    private watchDialDeadline(call: ActiveCall, callId: bigint): ReturnType<typeof setTimeout> {
-        const confirmedAt = this.deps.db.callConfirmedAt(callId);
-        const age = confirmedAt === null ? Number.POSITIVE_INFINITY : this.deps.now() - confirmedAt;
+    private watchDialDeadline(call: ActiveCall, callId: bigint, confirmedAt: number): ReturnType<typeof setTimeout> {
+        const age = this.deps.now() - confirmedAt;
         const left = (this.deps.confirmToDialMs ?? CONFIRM_TO_DIAL_MS) - age - (this.deps.clockSkewMs ?? CLOCK_SKEW_MS);
         const timer = setTimeout(
             () => {
@@ -369,17 +394,28 @@ export class CallRunner {
         return first === undefined || first === null ? null : this.deps.clock() - first;
     }
 
-    /** Why the call must not be dialed now (see the header), or null when both clocks say the CONFIRM is recent. */
-    private staleness(callId: bigint, key: string): { code: string; say: string; confirmAgeMs: number | null; seenAgeMs: number | null } | null {
-        const confirmedAt = this.deps.db.callConfirmedAt(callId);
+    /**
+     * The CONFIRM's time by the module's clock, from `call_queue`: the row as it is now (after the claim), else the
+     * row the call was started from. Null when the view does not carry it.
+     */
+    private confirmedAtOf(row: CallQueueRow): number | null {
+        const latest = this.deps.db.callQueue().find((r) => r.callId === row.callId);
+        return latest ? latest.confirmedAtMs : row.confirmedAtMs;
+    }
+
+    /** Whether both clocks say the CONFIRM is recent (see the header), and why not when they do not. */
+    private freshness(
+        confirmedAt: number | null,
+        key: string,
+    ): { fresh: true; confirmedAt: number } | { fresh: false; code: string; say: string; confirmAgeMs: number | null; seenAgeMs: number | null } {
         const confirmAge = confirmedAt === null ? null : this.deps.now() - confirmedAt;
         const seenAge = this.ageMs(key);
         const ages = { confirmAgeMs: confirmAge === null ? null : Math.round(confirmAge), seenAgeMs: seenAge === null ? null : Math.round(seenAge) };
-        if (confirmAge === null || confirmAge < -CLOCK_SKEW_MS) return { code: 'confirm_time_unknown', say: UNCHECKED_SAY, ...ages };
+        if (confirmedAt === null || confirmAge === null || confirmAge < -CLOCK_SKEW_MS) return { fresh: false, code: 'confirm_time_unknown', say: UNCHECKED_SAY, ...ages };
         if (confirmAge > CONFIRM_MAX_AGE_MS || seenAge === null || seenAge > (this.deps.confirmToPlaceMs ?? CONFIRM_TO_PLACE_MS)) {
-            return { code: 'confirm_expired', say: EXPIRED_SAY, ...ages };
+            return { fresh: false, code: 'confirm_expired', say: EXPIRED_SAY, ...ages };
         }
-        return null;
+        return { fresh: true, confirmedAt };
     }
 
     /** Claims and runs one Confirmed call. Resolves true when the call is handled for good. */
@@ -405,7 +441,7 @@ export class CallRunner {
             // A STOP that arrived while the claim was out: never dial.
             const latest = this.deps.db.callQueue().find((r) => r.callId === row.callId);
             if (call.cancelled || latest?.cancelRequested) {
-                this.enqueue(call, { status: 'ended', result: 'cancelled', endReason: 'cancelled_before_dial', reasonCode: '', reason: '' });
+                this.enqueue(call, { status: 'ended', result: 'cancelled', endReason: 'cancelled_before_dial', reasonCode: '', reason: CANCELLED_SAY });
                 return true;
             }
             // The views must be current at the dial: during an outage a STOP or a consent revocation could be
@@ -416,18 +452,19 @@ export class CallRunner {
                 return true;
             }
             // Checked after the claim, right before the dial, so a slow claim counts too.
-            const stale = this.staleness(row.callId, key);
-            if (stale) {
+            const fresh = this.freshness(this.confirmedAtOf(row), key);
+            if (!fresh.fresh) {
                 this.deps.log.warn('a confirmed call is not recent enough to place; refusing it, nothing dialed', {
                     call: row.callId,
-                    code: stale.code,
-                    confirmAgeMs: stale.confirmAgeMs,
-                    seenAgeMs: stale.seenAgeMs,
+                    code: fresh.code,
+                    confirmAgeMs: fresh.confirmAgeMs,
+                    seenAgeMs: fresh.seenAgeMs,
                 });
-                this.enqueue(call, { status: 'refused', result: 'refused', endReason: '', reasonCode: stale.code, reason: stale.say });
+                this.enqueue(call, { status: 'refused', result: 'refused', endReason: '', reasonCode: fresh.code, reason: fresh.say });
                 return true;
             }
-            const placed = dialer.place(row.requestId, row.scriptDigest);
+            // The Dialer gets the CONFIRM's time too, so its own window runs from the CONFIRM rather than from now.
+            const placed = dialer.place(row.requestId, row.scriptDigest, fresh.confirmedAt);
             if (!placed.ok) {
                 this.deps.log.warn('the Dialer refused the call', { call: row.callId, code: placed.refusal.code });
                 this.enqueue(call, {
@@ -441,7 +478,7 @@ export class CallRunner {
             }
             call.placed = true;
             this.deps.log.info('call placed', { call: row.callId });
-            const guard = this.watchDialDeadline(call, row.callId);
+            const guard = this.watchDialDeadline(call, row.callId, fresh.confirmedAt);
             let outcome: CallOutcome;
             try {
                 outcome = await placed.handle.done;

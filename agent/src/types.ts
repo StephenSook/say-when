@@ -6,7 +6,11 @@ import { TONES, type Tone } from '@say-when/cartesia';
 
 export { TONES, type Tone };
 
-/** `pipeline_event.stage`. The sidecar writes search, retrieve, plan and errand; the module and the station write the rest. */
+/**
+ * `pipeline_event.stage`. The sidecar writes search, retrieve, plan and errand; the module and the station write the
+ * rest. Each read the person hears is one `speak` step the module writes itself (module v2), so the sidecar writes
+ * none: it is never the writer of a speak, listen or select step.
+ */
 export type Stage = 'listen' | 'search' | 'retrieve' | 'plan' | 'speak' | 'select' | 'errand' | 'call';
 export type StageStatus = 'started' | 'ok' | 'error';
 
@@ -123,6 +127,16 @@ export interface CallQueueRow {
     cancelRequested: boolean;
     /** The Dialer's CancelReason (`stop`, `headset_off`, `auto_pause`, `operator`), or empty. */
     cancelReason: string;
+    /** When the person confirmed the call, by the module's clock (ms since the epoch), or null when not known. */
+    confirmedAtMs: number | null;
+}
+
+/** The `agent_consent` row (module v2): the consent the agent works under now. */
+export interface AgentConsent {
+    /** The active session, or 0n between sessions. */
+    sessionId: bigint;
+    memoryAllowed: boolean;
+    webSearchAllowed: boolean;
 }
 
 /** Call results the module accepts (spacetime/src/consent.ts CALL_RESULTS, the Dialer's CallResult). */

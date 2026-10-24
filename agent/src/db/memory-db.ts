@@ -4,17 +4,20 @@
 // module's other side (a station CONFIRM, a STOP during a call) and inject network failures.
 
 import {
+    CALL_CLAIM_MS,
     DETAIL_PATTERN,
     DIGEST_PATTERN,
     EVENT_KEY_PATTERN,
     ID_PATTERN,
     LIMITS,
     LINE_KEY_PATTERN,
+    MODULE_EVENT_KEY,
     STAGES,
     STATUSES,
 } from '../contract.js';
 import {
     TONES,
+    type AgentConsent,
     type AgentQueueRow,
     type AnswerMode,
     type CallQueueRow,
@@ -92,8 +95,10 @@ export interface CallRecord {
     endReason: string;
     reasonCode: string;
     reason: string;
-    /** When the person confirmed it, by the module's clock (what `board_calls` shows), or null. */
+    /** When the person confirmed it, by the module's clock, or null. */
     confirmedAtMs: number | null;
+    /** False to play bindings older than module v2, whose `call_queue` rows carry no CONFIRM time. */
+    viewShowsConfirmedAt: boolean;
 }
 
 export interface PipelineRecord {
@@ -170,6 +175,10 @@ export class MemoryDb implements AgentDb {
     readonly attempted: { name: ReducerName; args: unknown }[] = [];
     readonly errandConsent = new Set<string>();
     readonly callConsent = new Set<string>();
+    /** Memory and web search consent for every subject: what `agent_consent` shows and what new jobs start with. */
+    readonly consent = { memory: true, webSearch: true };
+    /** False to play a module whose `agent_consent` shows no row for this sidecar (or bindings without the view). */
+    consentRowShown = true;
     maxOptions = LIMITS.maxOptions;
     connected = true;
 
@@ -177,6 +186,7 @@ export class MemoryDb implements AgentDb {
     private syncs = 1;
     private readonly versions = new Map<bigint, number>();
     private readonly listeners = new Set<() => void>();
+    private readonly memoryOffListeners = new Set<() => void>();
     private readonly failures = new Map<ReducerName, InjectedFailure[]>();
     private readonly waiters = new Set<() => void>();
     private readonly now: () => number;
@@ -269,13 +279,20 @@ export class MemoryDb implements AgentDb {
                 scriptDigest: c.scriptDigest,
                 cancelRequested: c.cancelRequested,
                 cancelReason: c.cancelReason,
+                confirmedAtMs: c.viewShowsConfirmedAt ? c.confirmedAtMs : null,
             });
         }
         return rows;
     }
 
-    callConfirmedAt(callId: bigint): number | null {
-        return this.calls.get(callId)?.confirmedAtMs ?? null;
+    agentConsent(): AgentConsent | null {
+        if (!this.consentRowShown) return null;
+        return { sessionId: 1n, memoryAllowed: this.consent.memory, webSearchAllowed: this.consent.webSearch };
+    }
+
+    onMemoryOff(listener: () => void): () => void {
+        this.memoryOffListeners.add(listener);
+        return () => this.memoryOffListeners.delete(listener);
     }
 
     onChange(listener: () => void): () => void {
@@ -334,8 +351,9 @@ export class MemoryDb implements AgentDb {
             origin: job.origin ?? 'partner',
             menuItem: job.menuItem ?? 'none',
             askedBy: job.askedBy ?? 'b'.repeat(64),
-            webSearchAllowed: job.webSearchAllowed ?? true,
-            memoryAllowed: job.memoryAllowed ?? true,
+            // Like the module: a new job carries the consent that holds when it is made.
+            webSearchAllowed: job.webSearchAllowed ?? this.consent.webSearch,
+            memoryAllowed: job.memoryAllowed ?? this.consent.memory,
             errandId: 0n,
             replyText: '',
             recentErrandTitle: job.recentErrandTitle ?? '',
@@ -411,7 +429,7 @@ export class MemoryDb implements AgentDb {
             menuItem: 'none',
             askedBy: job.askedBy ?? 'b'.repeat(64),
             webSearchAllowed: false,
-            memoryAllowed: job.memoryAllowed ?? true,
+            memoryAllowed: job.memoryAllowed ?? this.consent.memory,
             errandId: 0n,
             replyText: job.replyText,
             recentErrandTitle: '',
@@ -467,9 +485,10 @@ export class MemoryDb implements AgentDb {
 
     /**
      * A call option was picked, read back and confirmed. `confirmedAtMs` (default now) is the CONFIRM's time on the
-     * module's clock; a test sets it in the past for an update that reached the sidecar late, or null for unknown.
+     * module's clock; a test sets it in the past for an update that reached the sidecar late. `viewShowsConfirmedAt`
+     * false plays bindings older than module v2: the module knows the time, the sidecar's view does not.
      */
-    addConfirmedCall(call: { requestId: string; contactId: string; digest: string; confirmedAtMs?: number | null }): bigint {
+    addConfirmedCall(call: { requestId: string; contactId: string; digest: string; confirmedAtMs?: number | null; viewShowsConfirmedAt?: boolean }): bigint {
         const id = this.id();
         this.calls.set(id, {
             id,
@@ -486,10 +505,20 @@ export class MemoryDb implements AgentDb {
             reasonCode: '',
             reason: '',
             confirmedAtMs: call.confirmedAtMs === undefined ? this.now() : call.confirmedAtMs,
+            viewShowsConfirmedAt: call.viewShowsConfirmedAt ?? true,
         });
         this.callConsent.add(call.contactId);
         this.changed();
         return id;
+    }
+
+    /** The call's ConfirmWindow timer after the CONFIRM: a call nobody claimed in time is Stopped (`confirm_expired`). */
+    expireConfirmedCall(callId: bigint): void {
+        const c = this.calls.get(callId);
+        if (!c || c.status !== 'confirmed') throw new Error('expireConfirmedCall: the call is not confirmed');
+        c.status = 'stopped';
+        c.reasonCode = 'confirm_expired';
+        this.changed();
     }
 
     /** STOP, HEADSET_OFF, the idle pause or an operator during a live call. A Confirmed call is stopped instead. */
@@ -517,8 +546,9 @@ export class MemoryDb implements AgentDb {
     }
 
     /**
-     * The owner revoked web search or memory consent: the flag is cleared on every job not done yet, and a Remember
-     * job is cancelled when memory goes (spacetime/src/consent.ts, stopUncovered).
+     * The owner revoked web search or memory consent: the flag is cleared on every job not done yet, a Remember job is
+     * cancelled when memory goes (spacetime/src/consent.ts, stopUncovered), and `agent_consent` shows it. While
+     * connected, the onMemoryOff listeners hear a memory revocation at once, as the adapter's row callbacks do.
      */
     revokeConsent(scope: 'web_search' | 'memory'): void {
         for (const job of this.jobs.values()) {
@@ -527,6 +557,16 @@ export class MemoryDb implements AgentDb {
             else if (scope === 'web_search') job.webSearchAllowed = false;
             else job.memoryAllowed = false;
         }
+        if (scope === 'memory') this.consent.memory = false;
+        else this.consent.webSearch = false;
+        if (scope === 'memory' && this.connected && this.consentRowShown) for (const listener of [...this.memoryOffListeners]) listener();
+        this.changed();
+    }
+
+    /** The owner gave web search or memory consent again. Jobs already made keep their flags (never given back). */
+    grantConsent(scope: 'web_search' | 'memory'): void {
+        if (scope === 'memory') this.consent.memory = true;
+        else this.consent.webSearch = true;
         this.changed();
     }
 
@@ -560,7 +600,10 @@ export class MemoryDb implements AgentDb {
     /** Drops or restores the connection. A reconnect re-syncs: the views arrive again as a fresh snapshot. */
     setConnected(connected: boolean): void {
         const reconnect = connected && !this.connected;
+        const lost = !connected && this.connected;
         this.connected = connected;
+        // Like the adapter: a lost connection counts as memory off, since a revocation during the gap may never show.
+        if (lost) for (const listener of [...this.memoryOffListeners]) listener();
         if (!reconnect) return;
         this.syncs += 1;
         for (const wake of [...this.waiters]) wake();
@@ -633,6 +676,8 @@ export class MemoryDb implements AgentDb {
                 if (c.status !== 'confirmed') throw refuse(name, 'call is not confirmed');
                 if (a.digest !== c.scriptDigest) throw refuse(name, 'digest mismatch');
                 if (!this.callConsent.has(c.contactId)) throw refuse(name, 'no call consent');
+                // Module v2: a CONFIRM CALL_CLAIM_MS old or older (or of no known time) cannot dial. Final for the sidecar.
+                if (c.confirmedAtMs === null || this.now() - c.confirmedAtMs >= CALL_CLAIM_MS) throw refuse(name, 'confirm expired');
                 c.status = 'dialing';
                 c.claimAttempt += 1;
                 c.claimedBy = this.me;
@@ -661,6 +706,8 @@ export class MemoryDb implements AgentDb {
         const name = 'agentProgress';
         const job = this.fenced(name, a.jobId, a.attempt);
         if (!EVENT_KEY_PATTERN.test(a.eventKey)) throw refuse(name, 'bad event_key');
+        // Module v2: keys under the module's own prefixes are the module's (its speak, select and call steps).
+        if (MODULE_EVENT_KEY.test(a.eventKey)) throw refuse(name, 'event_key uses a prefix the module writes');
         this.renewLease(job);
         if (this.events.some((event) => event.eventKey === a.eventKey)) return; // a retry, or a lease renewal
         if (!(STAGES as readonly string[]).includes(a.stage)) throw refuse(name, 'bad stage');
@@ -803,12 +850,20 @@ export class MemoryDb implements AgentDb {
         if (a.status === 'ended' || a.status === 'failed' || a.status === 'refused') {
             c.result = a.status === 'refused' ? 'refused' : a.result || (a.status === 'ended' ? 'answered' : 'failed');
             c.endReason = a.endReason;
-            // Like the module (spacetime/src/consent.ts reportCallStatus): only a failed or refused call keeps them.
-            if (a.status !== 'ended') {
-                c.reasonCode = a.reasonCode;
-                c.reason = a.reason;
-            }
+            // Like the module since v2 (spacetime/src/consent.ts reportCallStatus): an ended call keeps its reason too.
+            c.reasonCode = a.reasonCode;
+            c.reason = a.reason;
         }
+    }
+
+    /**
+     * What `board_calls.held` would show for this call (spacetime/src/consent.ts isHeld): a hold code, or the Dialer's
+     * hold sentence in the stored reason.
+     */
+    held(callId: bigint): boolean {
+        const c = this.calls.get(callId);
+        if (!c) return false;
+        return c.reasonCode === 'opt_out_hold' || c.reasonCode === 'hold_file_error' || /are on hold until someone checks/.test(c.reason);
     }
 
     /** The module's `lease_expired`, run when the job is next touched: a Claimed job past its lease is Pending again. */
@@ -859,7 +914,9 @@ export class MemoryDb implements AgentDb {
     }
 
     private viewSignature(): string {
-        return JSON.stringify([this.agentQueue(), this.errandQueue(), this.callQueue()], (_key, value: unknown) => (typeof value === 'bigint' ? value.toString() : value));
+        return JSON.stringify([this.agentQueue(), this.errandQueue(), this.callQueue(), this.agentConsent()], (_key, value: unknown) =>
+            typeof value === 'bigint' ? value.toString() : value,
+        );
     }
 }
 

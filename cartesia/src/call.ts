@@ -342,7 +342,8 @@ export type RefusalCode =
     | 'already_used'
     | 'line_busy'
     | 'agent_mismatch'
-    | 'agent_unverified';
+    | 'agent_unverified'
+    | 'confirm_time_unknown';
 
 /** Sentences written for the earpiece. None of them contains a number. */
 export const REFUSALS: Readonly<Record<RefusalCode, string>> = {
@@ -363,6 +364,7 @@ export const REFUSALS: Readonly<Record<RefusalCode, string>> = {
     line_busy: 'A call is already in progress.',
     agent_mismatch: 'The calling agent does not match the reviewed script, so I did not call.',
     agent_unverified: 'I could not check the calling agent, so I did not call.',
+    confirm_time_unknown: 'I could not check when you confirmed, so I did not call.',
 };
 
 export interface CallRefusal {
@@ -397,7 +399,11 @@ interface Prepared extends PreparedCall {
     timeZone: string;
     variables: Record<string, string>;
     errandSentAt: number;
-    confirmedAt: number;
+    /**
+     * Null until place(). Then the start of the confirm-to-dial window: the CONFIRM's own time, or the time of
+     * place() if that is earlier (the CONFIRM's clock may run a little ahead of this one).
+     */
+    confirmedAt: number | null;
 }
 
 export type CallPhase = 'checking' | 'dialing' | 'ringing' | 'connected' | 'ended';
@@ -457,8 +463,16 @@ export interface DialerConfig {
     pollIntervalMs?: number;
     preparedTtlMs?: number;
     maxErrandAgeMs?: number;
-    /** A CONFIRM is only good for this long; the agent check must finish inside it. */
+    /**
+     * A CONFIRM is only good for this long after its own time (the time passed to place()), not after place() is
+     * called; the agent check must finish inside it. More than 0 and at most 30000 (the default).
+     */
     maxConfirmToDialMs?: number;
+    /**
+     * How far the CONFIRM's time may be ahead of this dialer's clock, since it comes from another clock (the
+     * module's). A CONFIRM further ahead is refused as confirm_time_unknown. 0 to 5000; the default is 5000.
+     */
+    confirmClockSkewMs?: number;
 }
 
 export interface DialerDeps {
@@ -669,9 +683,10 @@ export interface PreflightReport {
 
 /**
  * Holds the consent list, the do-not-call list, the holds and at most one call. prepare() builds the read-back and
- * its digest; place() needs that exact digest from a fresh CONFIRM, checks everything again right before dialing,
- * dials once, and never retries. Every dial is on hold from just before the request until the call is settled, and
- * anything heard on a call that may be a refusal keeps the contact on hold until a person clears it.
+ * its digest; place() needs that exact digest and the time of the CONFIRM that carried it, checks everything again
+ * (including that the CONFIRM is at most 30 seconds old) right before dialing, dials once, and never retries. Every
+ * dial is on hold from just before the request until the call is settled, and anything heard on a call that may be
+ * a refusal keeps the contact on hold until a person clears it.
  */
 export class Dialer {
     readonly callIds: string[] = [];
@@ -688,6 +703,7 @@ export class Dialer {
     private readonly preparedTtlMs: number;
     private readonly maxErrandAgeMs: number;
     private readonly maxConfirmToDialMs: number;
+    private readonly confirmClockSkewMs: number;
     private readonly now: () => number;
     private readonly sleep: (ms: number) => Promise<void>;
     /**
@@ -734,6 +750,14 @@ export class Dialer {
         this.preparedTtlMs = config.preparedTtlMs ?? 2 * 60_000;
         this.maxErrandAgeMs = config.maxErrandAgeMs ?? 10 * 60_000;
         this.maxConfirmToDialMs = config.maxConfirmToDialMs ?? 30_000;
+        // A window that is not a number would turn the freshness check off, so it is refused here.
+        if (typeof this.maxConfirmToDialMs !== 'number' || !(this.maxConfirmToDialMs > 0 && this.maxConfirmToDialMs <= 30_000)) {
+            throw new CallConfigError('maxConfirmToDialMs must be more than 0 and at most 30000.');
+        }
+        this.confirmClockSkewMs = config.confirmClockSkewMs ?? 5_000;
+        if (typeof this.confirmClockSkewMs !== 'number' || !(this.confirmClockSkewMs >= 0 && this.confirmClockSkewMs <= 5_000)) {
+            throw new CallConfigError('confirmClockSkewMs must be 0 to 5000.');
+        }
         this.now = deps.now ?? Date.now;
         this.sleep = deps.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
     }
@@ -756,16 +780,32 @@ export class Dialer {
         return null;
     }
 
-    /** Everything again, against the current lists and clock: used at the confirm and right before the dial. */
-    private recheck(call: Prepared, now: number): CallRefusal | null {
+    /**
+     * Whether a CONFIRM made at confirmedAt may still release a dial at now: a time that is not a finite number, or
+     * that is further ahead of this clock than the allowed skew, cannot be checked; one more than maxConfirmToDialMs
+     * old has expired.
+     */
+    private confirmBlock(confirmedAt: unknown, now: number): CallRefusal | null {
+        if (typeof confirmedAt !== 'number' || !Number.isFinite(confirmedAt) || confirmedAt - now > this.confirmClockSkewMs) {
+            return refusal('confirm_time_unknown');
+        }
+        if (now - confirmedAt > this.maxConfirmToDialMs) return refusal('expired');
+        return null;
+    }
+
+    /**
+     * Everything again, against the current lists and clock, including the age of the CONFIRM: used at the confirm
+     * and right before the dial.
+     */
+    private recheck(call: Prepared, now: number, confirmedAt: unknown): CallRefusal | null {
         const contact = this.lists.consent.find((entry) => entry.id === call.contactId);
         const blocked = this.check(contact, call.errandSentAt, now);
         if (blocked) return blocked;
         if (!contact || toUsE164(contact.phone) !== call.toNumber || contact.timeZone !== call.timeZone || contact.name !== call.recipientName) {
             return refusal('digest_mismatch');
         }
-        if (now > call.expiresAt || (call.confirmedAt > 0 && now - call.confirmedAt > this.maxConfirmToDialMs)) return refusal('expired');
-        return null;
+        if (now > call.expiresAt) return refusal('expired');
+        return this.confirmBlock(confirmedAt, now);
     }
 
     private refuse(code: RefusalCode): { ok: false; refusal: CallRefusal } {
@@ -824,7 +864,7 @@ export class Dialer {
             timeZone: contact.timeZone,
             variables,
             errandSentAt: sentAt,
-            confirmedAt: 0,
+            confirmedAt: null,
         };
         this.prepared.set(call.requestId, call);
         emit(this.deps.onEvent, { stage: 'call', status: 'ok', detail: 'read-back ready', ms: 0 });
@@ -843,9 +883,12 @@ export class Dialer {
 
     /**
      * Places the call for a fresh CONFIRM whose digest matches the read-back. One CONFIRM, one call, no retries.
-     * Every guard runs here and again immediately before the dial request.
+     * `confirmedAtMs` is when the CONFIRM itself happened, in milliseconds since 1970 (for example the module's
+     * `call_queue.confirmed_at`), never when it reached the caller. The CONFIRM must be at most 30 seconds old here
+     * and again immediately before the dial request, measured from that time (or from this call, if that is
+     * earlier), so a CONFIRM that arrives late can never ring a phone. Every other guard runs at both points too.
      */
-    place(requestId: string, confirmDigest: string): { ok: true; handle: CallHandle } | { ok: false; refusal: CallRefusal } {
+    place(requestId: string, confirmDigest: string, confirmedAtMs: number): { ok: true; handle: CallHandle } | { ok: false; refusal: CallRefusal } {
         const now = this.now();
         const call = this.prepared.get(requestId);
         if (!call) return this.refuse('expired');
@@ -857,12 +900,13 @@ export class Dialer {
         if (this.usedDigests.has(call.digest)) return this.refuse('already_used');
         if (this.active && !this.active.finished) return this.refuse('line_busy');
         if (!this.refreshHolds()) return this.refuse('hold_file_error');
-        const blocked = this.recheck(call, now);
+        const blocked = this.recheck(call, now, confirmedAtMs);
         if (blocked) return this.refuse(blocked.code);
         // Consume the confirm before anything can fail, so one confirm can never place two calls.
         this.usedDigests.add(call.digest);
         this.prepared.delete(requestId);
-        call.confirmedAt = now;
+        // The window runs from the CONFIRM, or from now if the CONFIRM's clock reads a little ahead of this one.
+        call.confirmedAt = Math.min(confirmedAtMs, now);
         const handle = new CallHandle(requestId, (h) => this.onCancel(h));
         this.active = handle;
         void this.run(handle, call);
@@ -1073,7 +1117,7 @@ export class Dialer {
             const check = await verifyAgent({ apiKey: this.config.apiKey, agentId: this.config.agentId, fetch: this.deps.fetch });
             if (!check.ok) return end('refused', { refusal: refusal(check.code ?? 'agent_unverified') });
             if (handle.cancelReason) return end('cancelled');
-            const blocked = this.recheck(call, this.now());
+            const blocked = this.recheck(call, this.now(), call.confirmedAt);
             if (blocked) return end('refused', { refusal: blocked });
             handle.phase = 'dialing';
             emit(this.deps.onEvent, { stage: 'call', status: 'started', detail: 'dialing', ms: 0 });
@@ -1110,10 +1154,11 @@ export class Dialer {
             }
             // The last check, after the last application callback above, with nothing between it and the request:
             // a STOP, HEADSET-OFF, opt-out or list change made from the dialing notice still stops the call.
-            // Every guard runs again: consent, do-not-call, the number, the hours and a fresh confirm.
+            // Every guard runs again: consent, do-not-call, the number, the hours and a CONFIRM at most 30 seconds
+            // old by its own time, so a CONFIRM that went stale while the agent was checked never rings a phone.
             const at = this.now();
             if (handle.cancelReason) return end('cancelled');
-            const lastBlocked = this.recheck(call, at);
+            const lastBlocked = this.recheck(call, at, call.confirmedAt);
             if (lastBlocked) return end('refused', { refusal: lastBlocked });
             const request = buildRequest(this.config.apiKey, 'POST', '/agents/calls', {
                 body: {

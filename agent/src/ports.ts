@@ -46,7 +46,12 @@ export interface CallHandleLike {
 /** The guarded outbound call (cartesia Dialer). Its `onUpdate` dependency feeds CallRunner.onSnapshot. */
 export interface DialerPort {
     prepare(request: CallRequest): { ok: true; call: PreparedCall } | { ok: false; refusal: CallRefusal };
-    place(requestId: string, confirmDigest: string): { ok: true; handle: CallHandleLike } | { ok: false; refusal: CallRefusal };
+    /**
+     * `confirmedAtMs` is the CONFIRM's time by the module's clock (ms since the epoch, from `call_queue.confirmed_at`),
+     * so the Dialer can measure its confirm-to-dial window from the CONFIRM. A Dialer that takes only two arguments
+     * still fits this port.
+     */
+    place(requestId: string, confirmDigest: string, confirmedAtMs: number): { ok: true; handle: CallHandleLike } | { ok: false; refusal: CallRefusal };
     cancelActive(reason: CancelReason): void;
 }
 

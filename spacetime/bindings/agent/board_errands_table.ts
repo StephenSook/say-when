@@ -42,4 +42,5 @@ export default __t.row({
   readBackJson: __t.string().name("read_back_json"),
   confirmationText: __t.string().name("confirmation_text"),
   screenshotUrl: __t.string().name("screenshot_url"),
+  optionId: __t.u64().name("option_id"),
 });

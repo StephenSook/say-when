@@ -26,4 +26,5 @@ export default __t.row({
   scriptDigest: __t.string().name("script_digest"),
   cancelRequested: __t.bool().name("cancel_requested"),
   cancelReason: __t.string().name("cancel_reason"),
+  confirmedAt: __t.option(__t.timestamp()).name("confirmed_at"),
 });

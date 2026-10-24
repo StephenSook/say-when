@@ -3,6 +3,10 @@
  * read through the generated web bindings while the module's own smoke test drove it, in the runtime shapes the SDK
  * gives (enums as { tag, value }, unset options left out). Four moments: option 2's response window, an errand
  * waiting for CONFIRM, the room's sharing toggle on, and the dead-man pause. All content is made-up smoke content.
+ *
+ * Recorded before module v2 (docs/spacetime.md 14), so these are the older shapes: one speak step per scan, a select
+ * step for every scan ending, no option id on errand rows, no word timings, and a pause that cleared the scan's pick.
+ * The mapping still reads them right; test/board-v2.test.ts covers the v2 shapes.
  */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -125,7 +129,7 @@ describe('boardRows over rows recorded from say-when-dev', () => {
     assert.equal(conversation.picked?.id, '61');
     assert.equal(conversation.agent?.sentence, 'Waiting for CONFIRM, a double jaw clench. Nothing is sent yet.');
     assert.equal(partner.status.text, 'Waiting for them to confirm.');
-    // Question 1 ended with no pick: the module's "no pick" select step is not shown as a pick.
+    // Question 1 ended with no pick: its old "no pick" select step names no option, so it is not shown as a pick.
     const selects = rows.pipelineEvents.filter((e) => e.stage === 'select');
     assert.deepEqual(selects.map((e) => [e.questionId, e.detail.optionId, e.detail.kind]), [['19', '55', 'reply'], ['20', '57', 'reply'], ['21', '61', 'errand']]);
     assert.deepEqual(
@@ -174,7 +178,7 @@ describe('boardRows over rows recorded from say-when-dev', () => {
     const scan = rows.scan!;
     assert.equal(scan.phase, 'paused');
     assert.equal(scan.outcome, 'picked');
-    assert.equal(scan.pickedOptionId, '61', "the pause clears the scan's picked id; the question keeps it");
+    assert.equal(scan.pickedOptionId, '61', "before module v2 the pause cleared the scan's picked id; the question keeps it");
     assert.deepEqual(rows.safety, { state: 'paused', since: scan.stepStartedAt });
     const { conversation, partner } = views(rows);
     assert.equal(conversation.paused, 'paused');

@@ -5,7 +5,7 @@
 // Every export here is a module export; index.ts re-exports them by name.
 import { t } from 'spacetimedb/server';
 import { optionsOf } from './clock';
-import { hasConsent, publicReason } from './consent';
+import { hasConsent, isHeld, publicReason } from './consent';
 import { publicCode } from './util';
 import type { AnonContext, ReadDb, ViewContext } from './ctx';
 import spacetimedb, {
@@ -18,9 +18,11 @@ import spacetimedb, {
   MenuItem,
   OptionKind,
   Origin,
+  pipelineEvent,
   QuestionStatus,
   ScanOutcome,
   SourceRef,
+  wordTiming,
   type AgentJob,
   type Question,
 } from './schema';
@@ -149,6 +151,15 @@ const CallQueueItem = t.row('CallQueueItem', {
   scriptDigest: t.string(),
   cancelRequested: t.bool(),
   cancelReason: t.string(),
+  /** Module v2. The CONFIRM's time, which `claim_call` refuses CALL_CLAIM_MS (12 s) later. */
+  confirmedAt: t.option(t.timestamp()),
+});
+
+/** `agent_consent`'s row (module v2): the consent the agent works under now. (The view owns `AgentConsent`.) */
+const ConsentState = t.row('ConsentState', {
+  sessionId: t.u64().primaryKey(),
+  memoryAllowed: t.bool(),
+  webSearchAllowed: t.bool(),
 });
 
 const BoardOption = t.object('BoardOption', {
@@ -216,6 +227,8 @@ const BoardErrand = t.row('BoardErrand', {
   readBackJson: t.string(),
   confirmationText: t.string(),
   screenshotUrl: t.string(),
+  /** Module v2. The errand option the person picked. */
+  optionId: t.u64(),
 });
 
 const BoardCallLine = t.object('BoardCallLine', {
@@ -247,6 +260,15 @@ const BoardCall = t.row('BoardCall', {
   contactName: t.string(),
   readBackText: t.string(),
   transcript: t.array(BoardCallLine),
+  // Module v2 (docs/spacetime.md 14), all content-free. The call option, the read-back and confirm window times, the
+  // commands that confirmed and stopped it, and whether the Dialer put the contact on hold.
+  optionId: t.u64(),
+  readbackDoneAt: t.option(t.timestamp()),
+  confirmOpensAt: t.option(t.timestamp()),
+  confirmClosesAt: t.option(t.timestamp()),
+  confirmGestureId: t.string(),
+  stopGestureId: t.string(),
+  held: t.bool(),
 });
 
 // ---------- Shared reads ----------
@@ -543,10 +565,28 @@ export const callQueue = spacetimedb.view({ public: true }, t.array(CallQueueIte
         scriptDigest: c.scriptDigest,
         cancelRequested: c.cancelRequested,
         cancelReason: c.cancelReason,
+        confirmedAt: c.confirmedAt,
       });
     }
   }
   return rows;
+});
+
+/**
+ * Agent (module v2): the consent the agent works under now, one row. Memory and web search consent are rows for every
+ * subject (an empty subject), so this is what `memory_allowed` and `web_search_allowed` on a new job would say. The
+ * sidecar forgets the conversation it keeps as soon as `memory_allowed` turns false, with or without a job. The
+ * session id is the active session, or 0 between sessions.
+ */
+export const agentConsent = spacetimedb.view({ public: true }, t.array(ConsentState), (ctx) => {
+  if (liveRole(ctx.db, ctx.sender) !== 'Agent') return [];
+  return [
+    {
+      sessionId: activeSessionId(ctx.db),
+      memoryAllowed: hasConsent(ctx.db, 'Memory', ''),
+      webSearchAllowed: hasConsent(ctx.db, 'WebSearch', ''),
+    },
+  ];
 });
 
 // ---------- Anonymous board views (dashboards and judges, no login) ----------
@@ -640,6 +680,7 @@ export const boardErrands = spacetimedb.anonymousView({ public: true }, t.array(
     readBackJson: share ? e.readBackJson : '',
     confirmationText: share ? e.confirmationText : '',
     screenshotUrl: share ? e.screenshotUrl : '',
+    optionId: e.optionId,
   }));
 });
 
@@ -678,8 +719,38 @@ export const boardCalls = spacetimedb.anonymousView({ public: true }, t.array(Bo
           .sort((a, b) => (a.id < b.id ? -1 : 1))
           .map((l) => ({ role: l.role, text: l.text, at: l.at }))
       : [],
+    optionId: c.optionId,
+    readbackDoneAt: c.readbackDoneAt,
+    confirmOpensAt: c.confirmOpensAt,
+    confirmClosesAt: c.confirmClosesAt,
+    confirmGestureId: c.confirmGestureId,
+    stopGestureId: c.stopGestureId,
+    held: isHeld(c),
   }));
 });
 
 /** Every ledger row (content-free). The query-builder form is evaluated incrementally as the ledger grows. */
 export const boardLedger = spacetimedb.anonymousView({ public: true }, t.array(ledger.rowType), (ctx: AnonContext) => ctx.from.ledger);
+
+// ---------- Session-scoped board views (module v2) ----------
+// `pipeline_event` and `board_ledger` hold every session, so a database that runs for days grows on every screen.
+// These hold the board's session only (the active one, kept after it ends, as `public_board` does): the same rows,
+// filtered by the session index.
+
+/** The board session's pipeline events: the rows of `pipeline_event` for that session. */
+export const boardEvents = spacetimedb.anonymousView({ public: true }, t.array(pipelineEvent.rowType), (ctx: AnonContext) => {
+  const sessionId = boardSessionId(ctx.db);
+  return sessionId === 0n ? [] : [...ctx.db.pipelineEvent.eventBySession.filter(sessionId)];
+});
+
+/** The board session's ledger rows (content-free): `board_ledger` for that session. */
+export const boardSessionLedger = spacetimedb.anonymousView({ public: true }, t.array(ledger.rowType), (ctx: AnonContext) => {
+  const sessionId = boardSessionId(ctx.db);
+  return sessionId === 0n ? [] : [...ctx.db.ledger.ledgerBySession.filter(sessionId)];
+});
+
+/** The station's word timings for the board session's reads: numbers only, keyed by the speak step's event id. */
+export const boardWordTimings = spacetimedb.anonymousView({ public: true }, t.array(wordTiming.rowType), (ctx: AnonContext) => {
+  const sessionId = boardSessionId(ctx.db);
+  return sessionId === 0n ? [] : [...ctx.db.wordTiming.timingBySession.filter(sessionId)];
+});

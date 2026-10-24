@@ -8,13 +8,13 @@ import type { DbConnection } from '../lib/data/module_bindings';
 import { createSpacetimeSource, OFFLINE_AFTER_MS, RETRY_DELAYS_MS, type SpacetimeBindings } from '../lib/data/spacetime';
 import { boardRows, type BoardSnapshot } from '../lib/data/spacetime-map';
 import { EMPTY_ROWS, type CommandEvent, type DataRows } from '../lib/data/types';
-import { midScan } from './board-fixtures';
+import { midScan, read, wordTiming } from './board-fixtures';
 
 type Callback = (...args: any[]) => void;
 
 /**
- * A client cache with the nine tables the dashboard subscribes to: each table iterates its rows and keeps the row
- * callbacks registered on it, by kind, so a test can fire them and check they are removed.
+ * A client cache with the ten tables and views the dashboard subscribes to: each table iterates its rows and keeps the
+ * row callbacks registered on it, by kind, so a test can fire them and check they are removed.
  */
 function fakeBoardConnection(board: BoardSnapshot) {
   const listeners = new Map<string, Map<'insert' | 'delete' | 'update', Set<() => void>>>();
@@ -40,13 +40,14 @@ function fakeBoardConnection(board: BoardSnapshot) {
   const db = {
     config: table('config', board.config),
     scanState: table('scan_state', board.scanStates),
-    pipelineEvent: table('pipeline_event', board.pipelineEvents),
+    boardEvents: table('board_events', board.pipelineEvents),
     deviceStatus: table('device_status', board.devices),
     publicBoard: table('public_board', board.questions),
     boardPayloads: table('board_payloads', board.payloads),
     boardErrands: table('board_errands', board.errands),
     boardCalls: table('board_calls', board.calls),
-    boardLedger: table('board_ledger', board.ledger),
+    boardSessionLedger: table('board_session_ledger', board.ledger),
+    boardWordTimings: table('board_word_timings', board.wordTimings ?? []),
   };
   return { conn: { db } as unknown as DbConnection, listeners };
 }
@@ -314,21 +315,24 @@ describe('SpacetimeDB source', () => {
     source.stop();
   });
 
-  test('the real bindings file is wired: it subscribes to the anonymous board tables and views', async () => {
+  test('the real bindings file is wired: it subscribes to the anonymous board tables and the session-scoped views', async () => {
     const { bindings } = await import('../lib/data/spacetime-bindings');
     assert.ok(bindings, 'wired to the generated module');
     const sql = bindings.queries.map((query) => (typeof query === 'string' ? query : (query as unknown as { toSql(): string }).toSql()));
     assert.deepEqual(sql, [
       'SELECT * FROM "config"',
       'SELECT * FROM "scan_state"',
-      'SELECT * FROM "pipeline_event"',
+      'SELECT * FROM "board_events"',
       'SELECT * FROM "device_status"',
       'SELECT * FROM "public_board"',
       'SELECT * FROM "board_payloads"',
       'SELECT * FROM "board_errands"',
       'SELECT * FROM "board_calls"',
-      'SELECT * FROM "board_ledger"',
+      'SELECT * FROM "board_session_ledger"',
+      'SELECT * FROM "board_word_timings"',
     ]);
+    // The unscoped table and view grow with every session the database ever ran (docs/spacetime.md 14).
+    assert.ok(!sql.some((query) => /"pipeline_event"|"board_ledger"/.test(query)));
   });
 
   test('the real bindings watch every subscribed table for inserts, deletes and updates, and the cleanup removes them all', async () => {
@@ -336,22 +340,31 @@ describe('SpacetimeDB source', () => {
     const fake = fakeBoardConnection(midScan());
     let changes = 0;
     const unwatch = bindings.watch(fake.conn, () => changes++);
-    assert.equal(fake.listeners.size, 9);
+    assert.equal(fake.listeners.size, 10);
     for (const [table, kinds] of fake.listeners) {
       for (const [kind, callbacks] of kinds) assert.equal(callbacks.size, 1, `${table} ${kind}`);
     }
     for (const kinds of fake.listeners.values()) for (const callbacks of kinds.values()) for (const callback of callbacks) callback();
-    assert.equal(changes, 27);
+    assert.equal(changes, 30);
     unwatch();
     for (const kinds of fake.listeners.values()) for (const callbacks of kinds.values()) assert.equal(callbacks.size, 0);
   });
 
-  test('the real bindings read the client cache through boardRows', async () => {
+  test('the real bindings read the client cache through boardRows, word timings included', async () => {
     const { bindings } = await import('../lib/data/spacetime-bindings');
     const rows = bindings.read(fakeBoardConnection(midScan()).conn);
     assert.deepEqual(rows, boardRows(midScan()));
     assert.equal(rows.scan?.cursor, 2);
     assert.equal(rows.options.length, 4);
+    const timed = midScan({
+      pipelineEvents: [...midScan().pipelineEvents, read(44, 5_000, { optionId: 102, rank: 2, stepSeq: 8 })],
+      wordTimings: [wordTiming(44, [0, 240], [220, 520])],
+    });
+    const words = bindings.read(fakeBoardConnection(timed).conn).pipelineEvents.find((event) => event.id === '44')?.detail;
+    assert.deepEqual((words as { words?: unknown }).words, [
+      { startMs: 0, endMs: 220 },
+      { startMs: 240, endMs: 520 },
+    ]);
   });
 
   test('row times move onto the laptop clock when the server clock runs ahead, counted from new events only', async () => {

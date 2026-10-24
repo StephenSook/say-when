@@ -662,23 +662,28 @@ interface SpokenRef {
   tone: string | null;
 }
 
-/** An option's rank, text, kind and tone from the row, filled in from the option row when missing. */
+/**
+ * An option's rank, text, kind and tone from the row, filled in from the option row when missing. With the room's
+ * sharing off the option row's text is the stand-in "Option N", which is no text: the rank already says it.
+ */
 function spokenRef(detail: unknown, byId: ReadonlyMap<string, AnswerOption>): SpokenRef {
   const fields = loose(detail);
   const option = byId.get(text(fields.optionId) ?? '');
   const kind = text(fields.kind) ?? option?.kind ?? null;
+  const optionText = text(option?.text);
   return {
     rank: num(fields.rank) ?? option?.rank ?? null,
-    text: text(fields.text) ?? text(option?.text) ?? null,
+    text: text(fields.text) ?? (option && optionText !== `Option ${option.rank}` ? optionText : null),
     kind: kind === 'reply' || kind === 'errand' || kind === 'call' || kind === 'menu' ? kind : null,
     tone: text(fields.tone) ?? text(option?.tone) ?? null,
   };
 }
 
-function optionWords(ref: SpokenRef): string {
+function optionWords(ref: SpokenRef, pass: number | null): string {
   const name = ref.rank !== null ? `Option ${ref.rank}` : 'An option';
   const tone = ref.tone ? `, ${ref.tone} voice` : '';
-  return ref.text ? `${name}${tone}: ${quoted(ref.text)}` : `${name}${tone}`;
+  const again = pass !== null && pass > 1 ? `, pass ${pass}` : '';
+  return ref.text ? `${name}${tone}${again}: ${quoted(ref.text)}` : `${name}${tone}${again}`;
 }
 
 /** A speak row for the reply said out loud for the room, not an option in the earpiece. */
@@ -687,29 +692,51 @@ function isAloud(event: PipelineEvent): boolean {
 }
 
 /**
+ * A read of the yes or no prompt: the module's one speak step per read (docs/spacetime.md 14) for a question that is
+ * answered YES or NO. It names no option. The scan's own start row carries the same label but no step.
+ */
+function isPromptRead(event: PipelineEvent): boolean {
+  const fields = loose(event.detail);
+  return labelOf(fields) === 'yes or no prompt' && num(fields.stepSeq) !== null;
+}
+
+/** A speak row that names what was read: an option (by id or rank), or the yes or no prompt. */
+function namesRead(event: PipelineEvent): boolean {
+  const fields = loose(event.detail);
+  return text(fields.optionId) !== null || (num(fields.rank) ?? 0) > 0 || isPromptRead(event);
+}
+
+/**
  * The earpiece only: what the person hears privately (docs/ui.md pattern 10 labels the two audio
  * channels apart). The reply said out loud comes after the pick, so it is its own line under the
  * steps; inside Speaking it would read right to left.
+ *
+ * Every read is its own speak row with the option's rank (since module v2 on live data, and in the
+ * sample replay). The card names the newest read, so after the scan's "scan ended" row it still says
+ * which option was read last, and counts the options played.
  */
 function speakCard(ctx: Context, scope: Scope, byId: ReadonlyMap<string, AnswerOption>, later: boolean): StageCard {
   const tool = 'Cartesia Sonic, into the earpiece';
   const latest = scope.latest;
   const state = stepState('speak', scope, ctx, false);
   if (!state || !latest) return notRun('speak', tool, later, false);
-  const detail = loose(latest.detail);
+  const shown = [...scope.events].reverse().find(namesRead) ?? latest;
+  const detail = loose(shown.detail);
   const base = baseCard('speak', tool, state, latest.id);
   const played = new Set<string>();
   for (const event of scope.events) {
     const fields = loose(event.detail);
     const rank = num(fields.rank);
-    const key = text(fields.optionId) ?? (rank !== null ? `rank:${rank}` : event.status === 'started' ? event.id : null);
+    const key = text(fields.optionId) ?? (rank !== null && rank > 0 ? `rank:${rank}` : isPromptRead(event) ? 'prompt' : null);
     if (key) played.add(key);
   }
+  // A source that names no read (one row per scan) counts the scans it started.
+  if (played.size === 0) for (const event of scope.events) if (event.status === 'started') played.add(event.id);
   const passed = played.size > 0 ? `${played.size} played` : null;
   const stopped = interrupted(state, 'Could not play the option.');
   if (stopped) return { ...base, ...stopped, passed };
-  const ref = spokenRef(latest.detail, byId);
-  let payload = optionWords(ref);
+  const ref = spokenRef(shown.detail, byId);
+  let payload = isPromptRead(shown) ? 'The yes or no prompt' : optionWords(ref, num(detail.pass));
   const by = detail.stoppedBy;
   if (typeof by === 'string' && by in COMMAND_INFO) payload = `${payload} Cut short by ${commandWord(by as CommandName)}.`;
   const url = safeClipUrl(detail.clipUrl);
@@ -1068,10 +1095,14 @@ function eventSummary(event: PipelineEvent, errands: readonly Errand[], calls: r
     }
     case 'speak': {
       const rank = num(detail.rank);
+      const pass = num(detail.pass);
+      const timed = Array.isArray(detail.words) ? detail.words.length : 0;
       const by = detail.stoppedBy;
       return [
         rank === null ? null : `option ${rank}`,
+        pass === null ? null : `pass ${pass}`,
         detail.channel === 'aloud' ? 'out loud' : detail.channel === 'earpiece' ? 'earpiece' : null,
+        timed > 0 ? formatCount(timed, 'word timing') : null,
         typeof by === 'string' && by in COMMAND_INFO ? `cut short by ${commandWord(by as CommandName)}` : null,
       ]
         .filter(Boolean)
@@ -1136,10 +1167,13 @@ export function feedItems(
 ): FeedItem[] {
   // Both lists are oldest first, so the newest `limit` of the two together are in their tails.
   const items = [
-    ...events.slice(-limit).map((event) => eventItem(event, errands, calls)),
     ...commands.slice(-limit).map(commandItem),
+    ...events.slice(-limit).map((event) => eventItem(event, errands, calls)),
   ];
-  items.sort((a, b) => b.at - a.at);
+  // Rows written in the same millisecond keep their written order, newest first: a scan's first read comes after its
+  // "scan started" row, and a step a command caused comes after the command.
+  const order = new Map(items.map((item, index) => [item, index] as const));
+  items.sort((a, b) => b.at - a.at || (order.get(b) ?? 0) - (order.get(a) ?? 0));
   return items.slice(0, limit);
 }
 

@@ -192,21 +192,45 @@ function firstCursor(s: ScanState): number {
 }
 
 /**
+ * The event key of the speak step for one read: `s<session>:read:<step_seq>` (docs/spacetime.md 14). A step number
+ * belongs to one session and is never reused, so the read is found from the session and the step alone, whatever the
+ * scan has moved on to since (a late word-timing report for an earlier question still finds its read).
+ */
+export function readEventKey(sessionId: bigint, stepSeq: bigint): string {
+  return `s${sessionId}:read:${stepSeq}`;
+}
+
+/**
  * Reading of one option (or the YesNo prompt). The option before it becomes the grace-window candidate only when
  * the scan moved on from it in order (`freshOption` false); a fresh start, a resume or a cancelled veto has none.
+ * Every read is its own speak step (module v2): one `pipeline_event` with the option id, rank, pass, step and dwell,
+ * numbers only, that the station's word timings attach to.
  */
 export function enterReading(ctx: Ctx, s: ScanState, cursor: number, opts: { freshOption?: boolean } = {}): ScanState {
   const cfg = getConfig(ctx.db);
   clearScanTimers(ctx, s.sessionId);
   const movingOn = !opts.freshOption && (s.phase.tag === 'Reading' || s.phase.tag === 'Window');
   const stepSeq = s.stepSeq + 1n;
-  let dwell: number;
-  if (s.answerMode.tag === 'YesNo') {
-    dwell = cfg.yesNoCueMs;
-  } else {
-    const o = optionAt(ctx.db, s.questionId, s.version, cursor);
-    dwell = (o?.clipMs ?? estimateClipMs(o?.text ?? '')) + cfg.audioPadMs;
-  }
+  const yesNo = s.answerMode.tag === 'YesNo';
+  const o = yesNo ? undefined : optionAt(ctx.db, s.questionId, s.version, cursor);
+  const dwell = yesNo ? cfg.yesNoCueMs : (o?.clipMs ?? estimateClipMs(o?.text ?? '')) + cfg.audioPadMs;
+  writePipeline(ctx, {
+    eventKey: readEventKey(s.sessionId, stepSeq),
+    sessionId: s.sessionId,
+    questionId: s.questionId,
+    stage: 'speak',
+    status: 'started',
+    detail: yesNo ? 'yes or no prompt' : 'reading option',
+    countsJson: JSON.stringify({
+      optionId: o ? Number(o.id) : 0,
+      rank: yesNo ? 0 : cursor,
+      pass: s.pass,
+      stepSeq: Number(stepSeq),
+      durationMs: dwell,
+      estimated: !yesNo && o?.clipMs === undefined,
+    }),
+    actor: 'Module',
+  });
   const next = saveScan(ctx, {
     ...s,
     phase: { tag: 'Reading' },
@@ -237,6 +261,59 @@ export function enterWindow(ctx: Ctx, s: ScanState): ScanState {
   });
   armScanTimer(ctx, next, 'StepEnd');
   return next;
+}
+
+// ---------- The station's word timings for a read (module v2) ----------
+
+/** At most this many words per read: an option is at most 200 characters, so 100 words leaves room. */
+export const MAX_TIMED_WORDS = 100;
+/** No word ends later than this into its clip: the longest clip `report_clip_ready` accepts. */
+export const MAX_WORD_MS = 30_000;
+
+/**
+ * `report_word_timings`: the station's word timings for one read (Cartesia's word timestamps, milliseconds into the
+ * clip), numbers only, never the words. The read is named by its session (step numbers restart in each session, so
+ * the report must name the session it heard; only the active one is accepted), the step it began at, and its option
+ * (0 for a yes or no prompt), so a report that arrives after the scan moved on still finds it. Only a read the module
+ * wrote counts. One row per read: a repeat is a retry and changes nothing.
+ */
+export function recordWordTimings(
+  ctx: Ctx,
+  session: Session,
+  sessionId: bigint,
+  stepSeq: bigint,
+  optionId: bigint,
+  startsMs: number[],
+  endsMs: number[],
+): void {
+  if (sessionId !== session.id) throw new SenderError('not the active session');
+  if (startsMs.length < 1 || startsMs.length > MAX_TIMED_WORDS) throw new SenderError(`word timings: 1 to ${MAX_TIMED_WORDS} words`);
+  if (endsMs.length !== startsMs.length) throw new SenderError('starts_ms and ends_ms must have the same length');
+  let previous = 0;
+  for (let i = 0; i < startsMs.length; i++) {
+    const start = startsMs[i]!;
+    const end = endsMs[i]!;
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start < previous || end < start || end > MAX_WORD_MS) {
+      throw new SenderError(`word timings must be in order, each end at or after its start, at most ${MAX_WORD_MS} ms`);
+    }
+    previous = start;
+  }
+  const read = ctx.db.pipelineEvent.eventKey.find(readEventKey(session.id, stepSeq));
+  if (!read || read.sessionId !== session.id || read.stage !== 'speak' || read.actor !== 'Module') throw new SenderError('no such read');
+  const counts = JSON.parse(read.countsJson) as { optionId?: number; rank?: number };
+  if (counts.optionId !== Number(optionId)) throw new SenderError('not the option read at that step');
+  if (ctx.db.wordTiming.eventId.find(read.id)) return; // a retry: one row per read
+  ctx.db.wordTiming.insert({
+    eventId: read.id,
+    sessionId: session.id,
+    questionId: read.questionId,
+    optionId,
+    rank: counts.rank ?? 0,
+    stepSeq,
+    startsMs,
+    endsMs,
+    at: ctx.timestamp,
+  });
 }
 
 /**
@@ -282,17 +359,13 @@ const OUTCOME_STATUS: Record<ScanOutcome['tag'], QuestionStatus['tag']> = {
   Cancelled: 'Cancelled',
 };
 
-const SELECT_LABEL: Record<ScanOutcome['tag'], string> = {
-  Picked: 'picked',
-  None: 'none of these',
-  NoPick: 'no pick',
-  Stopped: 'stopped',
-  Cancelled: 'cancelled',
-};
-
 /**
  * Ends a scan: Idle, the outcome, the question's status, the select and speak events, the ledger. A picked reply
  * becomes Released here, after its veto. Then a waiting question, if any, goes to Preparing.
+ *
+ * A select step means a pick (module v2, docs/spacetime.md 14): it is written only for a Picked outcome, with the
+ * option id and rank in its counts. Any other ending (none of these, no pick, stopped, cancelled, failed) writes no
+ * select step; the outcome stays on `scan_state` and the question, and a failed question shows on its plan step.
  */
 export function finishScan(ctx: Ctx, s: ScanState, given: Question | undefined, outcome: ScanOutcome['tag'], opts: FinishOpts): ScanState {
   clearScanTimers(ctx, s.sessionId);
@@ -324,19 +397,20 @@ export function finishScan(ctx: Ctx, s: ScanState, given: Question | undefined, 
     });
     // Further options for an ended question are of no use; its preview or remember jobs are left alone.
     cancelJobs(ctx, q.id, `question_${outcome.toLowerCase()}`, { kind: 'Options' });
-    const pickedPayload = outcome === 'Picked' && o ? JSON.stringify({ optionId: Number(o.id), rank: o.rank, text: o.text }) : '';
-    writePipeline(ctx, {
-      eventKey: `q${q.id}:select`,
-      sessionId: s.sessionId,
-      questionId: q.id,
-      stage: 'select',
-      status: outcome === 'Cancelled' && status === 'Failed' ? 'error' : 'ok',
-      detail: status === 'Failed' ? 'failed' : SELECT_LABEL[outcome],
-      ms: 0,
-      countsJson: JSON.stringify(outcome === 'Picked' && o ? { rank: o.rank, pass: s.pass } : { pass: s.pass }),
-      actor: 'Module',
-      payloadJson: pickedPayload,
-    });
+    if (outcome === 'Picked' && o) {
+      writePipeline(ctx, {
+        eventKey: `q${q.id}:select`,
+        sessionId: s.sessionId,
+        questionId: q.id,
+        stage: 'select',
+        status: 'ok',
+        detail: 'picked',
+        ms: 0,
+        countsJson: JSON.stringify({ optionId: Number(o.id), rank: o.rank, pass: s.pass }),
+        actor: 'Module',
+        payloadJson: JSON.stringify({ optionId: Number(o.id), rank: o.rank, text: o.text }),
+      });
+    }
     writePipeline(ctx, {
       eventKey: `q${q.id}:scan:end`,
       sessionId: s.sessionId,
@@ -617,7 +691,8 @@ export function pushIdle(ctx: Ctx, sessionId: bigint): void {
 
 /**
  * Pauses the scan, keeping the cursor so a resume re-reads the same option. A veto pick is cancelled (nothing is
- * said), and everything waiting for a confirm is voided. Returns whether anything changed.
+ * said), and everything waiting for a confirm is voided. A scan that already ended Picked keeps its pick (module v2):
+ * the outcome stays Picked, so `picked_option_id` and `picked_rank` stay with it. Returns whether anything changed.
  */
 export function pause(ctx: Ctx, s: ScanState, reason: PauseReason['tag'], opts: { actor: Actor; gestureId?: string; latencyMs?: number }): boolean {
   if (s.phase.tag === 'Paused') {
@@ -629,14 +704,15 @@ export function pause(ctx: Ctx, s: ScanState, reason: PauseReason['tag'], opts: 
     return true;
   }
   const midScan = s.phase.tag === 'Reading' || s.phase.tag === 'Window' || s.phase.tag === 'Veto';
+  const inVeto = s.phase.tag === 'Veto';
   clearScanTimers(ctx, s.sessionId);
   clearIdleTimers(ctx, s.sessionId);
   const next = saveScan(ctx, {
     ...s,
     phase: { tag: 'Paused' },
     resumeCursor: midScan ? s.cursor : 0,
-    pickedRank: undefined,
-    pickedOptionId: undefined,
+    pickedRank: inVeto ? undefined : s.pickedRank,
+    pickedOptionId: inVeto ? undefined : s.pickedOptionId,
     pauseReason: { tag: reason },
     pausedAt: ctx.timestamp,
     stepSeq: s.stepSeq + 1n,

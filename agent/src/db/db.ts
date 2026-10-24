@@ -1,22 +1,29 @@
 // The sidecar's only door to SpacetimeDB. Two implementations: MemoryDb (test/fake and offline runs) and the
 // SpacetimeDB adapter (src/db/spacetime-db.ts). Everything else in the package talks to this interface.
 
-import type { AgentQueueRow, CallQueueRow, ErrandQueueRow, ReducerArgs, ReducerName } from '../types.js';
+import type { AgentConsent, AgentQueueRow, CallQueueRow, ErrandQueueRow, ReducerArgs, ReducerName } from '../types.js';
 
 export interface AgentDb {
     /** The `agent_queue` view as it is now: Pending jobs plus jobs Claimed by this sidecar. */
     agentQueue(): readonly AgentQueueRow[];
     /** The `errand_queue` view: Confirmed errands plus Submitting errands claimed by this sidecar. */
     errandQueue(): readonly ErrandQueueRow[];
-    /** The `call_queue` view: Confirmed calls plus calls claimed by this sidecar. */
+    /** The `call_queue` view: Confirmed calls plus calls claimed by this sidecar, each with its CONFIRM's time. */
     callQueue(): readonly CallQueueRow[];
     /**
-     * When the person confirmed this call, by the module's clock (ms since the epoch), read from the public
-     * `board_calls` view; null when it is not known.
+     * The `agent_consent` view (module v2): the memory and web search consent the agent works under now, or null
+     * when it is not known (no row, or a row that does not match the contract). Unknown never counts as consent.
      */
-    callConfirmedAt(callId: bigint): number | null;
+    agentConsent(): AgentConsent | null;
     /**
-     * Calls `listener` after any change to the three views, and only while the subscription is applied, so a
+     * Calls `listener` at once (inside the update that carried it) for every `agent_consent` row the module sends with
+     * memory consent off, so a revocation followed at once by a new grant is still seen. Also whenever the connection
+     * or the subscription is lost: a revocation during the gap, given again before the views come back, would leave
+     * nothing behind. Returns a function that removes it.
+     */
+    onMemoryOff(listener: () => void): () => void;
+    /**
+     * Calls `listener` after any change to the agent views, and only while the subscription is applied, so a
      * listener never acts on a half-replayed cache. Returns a function that removes it.
      */
     onChange(listener: () => void): () => void;

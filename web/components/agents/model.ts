@@ -350,6 +350,7 @@ const reasonCodeSentences: ReadonlyMap<string, string> = new Map([
   ['window_closed', 'The confirm window closed without a double jaw clench.'],
   ['readback_not_finished', 'The read-back did not finish.'],
   ['no_consent', 'There is no consent on file.'],
+  ['confirm_expired', 'Too much time passed after the confirm.'],
 ]);
 
 const NO_REASON = 'No reason was recorded.';
@@ -365,16 +366,22 @@ function reasonFromCode(code: string | null | undefined): string | null {
   return trimmed ? (reasonCodeSentences.get(trimmed) ?? null) : null;
 }
 
+/**
+ * The command that stopped an errand or call, or hung a call up, as a sentence: the row names it by its command id
+ * (`stop_gesture_id`), and the command rows say which command it was. null when the row names none (a timer, a pause
+ * or a new question stopped it) or the command is not on screen.
+ */
+export function stopCommandSentence(row: { stopCommandId: string | null }, commands: readonly CommandEvent[]): string | null {
+  if (row.stopCommandId === null) return null;
+  const command = commands.find((event) => event.id === row.stopCommandId);
+  return command ? (commandStopSentences[command.command] ?? null) : null;
+}
+
 /** Why an errand or call was stopped: the row's sentence, else the command that stopped it, else its code. */
 export function stopReason(row: ReasonFields, commands: readonly CommandEvent[]): string {
   const own = screenSentence(row.reason);
   if (own) return own;
-  if (row.stopCommandId !== null) {
-    const command = commands.find((event) => event.id === row.stopCommandId);
-    const sentence = command ? commandStopSentences[command.command] : undefined;
-    if (sentence) return sentence;
-  }
-  return reasonFromCode(row.reasonCode) ?? NO_REASON;
+  return stopCommandSentence(row, commands) ?? reasonFromCode(row.reasonCode) ?? NO_REASON;
 }
 
 /** Why it was refused or failed, as one sentence. */
@@ -397,15 +404,38 @@ const callResultSentences: Readonly<Partial<Record<CallResult, string>>> = {
   unknown: 'The call did not report how it ended.',
 };
 
-/** How the call ended, in plain words: its own reason, else its result. null for a plain answered call. */
-export function callEndReason(call: CallRequest): string | null {
-  return callOwnReason(call) ?? (call.result ? (callResultSentences[call.result] ?? null) : null);
+/**
+ * How the call ended, in plain words: the command that hung it up when the row names one (`stop_gesture_id`, since
+ * module v2), else its own reason, else its result. null for a plain answered call.
+ */
+export function callEndReason(call: CallRequest, commands: readonly CommandEvent[] = []): string | null {
+  return stopCommandSentence(call, commands) ?? callOwnReason(call) ?? (call.result ? (callResultSentences[call.result] ?? null) : null);
 }
 
 /** docs/ui.md "Error": "The call ended: <reason>." */
 export function callFailedSentence(call: CallRequest): string {
   const own = callOwnReason(call);
   return own ? `The call ended: ${own}` : 'The call failed.';
+}
+
+/** The words every hold sentence carries, from the call agent or from the module (docs/spacetime.md 14). */
+const HOLD_WORDS = /on hold until someone checks/i;
+
+/**
+ * "Calls to <name> are on hold until someone checks." when the call agent put the contact on hold (`held`: an
+ * opt-out, or a hold file it could not read). A name only, never a number; with sharing off the name is the
+ * stand-in "Contact", so the sentence says "this contact", as the module's own sentence does. null when not held.
+ */
+export function callHoldSentence(call: CallRequest): string | null {
+  if (call.held !== true) return null;
+  const name = screenText(call.contactName);
+  return `Calls to ${name !== null && name !== 'Contact' ? name : 'this contact'} are on hold until someone checks.`;
+}
+
+/** The hold sentence, unless `shown` already carries one (the call's own reason may be that sentence). */
+export function callHoldNote(call: CallRequest, shown: string | null): string | null {
+  const hold = callHoldSentence(call);
+  return hold !== null && !(shown !== null && HOLD_WORDS.test(shown)) ? hold : null;
 }
 
 /* ------------------------------------------------------------------------------------------------
@@ -450,7 +480,18 @@ export function errandHeadline(errand: Errand, safety: SafetyWord): Headline {
   }
 }
 
-export function callHeadline(call: CallRequest, safety: SafetyWord): Headline {
+/**
+ * The sentence on top for a call. A finished call whose contact is now on hold says so last, in words, so the room
+ * knows no further call goes to that contact until someone checks.
+ */
+export function callHeadline(call: CallRequest, safety: SafetyWord, commands: readonly CommandEvent[] = []): Headline {
+  const headline = callHeadlineWithoutHold(call, safety, commands);
+  if (callMoving.has(call.status)) return headline;
+  const hold = callHoldNote(call, headline.text);
+  return hold === null ? headline : { status: headline.status, text: `${headline.text} ${hold}` };
+}
+
+function callHeadlineWithoutHold(call: CallRequest, safety: SafetyWord, commands: readonly CommandEvent[]): Headline {
   const paused = pauseWords(safety);
   const name = screenText(call.contactName) ?? 'the contact';
   if (paused && callStoppedByPause.has(call.status)) return { status: 'stopped', text: `${paused} Nobody will be called.` };
@@ -472,7 +513,7 @@ export function callHeadline(call: CallRequest, safety: SafetyWord): Headline {
     case 'ended': {
       const outcome = callOutcome(call);
       if (outcome === 'failed') return { status: 'failed', text: callFailedSentence(call) };
-      const reason = callEndReason(call);
+      const reason = callEndReason(call, commands);
       return { status: outcome, text: reason ? `The call ended. ${reason}` : 'The call ended.' };
     }
     case 'failed':

@@ -4,7 +4,7 @@ import { afterEach, describe, it } from 'node:test';
 import { ApifyHttpError, type HttpErrorKind, type RefusalCode } from '@say-when/apify-client';
 import type { RunErrorCode } from '@say-when/moss';
 
-import { DETAIL_PATTERN } from '../src/contract.js';
+import { DETAIL_PATTERN, MODULE_EVENT_KEY } from '../src/contract.js';
 import { countsJson, label, payloadJson } from '../src/pipeline.js';
 import type { PlannerErrorCode } from '../src/planner/types.js';
 import { excerpt, maskPageText, memoryHitPayload, searchRowPayload } from '../src/privacy.js';
@@ -220,6 +220,18 @@ function checkPublicEvents(h: Harness): void {
 describe('privacy', () => {
     it('keeps every piece of content out of the public pipeline events', async () => {
         checkPublicEvents(await fullFlow());
+    });
+
+    it('writes no speak, listen or select step and no key under a module prefix: the module writes those itself', async () => {
+        const h = await fullFlow();
+        const progress = h.db.attempted.filter((a) => a.name === 'agentProgress').map((a) => a.args as { jobId: bigint; eventKey: string; stage: string });
+        assert.ok(progress.some((e) => e.stage === 'plan') && progress.some((e) => e.stage === 'errand'), 'the run wrote the sidecar\'s own steps');
+        for (const event of progress) {
+            assert.ok(['search', 'retrieve', 'plan', 'errand'].includes(event.stage), `the sidecar wrote a ${event.stage} step`);
+            assert.doesNotMatch(event.eventKey, MODULE_EVENT_KEY);
+            assert.ok(event.eventKey.startsWith(`${event.jobId}:`), 'every key starts with its job id');
+        }
+        assert.ok(!h.log.entries.some((e) => e.message === 'a pipeline event was not written'), 'the module took every event');
     });
 
     it('keeps content out of the public events on the failure paths too', async () => {

@@ -41,6 +41,7 @@ import {
   optionsOf,
   pause,
   pushIdle,
+  recordWordTimings,
   releaseReply,
   resume,
   startScan,
@@ -108,11 +109,15 @@ import type { Ctx } from './ctx';
 export default spacetimedb;
 
 export {
+  agentConsent,
   agentQueue,
   boardCalls,
   boardErrands,
+  boardEvents,
   boardLedger,
   boardPayloads,
+  boardSessionLedger,
+  boardWordTimings,
   callQueue,
   errandQueue,
   myOptions,
@@ -323,12 +328,15 @@ export const endSession = spacetimedb.reducer((ctx) => {
   for (const r of [...ctx.db.livenessLease.sessionId.filter(session.id)]) ctx.db.livenessLease.scheduledId.delete(r.scheduledId);
   for (const r of [...ctx.db.idleTimer.sessionId.filter(session.id)]) ctx.db.idleTimer.scheduledId.delete(r.scheduledId);
   const s = getScan(ctx.db, session.id);
+  // A scan still open (or paused before it ended) ends Cancelled with no pick. One that already ended keeps its outcome
+  // and, for Picked, its pick (module v2): the board still names the option the person chose.
+  const open = isScanActive(s) || (s.phase.tag === 'Paused' && s.outcome === undefined);
   ctx.db.scanState.sessionId.update({
     ...s,
     phase: { tag: 'Idle' },
-    outcome: isScanActive(s) || s.phase.tag === 'Paused' ? { tag: 'Cancelled' } : s.outcome,
-    pickedRank: undefined,
-    pickedOptionId: undefined,
+    outcome: open ? { tag: 'Cancelled' } : s.outcome,
+    pickedRank: open ? undefined : s.pickedRank,
+    pickedOptionId: open ? undefined : s.pickedOptionId,
     pauseReason: undefined,
     pausedAt: undefined,
     stepSeq: s.stepSeq + 1n,
@@ -375,6 +383,7 @@ export const purgeSession = spacetimedb.reducer({ sessionId: t.u64() }, (ctx, { 
     ctx.db.question.id.delete(q.id);
   }
   for (const p of [...ctx.db.pipelinePayload.payloadBySession.filter(sessionId)]) ctx.db.pipelinePayload.eventId.delete(p.eventId);
+  for (const w of [...ctx.db.wordTiming.timingBySession.filter(sessionId)]) ctx.db.wordTiming.eventId.delete(w.eventId);
   for (const g of [...ctx.db.gestureLog.gestureBySession.filter(sessionId)]) {
     if (!ctx.db.spentGesture.gestureId.find(g.gestureId)) ctx.db.spentGesture.insert({ gestureId: g.gestureId, spentAt: ctx.timestamp });
     ctx.db.gestureLog.gestureId.delete(g.gestureId);
@@ -537,6 +546,20 @@ export const reportReadbackDone = spacetimedb.reducer(
   (ctx, { kind, id, digest }) => {
     const { session } = requireStation(ctx);
     readbackDone(ctx, session, kind, id, digest);
+  },
+);
+
+/**
+ * Module v2: the word timings of one read, from Cartesia's word timestamps for the clip the station played. The
+ * read is its session (the active one), the step it began at and its option (0 for a yes or no prompt). Numbers
+ * only, at most 100 words, each end at or after its start, at most 30000 ms; one row per read, so a repeat is a
+ * retry (clock.ts `recordWordTimings`).
+ */
+export const reportWordTimings = spacetimedb.reducer(
+  { sessionId: t.u64(), stepSeq: t.u64(), optionId: t.u64(), startsMs: t.array(t.u32()), endsMs: t.array(t.u32()) },
+  (ctx, { sessionId, stepSeq, optionId, startsMs, endsMs }) => {
+    const { session } = requireStation(ctx);
+    recordWordTimings(ctx, session, sessionId, stepSeq, optionId, startsMs, endsMs);
   },
 );
 

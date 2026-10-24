@@ -133,6 +133,10 @@ const SAY: Record<string, string> = {
   expired: 'That call is no longer ready. No call was made.',
   duplicate_request: 'That call was already set up once. No call was made.',
   line_busy: 'A call is already in progress. No call was made.',
+  // Module v2 (docs/spacetime.md 14).
+  confirm_expired: 'Too much time passed after the confirm. Nothing was sent.',
+  opt_out_hold: 'Calls to this contact are on hold until someone checks.',
+  hold_file_error: 'Calls to this contact are on hold until someone checks.',
 };
 
 function sayFor(code: string, isCall: boolean): string {
@@ -259,6 +263,31 @@ function callDeadlinePassed(ctx: Ctx, callId: bigint, kind: CallTimerKind['tag']
     if (r.kind.tag === kind && r.seq === seq && timerDue(r, ctx.timestamp)) return true;
   }
   return false;
+}
+
+/**
+ * How long a CONFIRM may wait for `claim_call` (module v2): the oldest a CONFIRM may be when the sidecar places the
+ * call (`CONFIRM_MAX_AGE_MS` in agent/src/calls.ts). The Dialer then measures its own 30 s window from `place()`.
+ * After this the claim is refused and the ConfirmWindow timer, re-armed at the CONFIRM, stops the call.
+ */
+export const CALL_CLAIM_MS = 12_000;
+
+/** The CONFIRM is too old to dial on: elapsed time decides, whichever timer ran first. */
+export function confirmExpired(c: CallRequest, now: Timestamp): boolean {
+  return !c.confirmedAt || msBetween(now, c.confirmedAt) >= CALL_CLAIM_MS;
+}
+
+/** Reason codes that mean the Dialer put the contact on hold (`cartesia/src/call.ts`, the sidecar's final report). */
+const HOLD_CODES: ReadonlySet<string> = new Set(['opt_out_hold', 'hold_file_error']);
+/** The Dialer's hold sentence, which every held outcome's reason carries ("Calls to Leon are on hold until someone checks."). */
+const HOLD_SENTENCE_RE = /are on hold until someone checks/;
+
+/**
+ * The contact is on hold after this call, content-free (module v2): a hold code, or the Dialer's hold sentence in the
+ * stored reason (a failed, unknown or refused outcome keeps its own code and says the hold in its sentence).
+ */
+export function isHeld(c: CallRequest): boolean {
+  return HOLD_CODES.has(c.reasonCode) || HOLD_SENTENCE_RE.test(c.reason);
 }
 
 function callEvent(ctx: Ctx, c: CallRequest, key: string, status: 'started' | 'ok' | 'error', detail: string, actor: Actor = 'Module'): void {
@@ -720,7 +749,8 @@ export function confirmCall(ctx: Ctx, s: Session, c: CallRequest, g: ConfirmInpu
     confirmGestureId: g.gestureId,
     confirmedAt: ctx.timestamp,
   });
-  clearCallTimers(ctx, c.id, ['ConfirmWindow']);
+  // The window timer now guards the claim (module v2): a call nobody claims within CALL_CLAIM_MS is stopped.
+  armCallTimer(ctx, c.id, 'ConfirmWindow', c.windowSeq, plusMs(ctx.timestamp, CALL_CLAIM_MS));
   emitCue(ctx, s.id, 'confirmed', { callId: c.id, questionId: c.questionId });
   appendLedger(ctx, s.id, 'call', 'Station', {
     callId: c.id,
@@ -981,6 +1011,8 @@ export function claimCall(ctx: Ctx, callId: bigint, digest: string): CallRequest
   if (c.status.tag !== 'Confirmed') throw new SenderError('call is not confirmed');
   if (digest !== c.scriptDigest) throw new SenderError('digest mismatch');
   if (!hasConsent(ctx.db, 'Call', c.contactId)) throw new SenderError('no call consent');
+  // A stale CONFIRM cannot dial (module v2). Checked before `line busy`, which the sidecar retries: this one is final.
+  if (confirmExpired(c, ctx.timestamp)) throw new SenderError('confirm expired');
   requirePresent(ctx, c.sessionId);
   if (lineBusy(ctx.db, c.sessionId, c.id)) throw new SenderError('line busy');
   const cfg = getConfig(ctx.db);
@@ -992,6 +1024,7 @@ export function claimCall(ctx: Ctx, callId: bigint, digest: string): CallRequest
     claimedBy: ctx.sender,
     dialedAt: ctx.timestamp,
   });
+  clearCallTimers(ctx, c.id, ['ConfirmWindow']);
   armCallTimer(ctx, c.id, 'Lease', attempt, plusMs(ctx.timestamp, cfg.callLeaseMs));
   appendLedger(ctx, c.sessionId, 'call', 'Agent', { callId: c.id, questionId: c.questionId, digest, outcome: 'dialing', reason: `attempt:${attempt}` });
   callEvent(ctx, next, 'dialing', 'started', 'dialing', 'Agent');
@@ -1044,11 +1077,16 @@ export function reportCallStatus(ctx: Ctx, callId: bigint, r: CallStatusInput): 
   // report still lands (it ends the call and says how), until `call_timeout` has marked the call unknown.
   if (!terminal && callLeaseLapsed(ctx, c)) return;
   const patch: Partial<CallRequest> = {};
+  // The code reaches the public ledger and board: only a code from the fixed list, whatever the Dialer sent. An
+  // ended call keeps a listed code (the hold codes `opt_out_hold`, `hold_file_error`) and drops any other.
+  const code =
+    r.status === 'ended' ? publicCode(r.reasonCode, '') : publicCode(r.reasonCode, r.status === 'refused' ? 'refused' : 'call_failed');
   if (r.status === 'ringing') Object.assign(patch, { status: { tag: 'Ringing' }, ringingAt: ctx.timestamp });
   if (r.status === 'connected') Object.assign(patch, { status: { tag: 'Connected' }, connectedAt: ctx.timestamp });
-  if (r.status === 'ended') Object.assign(patch, { status: { tag: 'Ended' }, result: r.result || 'answered', endReason: r.endReason, endedAt: ctx.timestamp });
-  // The code reaches the public ledger and board: only a code from the fixed list, whatever the Dialer sent.
-  const code = publicCode(r.reasonCode, r.status === 'refused' ? 'refused' : 'call_failed');
+  // Module v2: an ended call keeps its reason, so "Calls to <name> are on hold until someone checks" reaches the board.
+  if (r.status === 'ended') {
+    Object.assign(patch, { status: { tag: 'Ended' }, result: r.result || 'answered', endReason: r.endReason, reasonCode: code, reason: r.reason, endedAt: ctx.timestamp });
+  }
   if (r.status === 'failed') Object.assign(patch, { status: { tag: 'Failed' }, result: r.result || 'failed', endReason: r.endReason, reasonCode: code, reason: r.reason, endedAt: ctx.timestamp });
   if (r.status === 'refused') Object.assign(patch, { status: { tag: 'Refused' }, result: 'refused', reasonCode: code, reason: r.reason, endedAt: ctx.timestamp });
   const next = saveCall(ctx, { ...c, ...patch });
@@ -1072,7 +1110,12 @@ export function addCallLine(ctx: Ctx, callId: bigint, attempt: number, lineKey: 
   ctx.db.callLine.insert({ id: 0n, callId, lineKey, role, text, at: ctx.timestamp });
 }
 
-/** `call_timeout`: Readback and ConfirmWindow stop the call; a lapsed dial lease is Failed with `unknown`. */
+/**
+ * `call_timeout`: Readback and ConfirmWindow stop the call; a lapsed dial lease is Failed with `unknown`. After the
+ * CONFIRM the ConfirmWindow timer guards the claim (module v2): a call still Confirmed once CALL_CLAIM_MS has passed
+ * since the CONFIRM is stopped (`confirm_expired`). Elapsed time decides, so an older window row of the same seq that
+ * runs early does nothing.
+ */
 export function callTimedOut(ctx: Ctx, callId: bigint, kind: CallTimerKind['tag'], seq: number): void {
   const c = ctx.db.callRequest.id.find(callId);
   if (!c) return;
@@ -1081,7 +1124,9 @@ export function callTimedOut(ctx: Ctx, callId: bigint, kind: CallTimerKind['tag'
       if (c.status.tag === 'Prepared' && seq === c.windowSeq) stopCall(ctx, c, 'readback_not_finished', { actor: 'Scheduler' });
       return;
     case 'ConfirmWindow':
-      if (c.status.tag === 'AwaitingConfirm' && seq === c.windowSeq) stopCall(ctx, c, 'window_closed', { actor: 'Scheduler' });
+      if (seq !== c.windowSeq) return;
+      if (c.status.tag === 'AwaitingConfirm') stopCall(ctx, c, 'window_closed', { actor: 'Scheduler' });
+      else if (c.status.tag === 'Confirmed' && confirmExpired(c, ctx.timestamp)) stopCall(ctx, c, 'confirm_expired', { actor: 'Scheduler' });
       return;
     case 'Lease': {
       if (!isCallLive(c) || seq !== c.claimAttempt) return;

@@ -10,7 +10,7 @@ import type { Timestamp } from 'spacetimedb';
 
 import { DbConnection } from '../../spacetime/bindings/agent/index';
 import type { Camel } from '../src/contract';
-import { BOARD_CALLS, REDUCERS, VIEWS } from '../src/contract';
+import { REDUCERS, VIEWS } from '../src/contract';
 import type { BuilderLike, ConnectionLike } from '../src/db/spacetime-db';
 import type { CallStatus, ErrandStatus, JobKind, JobStatus, MenuItem, Origin, ReducerArgs, ReducerName } from '../src/types';
 
@@ -24,8 +24,8 @@ type RowOf<T extends { onInsert: (...args: never[]) => unknown }> = Parameters<P
 type AgentQueueItem = RowOf<Db['agentQueue']>;
 type ErrandQueueItem = RowOf<Db['errandQueue']>;
 type CallQueueItem = RowOf<Db['callQueue']>;
+type AgentConsentItem = RowOf<Db['agentConsent']>;
 type DeviceStatusItem = RowOf<Db['deviceStatus']>;
-type BoardCallItem = RowOf<Db['boardCalls']>;
 
 // The view rows carry every field the adapter reads.
 type FieldsOf<V extends keyof typeof VIEWS> = Camel<(typeof VIEWS)[V]['fields'][number]>;
@@ -33,15 +33,22 @@ export type ViewFieldsExist = [
     Assert<[FieldsOf<'agentQueue'>] extends [keyof AgentQueueItem] ? true : false>,
     Assert<[FieldsOf<'errandQueue'>] extends [keyof ErrandQueueItem] ? true : false>,
     Assert<[FieldsOf<'callQueue'>] extends [keyof CallQueueItem] ? true : false>,
+    Assert<[FieldsOf<'agentConsent'>] extends [keyof AgentConsentItem] ? true : false>,
     Assert<['identity' | 'role'] extends [keyof DeviceStatusItem] ? true : false>,
-    Assert<[Camel<(typeof BOARD_CALLS)['fields'][number]>] extends [keyof BoardCallItem] ? true : false>,
 ];
 
-// The call board gives the call's id as a u64 and the CONFIRM's time as an optional timestamp, which is what
-// callConfirmedAt in spacetime-db.ts reads (u64Of, then millisOf, which takes a Timestamp or undefined).
-export type BoardCallTypes = [
-    Assert<Equal<BoardCallItem['callId'], bigint>>,
-    Assert<Equal<BoardCallItem['confirmedAt'], Timestamp | undefined>>,
+// `call_queue` gives the call's id as a u64 and the CONFIRM's time as an optional timestamp (module v2), which is
+// what toCallQueueRow in spacetime-db.ts reads (u64Of, then millisOf, which takes a Timestamp or undefined).
+export type CallQueueTypes = [
+    Assert<Equal<CallQueueItem['callId'], bigint>>,
+    Assert<Equal<CallQueueItem['confirmedAt'], Timestamp | undefined>>,
+];
+
+// `agent_consent` (module v2) gives the session as a u64 and both consents as booleans (toAgentConsent).
+export type AgentConsentTypes = [
+    Assert<Equal<AgentConsentItem['sessionId'], bigint>>,
+    Assert<Equal<AgentConsentItem['memoryAllowed'], boolean>>,
+    Assert<Equal<AgentConsentItem['webSearchAllowed'], boolean>>,
 ];
 
 // Each reducer's argument object has exactly the names in src/contract.ts, in camelCase.

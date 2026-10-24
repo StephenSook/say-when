@@ -187,21 +187,24 @@ interface ConsentNow {
 }
 
 /**
- * The job's consent flags as the module shows them now. Revoking web search or memory consent clears them on jobs
- * already running (spacetime/src/consent.ts, stopUncovered), so they are read again right before each use. It fails
- * closed: while the views are not current (disconnected, or the subscription not applied again yet) a revocation
- * could be missing from them, and a job no longer claimed by this attempt is about to be aborted, so neither gets
- * anything.
+ * The consent this attempt works under, as the module shows it now: the job's own flags AND the module's current
+ * consent (`agent_consent`, module v2). Revoking web search or memory consent clears the flags on jobs already
+ * running (spacetime/src/consent.ts, stopUncovered) and shows in `agent_consent`, so both are read again right
+ * before each use. It fails closed: while the views are not current (disconnected, or the subscription not applied
+ * again yet) a revocation could be missing from them, a job no longer claimed by this attempt is about to be aborted,
+ * and an `agent_consent` the sidecar cannot read is not consent, so none of them gets anything.
  */
 function consentNow(deps: JobDeps, row: AgentQueueRow, attempt: number): ConsentNow {
     const none = { webSearchAllowed: false, memoryAllowed: false, memoryRevoked: false };
     if (!deps.db.isCurrent()) return none;
     const now = deps.db.agentQueue().find((r) => r.jobId === row.jobId && r.status === 'claimed' && r.claimedByMe && r.attempt === attempt);
     if (!now) return none;
+    const module = deps.db.agentConsent();
+    if (!module) return { ...none, memoryRevoked: !now.memoryAllowed };
     return {
-        webSearchAllowed: row.webSearchAllowed && now.webSearchAllowed,
-        memoryAllowed: row.memoryAllowed && now.memoryAllowed,
-        memoryRevoked: !now.memoryAllowed,
+        webSearchAllowed: row.webSearchAllowed && now.webSearchAllowed && module.webSearchAllowed,
+        memoryAllowed: row.memoryAllowed && now.memoryAllowed && module.memoryAllowed,
+        memoryRevoked: !now.memoryAllowed || !module.memoryAllowed,
     };
 }
 
