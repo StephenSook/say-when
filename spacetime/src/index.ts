@@ -170,10 +170,11 @@ export const requestPairing = spacetimedb.reducer(
     if (!Number.isInteger(code) || code < 100000 || code > 999999) throw new SenderError('code must be 6 digits');
     const r = parseRole(role);
     requireText(label, 'label', 40);
-    // The try sandbox (sandbox.ts): no owner at the table, so a Station, Partner or Speaker is paired at once, never as
-    // a caregiver. An Agent still waits for the owner.
+    // The try sandbox (sandbox.ts): no owner at the table, so a Station is paired at once, never as a caregiver. A try
+    // page asks and says the reply through its own station, so no Partner or Speaker device ever outlives a try; they,
+    // and an Agent, still wait for the owner.
     const sandbox = sandboxOn(ctx.db);
-    if (sandbox && r.tag !== 'Agent') {
+    if (sandbox && r.tag === 'Station') {
       requireMeter(ctx, 'pairings', HOUR_MS, sandbox.pairingsPerHour, 'too many new devices this hour');
       const waiting = ctx.db.pairingRequest.requester.find(ctx.sender);
       if (waiting) ctx.db.pairingRequest.code.delete(waiting.code);
@@ -461,7 +462,8 @@ export const purgeSession = spacetimedb.reducer({ sessionId: t.u64() }, (ctx, { 
 export const askQuestion = spacetimedb.reducer(
   { requestId: t.string(), text: t.string(), via: t.string(), listenMs: t.u32() },
   (ctx, { requestId, text, via, listenMs }) => {
-    requireRoleOrOwner(ctx, 'Partner');
+    // In the try sandbox the try's own station asks too (sandbox.ts); any other caller needs the Partner role.
+    if (!isTryStation(ctx)) requireRoleOrOwner(ctx, 'Partner');
     const session = requireActiveSession(ctx);
     requireMatch(requestId, REQUEST_ID_RE, 'request_id');
     if (ctx.db.question.requestId.find(requestId)) return;
@@ -699,9 +701,12 @@ export const gesture = spacetimedb.reducer(
 // ---------- The speaker (3.5) ----------
 
 export const replySpoken = spacetimedb.reducer({ questionId: t.u64(), ms: t.u32() }, (ctx, { questionId, ms }) => {
-  requireRole(ctx, 'Speaker');
+  // In the try sandbox the try's own station says its reply (sandbox.ts), and only for a question of its own try.
+  const tryStation = isTryStation(ctx);
+  if (!tryStation) requireRole(ctx, 'Speaker');
   const q = ctx.db.question.id.find(questionId);
   if (!q) throw new SenderError('no such question');
+  if (tryStation && q.sessionId !== activeSession(ctx.db)?.id) throw new SenderError('not allowed');
   if (q.status.tag === 'Spoken') return; // a second speaker
   if (q.status.tag !== 'Released') throw new SenderError('reply is not released');
   ctx.db.question.id.update({ ...q, status: { tag: 'Spoken' }, spokenAt: ctx.timestamp, endedAt: ctx.timestamp });
@@ -723,9 +728,18 @@ export const replySpoken = spacetimedb.reducer({ questionId: t.u64(), ms: t.u32(
       durationMs: ms,
     }),
   });
-  appendLedger(ctx, q.sessionId, 'reply_spoken', 'Speaker', { questionId: q.id, optionId: picked?.id, ms });
-  if (hasConsent(ctx.db, 'Memory', '')) createJob(ctx, 'Remember', { sessionId: q.sessionId, questionId: q.id, memoryAllowed: true });
+  appendLedger(ctx, q.sessionId, 'reply_spoken', tryStation ? 'Station' : 'Speaker', { questionId: q.id, optionId: picked?.id, ms });
+  // The sandbox's memory holds only its sample notes: one judge's words are never recalled for the next judge.
+  if (hasConsent(ctx.db, 'Memory', '') && !sandboxOn(ctx.db)) createJob(ctx, 'Remember', { sessionId: q.sessionId, questionId: q.id, memoryAllowed: true });
 });
+
+/** The try sandbox is on, and the caller is the Station that armed the active session (its try). */
+function isTryStation(ctx: Ctx): boolean {
+  if (!sandboxOn(ctx.db)) return false;
+  const d = deviceOf(ctx.db, ctx.sender);
+  const session = activeSession(ctx.db);
+  return !!d && d.role.tag === 'Station' && !!session && session.station.isEqual(ctx.sender);
+}
 
 // ---------- The agent sidecar (3.6, 3.7) ----------
 

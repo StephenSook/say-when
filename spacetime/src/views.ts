@@ -6,6 +6,7 @@
 import { t } from 'spacetimedb/server';
 import { optionsOf } from './clock';
 import { hasConsent, isHeld, publicReason } from './consent';
+import { sandboxOn } from './sandbox';
 import { publicCode } from './util';
 import type { AnonContext, ReadDb, ViewContext } from './ctx';
 import spacetimedb, {
@@ -290,6 +291,16 @@ function activeSessionId(db: ReadDb): bigint {
   return s && s.endedAt === undefined ? id : 0n;
 }
 
+/**
+ * The active session a Station may read: any Station normally; in the try sandbox only the Station that armed it, so
+ * an earlier judge's page never reads the next judge's try (sandbox.ts). 0n for none.
+ */
+function stationSessionId(db: ReadDb, sender: ViewContext['sender']): bigint {
+  const id = activeSessionId(db);
+  if (id === 0n || !sandboxOn(db)) return id;
+  return db.session.id.find(id)?.station.isEqual(sender) ? id : 0n;
+}
+
 function sharing(db: ReadDb): boolean {
   return db.config.id.find(0)?.shareTextOnBoard ?? false;
 }
@@ -355,7 +366,7 @@ function partnerAction(db: ReadDb, q: Question): string {
 export const mySession = spacetimedb.view({ public: true }, t.option(SessionView), (ctx) => {
   const role = liveRole(ctx.db, ctx.sender);
   if (role !== 'Station' && role !== 'Speaker') return undefined;
-  const sessionId = activeSessionId(ctx.db);
+  const sessionId = role === 'Station' ? stationSessionId(ctx.db, ctx.sender) : activeSessionId(ctx.db);
   if (sessionId === 0n) return undefined;
   const empty = {
     sessionId,
@@ -428,7 +439,7 @@ export const mySession = spacetimedb.view({ public: true }, t.option(SessionView
 /** Station only: the options of the scanned version and of a waiting newer version, to synthesize early. */
 export const myOptions = spacetimedb.view({ public: true }, t.array(StationOption), (ctx) => {
   if (liveRole(ctx.db, ctx.sender) !== 'Station') return [];
-  const sessionId = activeSessionId(ctx.db);
+  const sessionId = stationSessionId(ctx.db, ctx.sender);
   const scan = sessionId === 0n ? undefined : ctx.db.scanState.sessionId.find(sessionId);
   if (!scan || scan.questionId === 0n) return [];
   const q = ctx.db.question.id.find(scan.questionId);
