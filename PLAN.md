@@ -4,7 +4,7 @@
 
 **Project:** Screenless reply and errand assistant for people who cannot speak or use their hands, driven by four head-worn switch commands.
 **Team:** Stephen (the whole backend: SpacetimeDB, the agent sidecar and Claude planner, errand and call wiring, telemetry; all UI/UX; Apify, Moss, Cartesia), Khadim (no rows assigned yet, see Q8), Shashank (headset, decoder, calibration, brain test), Leon (user consult, consent, demo video)
-**Deadline:** Sunday Oct 25, 8:50 AM PDT submission. Judging 10:30 AM to 12:30 PM.
+**Deadline:** Submit on Devpost (cal-hacks-13-0.devpost.com; an organizer confirmed Devpost is the final submission, Oct 24 1:43am PT) by Sunday Oct 25, 8:50 AM PDT. Devpost itself closes at 9:00 AM; we aim for the earlier time. Judging 10:30 AM to 12:30 PM, whole team at the table. Winners announced 4:00 PM.
 **Repo:** https://github.com/StephenSook/say-when
 
 ---
