@@ -187,6 +187,20 @@ describe('the sandbox settings', () => {
         assert.ok(!JSON.stringify(checks).includes('secret-token-value'), 'a setting check never prints a value');
         assert.ok(readConfig({ ...base, AGENT_TRY_DAILY_CENTS: '0' }, '/tmp/t').problems.length > 0);
     });
+
+    it('keeps the health endpoint on loopback when AGENT_HEALTH_HOST says so, and refuses any other address', () => {
+        assert.equal(readConfig({ ...base }, '/tmp/t').config.healthHost, null, 'unset: every address, as on a host');
+        for (const host of ['127.0.0.1', '::1', 'localhost']) {
+            const result = readConfig({ ...base, PORT: '8791', AGENT_HEALTH_HOST: ` ${host} ` }, '/tmp/t');
+            assert.deepEqual(result.problems, []);
+            assert.equal(result.config.healthHost, host);
+        }
+        for (const host of ['0.0.0.0', '192.168.1.20', 'example.com']) {
+            const result = readConfig({ ...base, PORT: '8791', AGENT_HEALTH_HOST: host }, '/tmp/t');
+            assert.ok(result.problems.some((p) => p.includes('AGENT_HEALTH_HOST')), host);
+            assert.ok(!JSON.stringify(result.checks).includes(host), 'a setting check never prints a value');
+        }
+    });
 });
 
 describe('the sample notes', () => {
@@ -242,6 +256,35 @@ describe('the health endpoint', () => {
             assert.ok(!ok.body.includes('private question'));
             assert.ok(!ok.body.includes('a'.repeat(16)), 'no identity');
             assert.equal((await get(port, '/anything')).status, 404);
+        } finally {
+            server.close();
+            await settle(5);
+        }
+    });
+
+    it('listens only on the host it is given', async () => {
+        const server = startHealthServer(0, { database: 'say-when-demo', connected: () => true, paired: () => true, usage: () => null }, '127.0.0.1');
+        await new Promise((resolve) => server.once('listening', resolve));
+        const address = server.address();
+        try {
+            assert.ok(typeof address === 'object' && address !== null);
+            assert.equal(address.address, '127.0.0.1');
+            const ok = await get(address.port, '/healthz');
+            assert.equal(ok.status, 200);
+            assert.equal(JSON.parse(ok.body).sandbox, null);
+        } finally {
+            server.close();
+            await settle(5);
+        }
+    });
+
+    it('listens on every address without a host (a web service host), as before', async () => {
+        const server = startHealthServer(0, { database: 'say-when-try', connected: () => true, paired: () => true, usage: () => null });
+        await new Promise((resolve) => server.once('listening', resolve));
+        const address = server.address();
+        try {
+            assert.ok(typeof address === 'object' && address !== null);
+            assert.ok(address.address === '::' || address.address === '0.0.0.0', address.address);
         } finally {
             server.close();
             await settle(5);

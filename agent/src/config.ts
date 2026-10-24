@@ -17,6 +17,8 @@ export interface AgentConfig {
     sandbox: SandboxLimits | null;
     /** PORT: the health endpoint's port (a web service host sets it), or null for none. */
     port: number | null;
+    /** AGENT_HEALTH_HOST: the address the health endpoint listens on (`127.0.0.1` on a laptop), or null for every address. */
+    healthHost: string | null;
     planner: { model: string; effort: Effort; timeoutMs: number };
     search: { enabled: boolean; timeoutMs: number; placesNear: { lat: number; lng: number } | null };
     errands: { enabled: boolean };
@@ -234,12 +236,20 @@ export function readConfig(env: Env, tokenFileDefault: string, hasAnthropicProfi
     const token = (env.AGENT_TOKEN ?? '').trim() || null;
     checks.push({ name: 'AGENT_TOKEN', state: token ? 'set' : 'not set', note: token ? 'identity token from the environment; the token file is not used' : 'identity token from AGENT_TOKEN_FILE' });
     const port = has(env, 'PORT') ? integer(env, 'PORT', 0, 1, 65_535, checks, problems, 'health endpoint port') : null;
+    // A laptop run (scripts/demo-up.sh) keeps the endpoint on loopback, off the venue network; a host leaves it unset.
+    const healthHost = (env.AGENT_HEALTH_HOST ?? '').trim() || null;
+    if (healthHost !== null) {
+        const loopback = healthHost === '127.0.0.1' || healthHost === '::1' || healthHost === 'localhost';
+        checks.push({ name: 'AGENT_HEALTH_HOST', state: loopback ? 'set' : 'invalid', note: loopback ? 'health endpoint on this laptop only' : 'use 127.0.0.1, ::1 or localhost' });
+        if (!loopback) problems.push('AGENT_HEALTH_HOST must be 127.0.0.1, ::1 or localhost (leave it unset to listen on every address).');
+    }
 
     return {
         config: {
             spacetime: { uri, database, tokenFile, token },
             sandbox,
             port,
+            healthHost,
             planner: { model, effort, timeoutMs: plannerTimeout },
             search: { enabled: apify, timeoutMs: searchTimeoutMs, placesNear },
             errands: { enabled: apify && formErrand },

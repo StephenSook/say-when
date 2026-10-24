@@ -174,8 +174,11 @@ export interface HealthView {
     usage: () => SandboxUsage | null;
 }
 
-/** `GET /healthz` (and `/`) on `port`: numbers and yes or no only. Everything else is 404. */
-export function startHealthServer(port: number, view: HealthView): Server {
+/**
+ * `GET /healthz` (and `/`) on `port`: numbers and yes or no only. Everything else is 404. `host` limits the address it
+ * listens on (`127.0.0.1` on a laptop); without it, every address (a web service host).
+ */
+export function startHealthServer(port: number, view: HealthView, host?: string): Server {
     const server = createServer((req, res) => {
         const path = (req.url ?? '/').split('?')[0];
         if (req.method !== 'GET' || (path !== '/healthz' && path !== '/')) {
@@ -194,6 +197,7 @@ export function startHealthServer(port: number, view: HealthView): Server {
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'access-control-allow-origin': '*' });
         res.end(JSON.stringify(body));
     });
-    server.listen(port);
+    if (host) server.listen(port, host);
+    else server.listen(port);
     return server;
 }

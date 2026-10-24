@@ -199,14 +199,18 @@ async function run(result: ConfigResult, log: Logger): Promise<number> {
     orchestrator.start();
     const health =
         config.port !== null
-            ? startHealthServer(config.port, {
-                  database: config.spacetime.database,
-                  connected: () => db.isCurrent(),
-                  paired: () => db.isPairedAgent(),
-                  usage: () => meter?.usage() ?? null,
-              })
+            ? startHealthServer(
+                  config.port,
+                  {
+                      database: config.spacetime.database,
+                      connected: () => db.isCurrent(),
+                      paired: () => db.isPairedAgent(),
+                      usage: () => meter?.usage() ?? null,
+                  },
+                  config.healthHost ?? undefined,
+              )
             : null;
-    if (health) log.info('health endpoint is up', { port: config.port, path: '/healthz' });
+    if (health) log.info('health endpoint is up', { port: config.port, path: '/healthz', loopbackOnly: config.healthHost !== null });
     log.info('the sidecar is running; press Ctrl-C to stop');
 
     // `npm run warm` finds this process by its pid file and sends SIGUSR2: Moss opens here (or its idle clock starts

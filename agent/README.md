@@ -136,6 +136,7 @@ Names only; `.env.example` lists them all. Never commit real values.
 | `AGENT_TRY_DAILY_CENTS`, `AGENT_TRY_QUESTIONS_PER_HOUR`, `AGENT_TRY_PARTNERS_PER_HOUR` | the sandbox's caps | 500 (5 USD a day by the estimates), 10 questions per judge page per hour, 12 judge pages per hour |
 | `AGENT_TOKEN` | the sidecar's identity, from the environment | not set: the token file is used. Set: nothing is read from or written to disk (a host with no lasting disk) |
 | `PORT` | `GET /healthz` | not set: no endpoint. Set: numbers and yes or no only (connected, paired, the sandbox's spending and counts) |
+| `AGENT_HEALTH_HOST` | where `GET /healthz` listens | not set: every address (a web service host). `127.0.0.1`, `::1` or `localhost` keeps it on this laptop, off the venue network (`scripts/demo-up.sh` sets `127.0.0.1`); any other value stops the start |
 
 Each errand form also needs an Errand consent row in the module for its `formKey`, and each call contact a Call consent row for its id; the module refuses the pick otherwise.
 
