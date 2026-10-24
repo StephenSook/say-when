@@ -467,8 +467,9 @@ export function sourceLine(option: AnswerOption, hasWords: boolean): string {
   const sources = Array.isArray(option.sources) ? option.sources : [];
   const memory = sources.some((source) => source.source === 'memory');
   const sites = [...new Set(sources.filter((source) => source.source !== 'memory').map(siteOf))];
-  const web = sites.length === 0 ? null : `the web: ${sites[0]}${sites.length > 1 && !memory ? ` and ${sites.length - 1} more` : ''}`;
-  if (memory && web) return `From the person's notes and ${web}`;
+  const web = sites.length === 0 ? null : `the web: ${sites[0]}${sites.length > 1 ? ` and ${sites.length - 1} more` : ''}`;
+  // Both, kept short enough for one line on the card.
+  if (memory && web) return "From the person's notes and the web";
   if (memory) return "From the person's notes";
   if (web) return `From ${web}`;
   // With the room's sharing off the board holds back sources along with the words.

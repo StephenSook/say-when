@@ -26,7 +26,6 @@ import {
   Position,
   ReactFlow,
   ReactFlowProvider,
-  useNodesInitialized,
   useReactFlow,
   useStore,
   type Edge,
@@ -132,7 +131,7 @@ function CameraDirector({ camera, reduced }: { camera: CameraTarget; reduced: bo
   const flow = useReactFlow<FlowNode, FlowEdge>();
   const width = useStore((state) => state.width);
   const height = useStore((state) => state.height);
-  const measured = useNodesInitialized();
+  const count = useStore((state) => state.nodeLookup.size);
   const last = useRef<{ key: string; size: string } | null>(null);
 
   useEffect(() => {
@@ -140,25 +139,32 @@ function CameraDirector({ camera, reduced }: { camera: CameraTarget; reduced: bo
     const size = `${width}x${height}`;
     const before = last.current;
     if (before && before.key === camera.key && before.size === size) return;
-    // fitView needs the nodes measured; a rectangle target does not.
-    if (camera.nodeIds && !measured) return;
+    // fitView needs the nodes in React Flow's store (they carry their own width and height); a rectangle does not.
+    if (camera.nodeIds && count === 0) return;
     last.current = { key: camera.key, size };
     // The first frame and a resize jump straight there; only a new row moves the camera smoothly.
     const instant = reduced || before === null || before.key === camera.key;
     const duration = instant ? 0 : camera.intent === 'pick' ? PICK_MS : MOVE_MS;
+    const frameRect = () => flow.setViewport(cameraViewport(camera, width, height), { duration, interpolate: 'smooth' });
     if (camera.nodeIds && camera.nodeIds.length > 0) {
-      void flow.fitView({
-        nodes: camera.nodeIds.map((id) => ({ id })),
-        duration,
-        interpolate: 'smooth',
-        padding: 0.3,
-        minZoom: READABLE_ZOOM,
-        maxZoom: MAX_ZOOM,
-      });
+      // The pick: React Flow frames the picked option and what grew from it. If a node is not in its store yet,
+      // the same rectangle from the layout is framed instead.
+      void flow
+        .fitView({
+          nodes: camera.nodeIds.map((id) => ({ id })),
+          duration,
+          interpolate: 'smooth',
+          padding: 0.3,
+          minZoom: READABLE_ZOOM,
+          maxZoom: MAX_ZOOM,
+        })
+        .then((framed) => {
+          if (!framed) void frameRect();
+        });
       return;
     }
-    void flow.setViewport(cameraViewport(camera, width, height), { duration, interpolate: 'smooth' });
-  }, [camera, width, height, measured, reduced, flow]);
+    void frameRect();
+  }, [camera, width, height, count, reduced, flow]);
 
   return null;
 }

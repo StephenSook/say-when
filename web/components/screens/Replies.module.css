@@ -14,6 +14,13 @@
   margin-bottom: calc(-1 * var(--s12));
 }
 
+/* The title row spans the window too, lined up with the header's "Eleven". */
+.wide .head {
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
+  padding: 0 var(--s6);
+}
+
 .head {
   display: flex;
   align-items: center;

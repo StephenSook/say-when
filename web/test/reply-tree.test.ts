@@ -115,7 +115,7 @@ describe('the Suggested replies tree over the sample replay', () => {
     assert.deepEqual(opts.map((o) => o.source), [
       'From the web: example.net',
       'From the web: Google Maps',
-      "From the person's notes and the web: Google Maps",
+      "From the person's notes and the web",
       'Drafted',
     ]);
     assert.deepEqual(opts.map((o) => o.state), ['idle', 'reading', 'idle', 'idle'], 'option 2 is being read at 12 s');
