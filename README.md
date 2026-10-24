@@ -29,7 +29,7 @@ Every step writes to SpacetimeDB, so the dashboard on any laptop updates live ov
 | YES | Imagine squeezing your right fist | Picks the option just heard, or answers yes. While nothing is happening, it opens the person's own menu ("I need something", "Send a request", "Call", "Say something else"). |
 | NO | Imagine squeezing your left fist | Skips the option, or answers no. |
 | CONFIRM | Double jaw clench | The only way anything leaves the room: it sends the form or places the call that was just read back. |
-| STOP | Long jaw clench, about 1 second | Cancels, means "none of these", hangs up a call, and pauses. |
+| STOP | Single jaw clench | Cancels, means "none of these", hangs up a call, and pauses. |
 
 The brain makes the choices and the jaw commits or stops. Taking the headset off (HEADSET-OFF) and two minutes with no command (auto-pause) also cancel anything pending.
 

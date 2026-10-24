@@ -1,9 +1,9 @@
 # Eleven: Plan and Coordination
 
-> Living status doc for Stephen, Khadim, Shashank and Leon. Update it on every task change and push to `main`. This file is the single source of truth for who is working on what.
+> Living status doc for Stephen, Khadim and Shashank (Leon left the team on Oct 24). Update it on every task change and push to `main`. This file is the single source of truth for who is working on what.
 
 **Project:** Screenless reply and errand assistant for people who cannot speak or use their hands, driven by four head-worn switch commands.
-**Team:** Stephen (the whole backend: SpacetimeDB, the agent sidecar and Claude planner, errand and call wiring, telemetry; all UI/UX; Apify, Moss, Cartesia), Khadim (no rows assigned yet, see Q8), Shashank (headset, decoder, calibration, brain test), Leon (user consult, consent, demo video)
+**Team:** Stephen (the whole backend: SpacetimeDB, the agent sidecar and Claude planner, errand and call wiring, telemetry; all UI/UX; Apify, Moss, Cartesia), Khadim (Screen 1 live brain, the demo form, consent and the demo video), Shashank (headset, decoder, calibration, brain test)
 **Deadline:** Submit on Devpost (cal-hacks-13-0.devpost.com; an organizer confirmed Devpost is the final submission, Oct 24 1:43am PT) by Sunday Oct 25, 8:50 AM PDT. Devpost itself closes at 9:00 AM; we aim for the earlier time. Judging 10:30 AM to 12:30 PM, whole team at the table. Winners announced 4:00 PM.
 **Repo:** https://github.com/StephenSook/say-when
 
@@ -16,20 +16,20 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⛔ blocked
 | # | Component | File(s) | Owner | Status | Deps | Notes |
 |---|-----------|---------|-------|--------|------|-------|
 | 0.1 | Repo, PLAN.md, CI, hooks | `PLAN.md` | Stephen | ✅ | - | |
-| 1.1 | SpacetimeDB module: tables, reducers, views, scan clock, consent gate | `spacetime/` | Stephen | ✅ | - | Built, 155 tests, four Codex rounds, live as `say-when-dev` (smoke 17 of 17). Gap fixes for the dashboard and sidecar in progress (module v2) plus a clean `say-when-demo` database. Design in `docs/spacetime.md`; niche features in D12 |
+| 1.1 | SpacetimeDB module: tables, reducers, views, scan clock, consent gate | `spacetime/` | Stephen | ✅ | - | Built, 155 tests, four Codex rounds, live as `say-when-dev` (smoke 17 of 17). Module v2 live on `say-when-dev` and `say-when-demo` (both with the Cartesia key). Design in `docs/spacetime.md`; niche features in D12 |
 | 1.2 | Lock shared contracts (table and reducer names) | `PLAN.md` | Stephen | ✅ | 1.1 | Locked Oct 24 from `docs/spacetime.md` (see Shared Contracts below); announce changes with ⚠️ CONTRACT |
 | 2.1 | Headset reader and four-command decoder | `switch/` | Shashank | ⬜ | - | Which headset? See Q1 |
 | 2.2 | Calibration: per-person signal map and thresholds | `switch/` | Shashank | ⬜ | 2.1 | Idle false-activation rate goes on the dashboard |
-| 2.3 | STOP, HEADSET-OFF watchdog and idle auto-pause | `switch/` | Shashank | ⬜ | 2.1 | 0.5 s packet watchdog; long jaw clench is STOP |
+| 2.3 | STOP, HEADSET-OFF watchdog and idle auto-pause | `switch/` | Shashank | ⬜ | 2.1 | 0.5 s packet watchdog; a single jaw clench is STOP, a double is CONFIRM (D16) |
 | 2.4 | Brain commands: imagined right fist = YES, left fist = NO | `switch/` | Shashank | ⬜ | 2.2 | Needs a C3/C4 headset (Q1). Must pass `docs/brain-mode-test.md` (left vs right vs rest) at the venue; else jaw-only fallback. See D11 |
-| 3.1 | Partner speech to text (Cartesia Ink-2) | `cartesia/` | Stephen | ✅ | - | Built and tested offline (117 tests in `cartesia/`). Live smoke test pending |
+| 3.1 | Partner speech to text (Cartesia Ink-2) | `cartesia/` | Stephen | ✅ | - | Built and tested offline (117 tests in `cartesia/`). Live: voice asking with a test clip in progress; L3 on the real phone open |
 | 3.2 | Apify search and scrape client (RAG Web Browser, Google Maps) | `apify/client/` | Stephen | ✅ | - | Built, 166 tests, Codex round 1 fixed (4891a05) |
 | 3.3 | Moss retrieval over Apify results and memory | `moss/` | Stephen | ✅ | 3.2 | Built, 75 tests, six Codex rounds (last two clean). Memory first; text private unless shareable. First real Moss run pending |
-| 3.4 | Option planner (Claude, up to four options) | `agent/` | Stephen | ✅ | 3.2, 3.3 | Built in the sidecar (claude-haiku-5-5, structured output, strict checks), 191 tests on fakes, seven Codex rounds. First live run against Anthropic, Apify, Moss and say-when-dev pending (needs the API keys). Skips the web search when no outside facts are needed (D8) |
+| 3.4 | Option planner (Claude, up to four options) | `agent/` | Stephen | ✅ | 3.2, 3.3 | Built in the sidecar (claude-haiku-5-5, structured output, strict checks), 191 tests on fakes, seven Codex rounds. First end-to-end live run passed Oct 24 (docs/station.md 7.5). Skips the web search when no outside facts are needed (D8) |
 | 3.5 | Earpiece voice (Cartesia Sonic, pronunciation dictionary) | `cartesia/` | Stephen | ✅ | 3.4 | Built and tested offline. Nobody has heard Sonic say "Eleven" yet |
 | 4.1 | Form-errand Apify Actor: preview, read back, submit | `apify/form-errand/` | Stephen | ✅ | - | Public on the Apify Store: https://apify.com/stephensookra/confirm-gated-form-errand (build 0.1.3, includes the round 1 fixes). Now build 0.1.4 (round 2 fixes), verified on the platform: preview, submit, and a repeat submit refused as a duplicate |
-| 4.2 | Errand wiring: errand option or idle menu, read-back, CONFIRM, submit | `agent/` | Stephen | ✅ | 1.1, 4.1 | Built in the sidecar: preview, read-back digest, submit only after the module records a matching CONFIRM, unknown outcomes never retried. Live run pending. Errands and calls are options, not gestures (D11) |
-| 4.3 | Care team request form (demo target) | external | Leon | ⬜ | - | Owned by the consenting caregiver |
+| 4.2 | Errand wiring: errand option or idle menu, read-back, CONFIRM, submit | `agent/` | Stephen | ✅ | 1.1, 4.1 | Built in the sidecar: preview, read-back digest, submit only after the module records a matching CONFIRM, unknown outcomes never retried. Passed live Oct 24: read back, a fresh CONFIRM, sent 3.9 s later. Errands and calls are options, not gestures (D11) |
+| 4.3 | Care team request form (demo target) | external | Khadim | ⬜ | - | Owned by the consenting caregiver |
 | 4.4 | Outbound call agent (Cartesia Managed Agents) | `cartesia/` | Stephen | 🟡 | 1.1, 4.2 | Code built and tested offline. Still needed: create the agent from `cartesia/agent/*.txt`, consent re-confirmed under the Eleven name (D13), one live test call to a consenting number |
 | 5.0 | UI reference: `docs/ui.md` with tokens, wireframes and mockups | `docs/` | Stephen | ✅ | - | Open `docs/mockups/index.html`. Stephen builds the UI from it |
 | 5.1 | Dashboard shell: Next.js, SpacetimeDB WebSocket subscriptions, layout | `web/` | Stephen | ✅ | 1.1 | Built, 141 tests; reads the live module as an anonymous viewer, no login. See D7 |
@@ -40,10 +40,14 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⛔ blocked
 | 5.6 | Station page: the wearer's laptop | `web/` | Stephen | 🟡 | 1.1, 2.1 | Built (`/station`). L1 on `say-when-dev`, Oct 24, silent keyboard mode: pairing, session label `keyboard-test`, a pick, a pick 52 ms late that still took the option heard, a yes or no answer, the refractory ignore, the dead-man pause and resume (hidden page simulated), reload and continue; 11 of 13 steps pass. Not run: the voiced read-back and CONFIRM (step 8) until the module has the Cartesia key; the decoder from Shashank (L4); a real hidden window (5.2) |
 | 5.7 | Speaker page: the room voice | `web/` | Stephen | ✅ | 1.1 | Built (`/speaker`). L2 passed live on `say-when-dev`, Oct 24 about 10:02 to 10:20 AM (session 16, keyboard input, made-up content): each released reply said live without a reload and `reply_spoken` recorded, Missed after 20 s, the two-speakers warning (only after a reload: `approve_pairing` writes `online = false`, a module presence gap) |
 | 5.8 | Judge page | `web/` | Stephen | ✅ | 5.1 | Built (`/judge`, live on the Vercel site): a three-minute route, each database's public stats read live, and measured and not-measured lists, each line tested against the doc it cites |
-| 6.1 | Telemetry to Tiger Data (switch timing, latency) | `telemetry/` | Stephen | ✅ | 1.1 | Built: free Tiger service `neurolingo-telemetry` (TimescaleDB, us-east-1), schema verified live, pinned TLS, 134 tests. The writer reads switch events from SpacetimeDB, so the decoder needs no Tiger code. Not yet run during a real session. Telemetry only, no app state |
+| 6.1 | Telemetry to Tiger Data (switch timing, latency) | `telemetry/` | Stephen | ✅ | 1.1 | Built: free Tiger service `neurolingo-telemetry` (TimescaleDB, us-east-1), schema verified live, pinned TLS, 168 tests. The writer reads switch events from SpacetimeDB, so the decoder needs no Tiger code. Real sessions 13 and 15 ingested Oct 24, tagged keyboard (T1, sql/060); the writer runs live in the demo session. Telemetry only, no app state |
+| 5.9 | Screen 1: live brain (3D template brain, C3/C4 glow from measured mu and beta suppression, frequency strip) | `web/` (`/brain`) | Khadim | 🟡 | 2.1 | Brief: `Screen 1 build brief`; branch `screen1-brain`; data from the decoder on `ws://127.0.0.1:8766` (Shashank) |
+| 5.10 | Screen 2: suggested replies tree (saved notes, web, drafting; the pick zooms and turns green) | `web/` (`/replies`) | Stephen | 🟡 | 5.1 | Branch `screen2-tree`, React Flow, grown from `pipeline_event` rows |
+| 5.11 | Judge sandbox: a judge runs Eleven from the link (keyboard input, demo form only, calls off) | `web/`, `agent/` | Stephen | ⬜ | 3.4 | Needs a host for an always-on sidecar and Stephen to paste the keys there |
+| 5.12 | Stage view: one projector route that switches screens on events | `web/` (`/stage`) | Stephen | ⬜ | 5.9, 5.10 | |
 | 6.2 | Tiger compression policy and a measured ratio on our own rows | `telemetry/` | Stephen | ✅ | 6.1 | Columnstore on all 5 hypertables with a policy after 3 days (`sql/050`), verify 73 checks, three Codex rounds. Measured only on synthetic rows, where page minimums dominate: not a quotable ratio |
-| 7.1 | User consult and consent per surface | - | Leon | ⬜ | - | |
-| 7.2 | Demo script and video | `docs/` | Leon | ⬜ | 4.2 | |
+| 7.1 | User consult and consent per surface | - | Khadim | ⬜ | - | |
+| 7.2 | Demo script and video | `docs/` | Khadim | ⬜ | 4.2 | |
 | 7.3 | Devpost writeup | - | Stephen | ⬜ | 7.2 | |
 
 ---
@@ -146,9 +150,9 @@ The headset reads two things: imagined hand squeezes and the jaw. No eyes.
 | Imagine squeezing your right fist | YES | Pick this one, or answer yes. While idle, it opens the person's own menu. |
 | Imagine squeezing your left fist | NO | Skip, or answer no. |
 | Double jaw clench | CONFIRM | The only way anything leaves the room (a form or a call). |
-| Long jaw clench, about 1 s | STOP | Cancel, none of these, hang up, pause. |
+| Single jaw clench | STOP | Cancel, none of these, hang up, pause. (Was a long clench until D16.) |
 
-How it plays out: a yes or no question costs one thought ("Are you tired?" then right fist, the voice says "Yes"); an open question plays four options in four tones and silence moves on, so the person thinks once on the one they want; when the talk leads to an errand or a call, Claude offers it as a follow-up option ("Send the care team a lunch request", "Call Leon", "Nothing else"), YES picks it, the read-back plays, and only a double clench sends it; while nothing is happening, YES opens the person's own menu, which keeps their independence; during a call a long clench hangs up. HEADSET-OFF and the 2-minute idle auto-pause still cancel anything pending. Imagined movement is slow, so each option's response window is about 3 to 4 seconds, set at calibration. Proposed by Khadim; adopted by Stephen.
+How it plays out: a yes or no question costs one thought ("Are you tired?" then right fist, the voice says "Yes"); an open question plays four options in four tones and silence moves on, so the person thinks once on the one they want; when the talk leads to an errand or a call, Claude offers it as a follow-up option ("Send the care team a lunch request", "Call my sister", "Nothing else"), YES picks it, the read-back plays, and only a double clench sends it; while nothing is happening, YES opens the person's own menu, which keeps their independence; during a call a single clench hangs up. HEADSET-OFF and the 2-minute idle auto-pause still cancel anything pending. Imagined movement is slow, so each option's response window is about 3 to 4 seconds, set at calibration. Proposed by Khadim; adopted by Stephen.
 
 **Locked Oct 24 by Stephen.**
 
@@ -164,6 +168,12 @@ SpacetimeDB is the whole live backend, not a store behind an API:
 6. **A public pipeline table drives the live dashboards** on any laptop, and an event table carries chimes and toasts.
 
 **Locked Oct 23 by Stephen. Design detail in `docs/spacetime.md`.**
+
+### D16: STOP is a single jaw clench; CONFIRM stays a double
+
+Shashank's decoder reports five states: left-fist imagery, right-fist imagery, rest, a jaw clench and a double jaw clench. It cannot tell a held clench, so the long clench in D11 is gone: a single clench is STOP and a double clench is CONFIRM (the decoder waits about 0.5 s after one clench to see whether a second comes). A stray single clench now cancels, which is the safe direction. Because STOP needs about 0.5 s to land, the reply cancel window (`reply_veto_ms`) goes from 700 ms to 1500 ms. The jaw-only fallback (`docs/brain-mode-test.md`) changes too: a single clench cannot be both YES and STOP, so in the fallback a single clench is YES, a double is CONFIRM, and there is no STOP gesture unless the decoder adds a triple clench; nothing leaves the room without a CONFIRM, and a teammate can STOP from the station keys. The backend does not change, since the decoder sends command names. Proposed by Khadim, states confirmed by Shashank.
+
+**Locked Oct 24 by Stephen.**
 
 ### D15: The product is called Eleven
 
@@ -199,12 +209,12 @@ All three update over SpacetimeDB subscriptions, so every laptop shows the same 
 
 - [ ] **Q1:** Which headset are we using? It decides which signals are possible (a Muse cannot read an imagined movement). Needs Shashank.
 - [x] **Q2:** Lock the SpacetimeDB table and reducer names in Shared Contracts. Done Oct 24: the contracts point at the built module (`docs/spacetime.md`), and Shashank confirmed the decoder side (port 8765).
-- [ ] **Q3:** Demo form: a Google Form owned by the caregiver, or our own page on the dashboard domain? Needs Leon and Stephen.
+- [ ] **Q3:** Demo form: a Google Form owned by the caregiver, or our own page on the dashboard domain? Needs Khadim and Stephen.
 - [ ] **Q4:** Can the free Cartesia phone number be set up without a card? Needs Stephen (Cartesia account; the call agent and number do not exist yet).
-- [ ] **Q5:** Who plays the caller's recipient, and is their consent written down? Needs Leon.
+- [ ] **Q5:** Who plays the caller's recipient, and is their consent written down? Needs Khadim.
 - [x] **Q6:** Voice clone? Decided Oct 23 by Stephen: no cloning. See D10.
-- [ ] **Q7:** Pitch opening: lead with ALS and the recent implant stories (implants need brain surgery; Eleven uses a headband that reads jaw clenches and imagined hand squeezes). Every implant fact must be checked and cited before it goes in the script. Needs Leon and Stephen.
-- [ ] **Q8:** What does Khadim own now that all UI/UX moved to Stephen? Needs Stephen.
+- [ ] **Q7:** Pitch opening: lead with ALS and the recent implant stories (implants need brain surgery; Eleven uses a headband that reads jaw clenches and imagined hand squeezes). Every implant fact must be checked and cited before it goes in the script. Needs Khadim and Stephen.
+- [x] **Q8:** What does Khadim own? Decided Oct 24: Screen 1 (5.9) and, since Leon left, the demo form, consent and the demo video (4.3, 7.1, 7.2).
 - [ ] **Q9:** YES while idle opens the person's menu (Khadim recommends keeping it: it is the most brain-first piece, and a misfire only opens the menu). Default: keep. Needs Stephen to confirm.
 - [ ] **Q10:** Someone with ALS who loses the jaw has no way to CONFIRM. A brain-only confirm (for example two YES in a row after the read-back) is the next step; default: say it in the pitch as future work, do not build it this weekend. Needs Stephen to confirm.
 
