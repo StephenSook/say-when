@@ -2,17 +2,18 @@
 
 The plan anyone on the team can build against for PLAN rows 1.1 (the module) and 1.2 (the contracts). The product is NeuroLingo (PLAN D13, formerly Say When); code identifiers keep `say-when`, so the databases are `say-when-dev` and `say-when-demo`.
 
-- **Status:** plan, version 1, written Fri Oct 23, 2026, about 11:15 PM PDT. No module code exists yet. Owner: Stephen (D6), built with Claude.
+- **Status:** version 3, Sat Oct 24, 2026, about 1:45 AM PDT. The module is built in `spacetime/` as designed here, with the changes listed in section 11, and is **live on Maincloud as `say-when-dev`** (published 1:09 AM PDT, no secrets in its environment). The smoke test in section 12 ran on it: S1 (outbound HTTP from a procedure) and S2 (HTTP routes) **pass**, S4 (the scan clock) measured a median 2 ms of scheduler lateness, S5 (the dead-man pause) fired 1501 to 1502 ms after the last heartbeat, and the consent gate, the grace window and the privacy toggle behaved on Maincloud as the 117 module tests say. Claims that section 12 measured carry the new **measured** tag; every other **untested** tag still stands, S3 among them. Version 2 (the build) was Sat about 1 AM PDT; version 1 (the plan) Fri Oct 23 about 11:15 PM PDT. Owner: Stephen (D6), built with Claude.
 - **Follows:** D4 (the model never clicks or dials), D11 (the command map), D12 (the niche features), D13 (the name), the UI spec in `docs/ui.md`, and the research in the private workspace (`reports/Spacetime sponsor stack build.md` with its lane notes `spacetime_integration.md` and `spacetime_niche_features.md`).
 - **Pins:** `"spacetimedb": "2.13.0"` exactly, in the module, the web app and the agent. The module is TypeScript.
 
-Every claim carries one of four tags:
+Every claim carries one of five tags:
 
 | Tag | Meaning |
 |---|---|
 | **checked** | Read tonight in the `spacetimedb` 2.13.0 package source (`web/node_modules/spacetimedb/src`), the 2.13.0 CLI help, this repo's own packages, or compiled tonight in a scratch typecheck against the 2.13.0 types (see Appendix B) |
 | **research** | Verified at source by the research lanes before tonight; not re-read tonight |
 | **design** | Our choice |
+| **measured** | Run on `say-when-dev` on Maincloud on Oct 24, 2026; section 12 has the command and the number |
 | **untested** | Needs Maincloud, the venue network, Chrome or the headset; the smoke test in section 6.3 decides it |
 
 ---
@@ -24,7 +25,7 @@ Every claim carries one of four tags:
 - **Dead-man interlock.** Each station heartbeat pushes a one-shot `liveness_lease` row forward. If it fires, the module pauses the scan and voids anything waiting for a confirm. Two minutes without a command pauses too (`idle_timer`).
 - **Consent is a row.** A form or a call leaves the room only after a CONFIRM that matches the digest the person heard, inside the window, used once. `claim_errand` refuses anything else, and a lapsed submit lease becomes `unknown_outcome`, never a resubmit.
 - **Roles in reducers, privacy in views.** Four roles (Station, Partner, Speaker, Agent) checked in every reducer. Per-role views give each device its slice; anonymous board views show text only while the room's sharing toggle is on.
-- **Short credentialed hops.** `mint_voice_token` hands browsers 60-second Cartesia tokens from a key in a typed module environment variable, if Maincloud allows outbound HTTP from procedures (untested). Otherwise the sidecar mints.
+- **Short credentialed hops.** `mint_voice_token` hands browsers 60-second Cartesia tokens from a key in a typed module environment variable. Maincloud allows outbound HTTP from procedures (**measured**, S1 in section 12), so the key belongs in the module environment, not on a laptop. The key is not set yet, so today the procedure answers `voice_key_missing` and never a token.
 - **Live pipeline.** A public, content-free `pipeline_event` table drives the dashboards; a `cue_event` event table drives chimes and toasts.
 - Decisions the team should know are in section 10.1. The Shared Contracts text for PLAN row 1.2 is Appendix A.
 
@@ -94,7 +95,7 @@ Rule of thumb (research): anything a person causes at human rate is a SpacetimeD
 
 | Secret | Lives in | Used by | Never in |
 |---|---|---|---|
-| Cartesia API key | module env var `CARTESIA_API_KEY`, passed as a shell variable at publish, if smoke step S1 passes; otherwise the agent laptop's env | `mint_voice_token` (or the sidecar), the sidecar's Dialer and dictionary sync | a browser, Vercel, git, chat |
+| Cartesia API key | module env var `CARTESIA_API_KEY`, passed as a shell variable at publish (S1 passed on Oct 24; not set yet), and the agent laptop's env for the Dialer | `mint_voice_token`, the sidecar's Dialer and dictionary sync | a browser, Vercel, git, chat, the output of `spacetime env list` or `env get` (both print values) |
 | Apify token | agent laptop env (`APIFY_TOKEN`) | sidecar: RAG Web Browser, Maps, the form-errand Actor | a browser, git; the module only for the optional database dispatch (6.2) |
 | Moss project id and key | agent laptop env | sidecar | a browser, SpacetimeDB, git |
 | Anthropic API key | agent laptop env | sidecar's option writer | a browser, git |
@@ -221,6 +222,7 @@ Keys live in macOS Keychain or the team vault. Read a key into the shell only fo
 | `answer_mode` | AnswerMode | set when options are published |
 | `version` | u32 | the option version being scanned; 0 before the first publish |
 | `pending_version` | u32 | a newer version waiting for the end of the current pass; 0 none |
+| `pending_answer_mode` | AnswerMode | the answer mode of `pending_version`, switched in with it (added in the build, section 11) |
 | `status` | QuestionStatus | |
 | `outcome` | option ScanOutcome | |
 | `picked_option_id` | option u64 | |
@@ -229,7 +231,7 @@ Keys live in macOS Keychain or the team vault. Read a key into the shell only fo
 | `asked_at` | timestamp | |
 | `ready_at`, `released_at`, `spoken_at`, `ended_at` | option timestamp | |
 
-**`answer_option`** (private; btree `option_by_qv` on `question_id, version`):
+**`answer_option`** (private; btree `option_by_qv` on `question_id, version`, and `option_by_question` on `question_id` for cleanup):
 
 | Column | Type | Notes |
 |---|---|---|
@@ -422,7 +424,7 @@ Nothing updates or deletes ledger rows, except the optional owner-only `purge_se
 
 **`device_status`** (public, primary key `identity`): `role` Role; `label` string; `online` bool; `last_seen_at` timestamp (updated at most every 2 s, so heartbeats do not flood the board); `decoder_healthy` option bool (Station only).
 
-**`cue_event`** (public **event table**, `event: true`): `session_id`, `kind` string, `reason` string (a code, never text), `question_id`, `option_id`, `errand_id`, `call_id` u64, `rank` u8, `at` timestamp. Rows are broadcast on commit and never stored, clients only get `onInsert`, views cannot read them, and the event flag cannot change after the first publish (research: event tables doc). Kinds: `menu_open`, `not_ready`, `picked`, `veto_cancelled`, `reply_released`, `none`, `no_pick`, `again`, `more_options`, `say_confirm`, `confirmed`, `not_sent`, `errand_preparing`, `errand_refused`, `errand_failed`, `errand_sent`, `errand_unknown`, `too_late`, `call_cancelling`, `call_ended`, `paused`, `resumed`, `question_waiting`, `failed`. The station maps each kind to a cached stock phrase; the board shows a toast.
+**`cue_event`** (public **event table**, `event: true`): `session_id`, `kind` string, `reason` string (a code, never text), `question_id`, `option_id`, `errand_id`, `call_id` u64, `rank` u8, `at` timestamp. Rows are broadcast on commit and never stored, clients only get `onInsert`, views cannot read them, and the event flag cannot change after the first publish (research: event tables doc). Kinds: `menu_open`, `not_ready`, `picked`, `veto_cancelled`, `reply_released`, `none`, `no_pick`, `again`, `more_options`, `say_confirm`, `confirmed`, `not_sent`, `errand_preparing`, `errand_refused`, `errand_failed`, `errand_sent`, `errand_unknown`, `too_late`, `call_cancelling`, `call_ended`, `paused`, `resumed`, `question_waiting`, `failed`, and `call_refused` (added in the build: a call option picked without consent, after expiry, or with a used request id). The station maps each kind to a cached stock phrase; the board shows a toast.
 
 **`liveness_lease`** (private schedule table, bound to `liveness_expired`): `scheduled_id`, `scheduled_at`, `session_id` (btree), `beat_seq` u64, `last_beat_at` timestamp, `decoder_healthy` bool, `healthy_since` option timestamp. The row is the deadline and the last heartbeat at once: each heartbeat deletes it and inserts a new one.
 
@@ -491,9 +493,9 @@ Every reducer is one serializable transaction: it commits all of its writes or n
 | `revoke_device(identity)` | owner | | `device.revoked = true`; `device_status.online = false`; if it was the session's station, pause (Operator); ledger `device_revoked` | |
 | `grant_consent(scope string, subject string, method string, note string)` | owner, or a caregiver Partner | scope is `web_search`, `memory`, `errand`, `call` or `board_text` | `consent` row; ledger `consent` | bad scope; note too long |
 | `revoke_consent(consent_id u64)` | owner, or a caregiver Partner | row active | `revoked_at`; revoking Errand or Call stops pending items for that subject (`consent_revoked`); revoking BoardText turns sharing off | |
-| `set_timing(json string)` | owner | a JSON object whose keys are the snake_case names in 2.10, each inside its range | config; ledger `timing` | unknown key or out of range (nothing changes) |
+| `set_timing(json string)` | owner | a JSON object whose keys are the snake_case names in 2.10, each inside its range; also the booleans `menu_enabled` and `auto_resume`; `grace_ms` at most `refractory_ms`; `liveness_lease_ms` above `heartbeat_ms` | config; ledger `timing` | unknown key, out of range, or a cross-rule broken (nothing changes) |
 | `set_board_sharing(on bool)` | owner, or a caregiver Partner | turning on needs an active BoardText consent row | `config.share_text_on_board`; ledger `board_sharing` | no BoardText consent |
-| `ensure_timers()` | owner | | repairs timers after a republish: a missing `scan_timer` for the current step (at `step_ends_at`, or now if past), a missing `liveness_lease` for the active session, a missing `idle_timer`, a missing `job_lease` for each Claimed job, missing `errand_lease`/`call_timer` rows for waiting errands and calls; inserts `config` if absent. Idempotent | |
+| `ensure_timers()` | owner | | repairs timers after a republish: a missing `scan_timer` for the current step (at `step_ends_at`, or now if past), a missing `liveness_lease` for the active session, a missing `idle_timer`, a missing `job_lease` for each Claimed job, missing `errand_lease`/`call_timer` rows for waiting errands and calls, and missing `pairing_timer` rows. Overdue deadlines are armed for now, so a lapsed lease still lapses. It does not insert `config`: `init` always does, and inserting it here would let the first caller become the owner (section 11). Idempotent | |
 | `start_session(label string)` | Station | no active session | `session` (station = sender); `scan_state` (Idle); `liveness_lease` at now + lease; `idle_timer`; `config.active_session_id`; ledger `session_start` | a session is active |
 | `end_session()` | the session's Station, or owner | active session | voids pending items (`session_ended`); `scan_state` Idle; deletes the session's scan, liveness and idle timers; `ended_at`; ledger `session_end` | |
 | `operator_pause()` | owner, Partner or Speaker | active session | pause (Operator) | |
@@ -515,10 +517,10 @@ Every reducer is one serializable transaction: it commits all of its writes or n
 **`report_readback_done(kind string, id u64, digest string)`** (the session's Station). `kind` is `errand` or `call`. The row is Previewed (errand) or Prepared (call) and `digest` equals its `preview_digest` or `script_digest`. Sets `readback_done_at`, `confirm_opens_at = now + quiet_hold_ms`, `confirm_closes_at = confirm_opens_at + confirm_window_ms`, `window_seq += 1`, status AwaitingConfirm, and a ConfirmWindow timer at `confirm_closes_at`. A digest mismatch throws (the station played a stale read-back).
 
 **`heartbeat(beat_seq u64, decoder_healthy bool)`** (the session's Station), every `heartbeat_ms`:
-1. Reads the session's `liveness_lease` row, keeps `healthy_since` if both beats are healthy, deletes it and inserts a new one at `now + liveness_lease_ms` with `beat_seq`, `last_beat_at = now`, `decoder_healthy`, `healthy_since`.
+1. Reads the session's `liveness_lease` row, keeps `healthy_since` if both beats are healthy and the old lease had not lapsed (a gap longer than the lease breaks the run, section 11), deletes it and inserts a new one at `now + liveness_lease_ms` with `beat_seq`, `last_beat_at = now`, `decoder_healthy`, `healthy_since`.
 2. Updates `device_status` only when `online` or `decoder_healthy` changes, or 2 s have passed.
 3. `decoder_healthy = false` while not paused for a signal reason: pause (HeadsetOff).
-4. Paused for HeadsetLost or HeadsetOff, `config.auto_resume` on, healthy for at least `resume_good_contact_ms`: resume.
+4. Paused for HeadsetLost or HeadsetOff, `config.auto_resume` on, healthy for at least `resume_good_contact_ms` counted from the later of `healthy_since` and `paused_at`: resume.
 
 No view reads `liveness_lease`, so twice-a-second heartbeats do not recompute any view.
 
@@ -537,7 +539,7 @@ No view reads `liveness_lease`, so twice-a-second heartbeats do not recompute an
    2. the errand or call is AwaitingConfirm, so its read-back finished (`readback_done_at` set);
    3. the onset is after the quiet hold: `now - onset_age_ms >= confirm_opens_at` (else `ignored:quiet_hold`, and the hold restarts with a new `window_seq`);
    4. inside the window: `now <= confirm_closes_at` (else `ignored:window_closed`);
-   5. good contact: not paused, and the latest `liveness_lease` says `decoder_healthy` (else `ignored:no_contact`);
+   5. good contact: not paused, and the latest `liveness_lease` says `decoder_healthy` and has not lapsed (else `ignored:no_contact`);
    6. `heard_digest` equals `preview_digest` (or `script_digest`) (else `ignored:digest_mismatch`);
    7. never used: the gesture id is new and the row is still AwaitingConfirm; for a call, an active Call consent for `contact_id`; for an errand, an active Errand consent for `form_key` (else `ignored:no_consent`).
    On success: status Confirmed, `confirmed_digest`, `confirm_gesture_id`, `confirmed_at`; cue `confirmed`; ledger `errand`/`call` `confirmed`.
@@ -744,7 +746,9 @@ Bounding the board views (last 20 questions, last 5 questions of payloads) keeps
 - Using the `cartesia` helpers: add `"@say-when/cartesia": "file:../cartesia"` to the module and build `cartesia` first, or copy the two pure functions into `spacetime/src/voice.ts` with a test that compares the request shape against `cartesia`'s. `cartesia/src/index.ts` says its shared exports are safe in a SpacetimeDB module, but whether `spacetime build` bundles a `file:` dependency is untested.
 - `withTx` may run its body more than once, so keep it free of side effects outside the database (research).
 
-**Fallback if smoke step S1 fails:** the station or phone calls `request_voice_token(purpose, nonce)`; the sidecar sees the request in its queue, mints with `mintAccessToken` from `@say-when/cartesia/server`, and writes the token into a private `voice_token` row that only the requester's `my_voice_token` view returns, deleted after 60 s by a one-shot timer. The browser code changes only where the token comes from. Build this only if S1 fails.
+**Fallback if smoke step S1 fails:** the station or phone calls `request_voice_token(purpose, nonce)`; the sidecar sees the request in its queue, mints with `mintAccessToken` from `@say-when/cartesia/server`, and writes the token into a private `voice_token` row that only the requester's `my_voice_token` view returns, deleted after 60 s by a one-shot timer. The browser code changes only where the token comes from. Build this only if S1 fails. **S1 passed on Oct 24 (section 12), so this fallback is not built.**
+
+On `say-when-dev` with no key set (**measured**): a paired Station asking for `tts` gets `voice_key_missing`, an unpaired identity gets `not_paired_for_purpose`, a Station asking for `stt` gets `not_paired_for_purpose`, and any other purpose gets `bad_purpose`. The token field is empty every time. A mint with a real key has not been run.
 
 ### 6.2 HTTP routes (beta, optional)
 
@@ -756,7 +760,9 @@ HTTP handlers are beta; routes are served at `https://maincloud.spacetimedb.com/
 | `POST /apify/webhook` | optional database dispatch of the errand submit | below |
 | `GET /ping` | smoke test only | delete after S2 |
 
-**Optional database dispatch (build only after the core and only if S1 and S2 pass).** With `config.dispatch_mode = 'database'`, a valid CONFIRM also inserts an `errand_dispatch` row at `ScheduleAt.time(now)`. The scheduled procedure `dispatch_errand` re-checks consent, status and digest inside `withTx`, sets Submitting, starts a normal (not Standby) run of the form-errand Actor in submit mode with an ad-hoc webhook pointing at `/route/apify/webhook` (base64 JSON in the `webhooks` query parameter, a secret in `headersTemplate`), and stores the run id in `errand_run`. The route checks the secret, maps the run id to the errand and completes it; a second scheduled procedure reads the run's output for the confirmation text. The default path, the sidecar's `claim_errand`, needs none of these untested features.
+Both routes answer on Maincloud (**measured**, S2): `GET /route/ping` 200 in 108 ms and `GET /route/stats` 200 in 100 to 274 ms, each with `access-control-allow-origin: *`. `/ping` stays until the schema freeze; it costs nothing and is the quickest live check.
+
+**Optional database dispatch (build only after the core and only if S1 and S2 pass; both passed on Oct 24, so it is now possible, and still optional).** With `config.dispatch_mode = 'database'`, a valid CONFIRM also inserts an `errand_dispatch` row at `ScheduleAt.time(now)`. The scheduled procedure `dispatch_errand` re-checks consent, status and digest inside `withTx`, sets Submitting, starts a normal (not Standby) run of the form-errand Actor in submit mode with an ad-hoc webhook pointing at `/route/apify/webhook` (base64 JSON in the `webhooks` query parameter, a secret in `headersTemplate`), and stores the run id in `errand_run`. The route checks the secret, maps the run id to the errand and completes it; a second scheduled procedure reads the run's output for the confirmation text. The default path, the sidecar's `claim_errand`, needs none of these untested features.
 
 ### 6.3 The smoke test that decides where things run
 
@@ -771,7 +777,16 @@ Run on `say-when-dev` before relying on any of it. Write each result into the ta
 | S5 | 20 `heartbeat` calls a second apart; unplug the network for 3 s | `liveness_expired` pauses, and heartbeats resume it | tune `liveness_lease_ms` |
 | S6 | Python `POST /call/gesture_http` 20 times with `confirmed=true` and 20 with `false` | p50 and p95 recorded for the fallback | |
 
-Results (fill in): S1 ___ S2 ___ S3 ___ S4 jitter ___ ms S5 ___ S6 p95 ___ ms.
+Results (Oct 24, `say-when-dev`, from the build Mac; detail in section 12):
+
+| Step | Result |
+|---|---|
+| S1 | **Pass.** `smoke_fetch` reached `api.cartesia.ai` (200 in 92 to 254 ms) and `api.apify.com/v2` (404, Apify's answer for that bare path, in 25 to 37 ms) from inside a procedure |
+| S2 | **Pass.** `/route/ping` and `/route/stats` answer with CORS `*`; anonymous SQL also reads public tables and the anonymous views |
+| S3 | Not run: needs the station page and Shashank's decoder |
+| S4 | **Pass.** 76 scheduled steps ran a median 2 ms after their planned time (max 10 ms); a WebSocket client got each within about 110 ms of the planned gap. The test used the real scan (0.6 to 1.8 s readings, 3.5 s windows), not 2.5 s steps |
+| S5 | **Pass**, without unplugging anything: heartbeats stopped, the module paused 1501 to 1502 ms after the last beat (4 of 4), and healthy beats resumed it 3.5 s after the first good one |
+| S6 | `gesture_http` is not built, so the same measurement used `heartbeat`, a write reducer of the same weight: 20 calls per mode on one kept-alive connection, three runs: confirmed median 95, 93 and 112 ms (p95 106, 108 and 196; max 114, 145 and 220), `confirmed=false` median 94, 93 and 94 ms (p95 100, 95 and 129; max 104, 97 and 151). A new connection's first call: 281 to 434 ms |
 
 ---
 
@@ -859,14 +874,14 @@ On the main path Python never calls SpacetimeDB. If S3 fails, Python calls reduc
 | 2. Dead-man interlock | `liveness_lease`, `idle_timer` (schedules), `device_status` | `heartbeat`, `liveness_expired`, `idle_pause`, `pause`, `voidPending`, `resume` | "Unplug the headset: SpacetimeDB itself pauses every screen [X] s after the last heartbeat, measured on server clocks, voids anything waiting for a confirm, and resumes on the same option." |
 | 3. Consent is a row | `consent`, `errand`, `call_request`, `ledger` | `gesture` (the seven checks), `report_readback_done`, `claim_errand`, `complete_errand`, `errand_timeout` | "A form is released only by a CONFIRM row that matches the digest the person heard; the agent can claim only that confirmed row, and a lapsed lease becomes unknown, never a resubmit." (see 10.1 item 14 for what this does and does not enforce) |
 | 4. Roles in reducers, privacy in views | `device`, `pairing_request`, `config.share_text_on_board` | `request_pairing`, `approve_pairing`, the role guard in every reducer; `my_session`, `my_options`, `partner_view`, `agent_queue`, `errand_queue`, `public_board`, `board_*` | "Each device has one role checked in every reducer: the phone sees progress and the reply, the station sees the candidates, and the room toggle switches the public board between text and Option N." |
-| 5. Short credentialed hops | env `CARTESIA_API_KEY`; optional `errand_dispatch`, `errand_run` | `mint_voice_token`; optional `dispatch_errand`, `/apify/webhook`, `/stats` | "A procedure mints each paired browser a 60-second Cartesia token, so the key stays in the database's environment." (only after S1 passes) |
+| 5. Short credentialed hops | env `CARTESIA_API_KEY`; optional `errand_dispatch`, `errand_run` | `mint_voice_token`; optional `dispatch_errand`, `/apify/webhook`, `/stats` | "A procedure mints each paired browser a 60-second Cartesia token, so the key stays in the database's environment." (S1 passed on Oct 24; say it only after the key is set and one real mint has worked) |
 | 6. Public pipeline table and event table | `pipeline_event` (public), `pipeline_payload`, `cue_event` (event table) | `agent_progress`, `ask_question`, `board_payloads` | "Any laptop opens the dashboard with no login and watches Apify, Moss, Claude and Cartesia work, live, from one public table." |
 | Agent coordination (supports D12) | `agent_job`, `job_lease` | `agent_claim`, the fenced `agent_*` writes, `lease_expired` | "The agent claims work with a lease and an attempt number, so a stalled agent's late write is refused." |
 | Tests (supports D12) | | the module test harness (9.1) | "`npm test` in `spacetime/` proves the clock, grace window, refractory, fresh confirm, digest refusal, fencing and pause rules with no server." |
 
-Bracketed numbers are measured on site and read from the ledger before anyone says them.
+Bracketed numbers are measured on site and read from the ledger before anyone says them. Section 12 has the first measurements on Maincloud (smoke runs with made-up content, not a wearer): the scheduler fired a median 2 ms late, a YES landed on the heard option at `late_by_ms` 174 to 272, the dead-man pause came 1501 to 1502 ms after the last heartbeat, and every wrong way to release an errand was ignored.
 
-**Do not claim:** commitlog "time travel" (no user-facing API); row-level security (experimental); MCP as the product path (unstable); horizontal scaling or async calls between databases (dated Oct 31); "open source" (BSL 1.1); that memory text lives in SpacetimeDB (only text the person marked shareable, and only in private rows); procedure HTTP or routes on Maincloud before S1 and S2 pass (all research).
+**Do not claim:** commitlog "time travel" (no user-facing API); row-level security (experimental); MCP as the product path (unstable); horizontal scaling or async calls between databases (dated Oct 31); "open source" (BSL 1.1); that memory text lives in SpacetimeDB (only text the person marked shareable, and only in private rows) (all research). Also not: a minted voice token before the key is set and one real mint works, or a smoke-test number as if a wearer produced it (design). Procedure HTTP and the routes on Maincloud may now be claimed: S1 and S2 passed (section 12).
 
 ---
 
@@ -931,14 +946,15 @@ Every command passes the database, the module path and the server explicitly wit
 
 | When | Command |
 |---|---|
-| Dev loop | `spacetime publish say-when-dev --no-config --module-path spacetime --server maincloud`, then `spacetime call say-when-dev ensure_timers`. Only on a breaking schema change and only on the dev database: add `--delete-data=on-conflict` (the value attached with `=`) |
-| Dev with the key (after S1) | read the key from Keychain into `CARTESIA_API_KEY` in the shell, check `${#CARTESIA_API_KEY}` is not 0, then run the same publish command in that shell; the CLI prints key names, not values |
+| Dev loop | `env -u CARTESIA_API_KEY spacetime publish say-when-dev --no-config --module-path spacetime --server maincloud --yes=remote`, then `spacetime call --no-config --server maincloud say-when-dev ensure_timers` (**measured**: the first publish took 3.7 s and created the database). `env -u` keeps an empty shell variable from being stored as an empty value. Only on a breaking schema change and only on the dev database: add `--delete-data=on-conflict` (the value attached with `=`) |
+| Dev with the key (S1 passed) | read the key from Keychain into `CARTESIA_API_KEY` in the shell, check `${#CARTESIA_API_KEY}` is not 0, then run the same publish command in that shell; the publish prints key names, not values (`spacetime/README.md` has the exact lines; not run yet) |
 | Rotate a key | the same with `--env-only` |
 | Bindings | `spacetime generate --no-config --lang typescript --out-dir spacetime/bindings/web --module-path spacetime` and the same for `spacetime/bindings/agent` |
 | Pair a device | `spacetime call say-when-dev approve_pairing 482913 false` |
 | Consent | `spacetime call say-when-dev grant_consent errand care_team_request owner_cli "demo form, Leon owns it"`; `web_search`, `memory` and `board_text` take an empty subject (`""`); `call` takes the contact id as its subject (`leon`) |
 | Timing | `spacetime call say-when-dev set_timing '{"response_window_ms":4000}'` |
-| Watch | `spacetime logs say-when-dev -f`; `spacetime sql say-when-dev "SELECT * FROM scan_state"`; `spacetime describe say-when-dev`; `spacetime env list say-when-dev` (`call`, `sql`, `describe` are marked unstable in the CLI) |
+| Watch | `spacetime logs --server maincloud say-when-dev -f`; `spacetime sql --no-config --server maincloud say-when-dev "SELECT * FROM scan_state"`; `spacetime describe say-when-dev`; `cd spacetime && npm run smoke -- watch` (`call`, `sql`, `describe` are marked unstable in the CLI). **`spacetime env list` and `env get` print the secret values** (checked: CLI 2.13.0 help, "List published environment keys and values"), so never run them on a shared screen or into a log |
+| Smoke test | `cd spacetime && python3 scripts/smoke_e2e.py --station-token ... --agent-token ... --revoke-devices` (owner, dev database only; section 12) |
 | Schema freeze, Sat 8 PM | Stephen publishes `say-when-demo` with the same `--no-config` command (the name must match `^[a-z0-9]+(-[a-z0-9]+)*$`; choose another if taken), runs `ensure_timers`, pairs the demo devices, grants consent, then `spacetime lock say-when-demo` (lock only blocks deletion, checked) |
 | Judging, Sun 10:30 AM to 12:30 PM | no publish to `say-when-demo`: a publish hot-swaps the module but "clients may witness brief interruptions in scheduled reducers" (research) |
 | After the event | `purge_session` for any real person's sessions |
@@ -995,7 +1011,126 @@ Checked tonight:
 
 Not checked, from the research lanes: one-shot schedule semantics and out-of-order dispatch, event-table semantics, the view `iter()` rule, migration rules, `init` and republish behavior, HTTP `/call` status codes and lifecycle wrapping, confirmed reads and the 504 unknown outcome, procedure `withTx` rules, HTTP handler routing and authentication, anonymous SQL.
 
-Untested anywhere: everything on Maincloud (procedure HTTP, routes, timer jitter, durability latency), the station's localhost socket from an https page, Chrome background throttling, `spacetime build` with a `file:` dependency, nested arrays in view rows at runtime (they compile), and every number in the timing table on a real wearer.
+Untested anywhere, as of version 2: everything on Maincloud (procedure HTTP, routes, timer jitter, durability latency), the station's localhost socket from an https page, Chrome background throttling, `spacetime build` with a `file:` dependency, nested arrays in view rows at runtime (they compile), and every number in the timing table on a real wearer.
+
+Since then (version 3, section 12, **measured** on `say-when-dev`): procedure HTTP, the routes, timer lateness, the durability wait (no difference we could measure), `init` making the publisher the owner, one-shot schedule rows leaving nothing behind once they fire, HTTP `/call` answering 200 and 530, anonymous SQL reading public tables and anonymous views (and refusing private tables), and nested arrays in a view row (`public_board`'s options) all work. Still untested: the station's localhost socket, Chrome throttling, a `file:` dependency (avoided: `voice.ts` copies the two functions), and every timing number on a real wearer.
+
+---
+
+## 11. The build (Sat Oct 24): what exists, what changed, how it was checked
+
+### 11.1 What exists
+
+`spacetime/` holds the module this plan describes: `src/schema.ts` (25 tables, every enum), `src/index.ts` (42 reducers: 32 called by clients, 7 scheduled, 3 lifecycle; 11 views; 2 procedures; 2 HTTP handlers and the router), and the helpers `clock.ts`, `gesture.ts`, `consent.ts`, `liveness.ts`, `jobs.ts`, `agent.ts`, `auth.ts`, `config.ts`, `views.ts`, `voice.ts`, `stats.ts`, `repair.ts`, `util.ts`. `spacetime.json` at the repo root points `spacetime generate` at `spacetime/bindings/web` and `spacetime/bindings/agent`; `spacetime.local.json` (gitignored) names `say-when-dev`. CI runs the typecheck and the tests in a `spacetime` job.
+
+Not built, as this plan says: `gesture_http` (only if S3 fails), the optional database dispatch (`errand_dispatch`, `errand_run`, `/apify/webhook`), the `voice_token` fallback (only if S1 fails). Built although beta and untested: `smoke_fetch`, `GET /route/stats`, `GET /route/ping`. If Maincloud refuses a publish because of the HTTP handlers, delete the `stats`, `ping` and `routes` exports in `src/index.ts` and publish again.
+
+### 11.2 How it was checked (checked tonight, in this order)
+
+- `tsc --noEmit` against `spacetimedb` 2.13.0: exit 0.
+- `spacetime build --module-path spacetime` (CLI 2.13.0): "Build finished successfully".
+- `spacetime generate` for both binding folders: success; the CLI also builds and describes the module, so the module definition (type names, schedule bindings, views) is accepted by 2.13.0 tooling. A plain `spacetime generate --yes` from the repo root reproduced both folders byte for byte.
+- 117 module tests with the 2.12+ harness (`createModuleTestHarness`, vitest 3.2.7): the clock and stale ticks, the grace window and `late_by_ms`, refractory, NO and STOP, the veto and yes or no mode, the menu, the seven CONFIRM checks one at a time, digest refusals, claim and lease fencing, unknown outcome and late results, the dead-man pause and resume, idle auto-pause, every role refusal (31 client reducers and 7 scheduled ones), the views and the privacy toggle, the voice token procedure, the stats, `ensure_timers`, `purge_session`.
+- A mutation check: 25 rules broken one at a time (each fence, each CONFIRM check, the role checks, the privacy toggle, the pause ranking, the liveness rules); the suite failed for all 25. Three rules first survived and got tests: a Submit timer from another attempt, a lost signal during a STOP pause, and YES while a submit is in flight.
+
+Two harness facts the tests rely on: a fired one-shot row is not deleted in the harness (the host deletes it), and reading the harness's `test.db` from inside a `withReducerTx` body deadlocks its datastore.
+
+### 11.3 Where the build differs from or adds to this plan, and why
+
+1. **`question.pending_answer_mode`** (new column): a pending version may have a different answer mode from the one being scanned, and it must switch in with its own.
+2. **`answer_option.option_by_question`** (new index): cleanup by question without a prefix scan of `option_by_qv`.
+3. **Cue `call_refused`** (new kind): a picked call option refused for no consent, expiry or a used request id needed its own spoken line.
+4. **`set_timing`** also takes `menu_enabled` and `auto_resume`, so PLAN Q9 needs no schema change, and refuses `liveness_lease_ms` at or below `heartbeat_ms` (every beat would lapse).
+5. **Gesture precedence.** The table in 4.2 is per state; when more than one thing is live the module decides in this order: a pause; an errand or call nobody has claimed (read-back and confirm); for STOP only, a live call (D11: a long clench hangs up); the scan; a live call or a submitting errand; idle.
+6. **Contact is continuous.** CONFIRM's contact check also requires that the newest lease has not lapsed; `healthy_since` survives only across beats with no lapse between them; a resume counts healthy time from the later of `healthy_since` and `paused_at`. Without these, healthy time from before a HEADSET_OFF pause would resume it at once. Tests cover all three.
+7. **No grace candidate across a pause or a cancelled veto.** A resume or a NO in the veto starts the option fresh, so a YES heard before the pause cannot land after it.
+8. **Jobs end with their work.** An Options job is cancelled when its question ends in any way (picked, none, no pick, stopped, cancelled, superseded), and a preview job when its errand is stopped; a later write from that job gets `SenderError('stale attempt')`, which the sidecar already treats as "drop this work". The plan's no-op path (a final publish for an ended question marks the job Done) still exists for a job that was not cancelled.
+9. **A failed options job fails its question only if nothing is readable yet.** If memory options already exist, the scan goes on with them.
+10. **Where a new version goes.** Preparing: current. Reading or Window: pending. Paused mid-scan: pending (it switches in after the resume). Waiting its turn behind a veto or pause: current, so the waiting question scans the newest. During its own veto: kept, not scanned.
+11. **Older waiting questions are superseded** when the newest waiting one starts.
+12. **`agent_queue`'s recent errand** is the newest Submitted errand of the session with its sent time; a view has no clock, so the sidecar applies the 10-minute rule.
+13. **View row type names.** A view owns the PascalCase of its own name as its parameter type, so `my_session` returns `SessionView` (with a `role` field), `my_options` returns `StationOption`, and so on. Field lists are as in section 5.
+14. **Source labels** are accepted as any `^[a-z_]{1,16}$`, not only the four listed, so a new decoder label never loses a command.
+15. **`ensure_timers` does not insert `config`** (see 3.2).
+
+### 11.4 Pipeline event keys and labels the module writes
+
+Content-free labels from a fixed vocabulary, one event per key (a repeated key is ignored):
+
+| Key | Stage, status | Label |
+|---|---|---|
+| `listen:<request_id>` | listen ok | `heard` or `typed` (counts `wordCount`; payload `{words}`) |
+| `listen:<request_id>:started` / `:stopped` | listen started / ok | `listening` / `stopped listening` |
+| `q<id>:v<n>:plan` | plan ok | `options`, `early options`, `yes or no` (counts `version`, `optionCount`, `final`) |
+| `q<id>:plan:error:<attempt>` | plan error | `failed: <code>` |
+| `q<id>:v<n>:clips` | speak ok | `earpiece` (counts `clips`, `synthMs`; ms from publish to the last clip) |
+| `q<id>:v<n>:scan` | speak started | `scan started` or `yes or no prompt` |
+| `q<id>:select` | select ok (error if failed) | `picked`, `none of these`, `no pick`, `stopped`, `cancelled`, `failed` (payload `{optionId, rank, text}` for a pick) |
+| `q<id>:scan:end` | speak ok | `scan ended` |
+| `q<id>:aloud` | speak ok | `aloud` (payload with `channel: "aloud"`) |
+| `e<id>:<step>` | errand | `preparing preview`, `previewed`, `read-back done`, `confirmed`, `submitting`, `sent`, `stopped: <code>`, `refused: <code>`, `failed: <code>`, `unknown outcome`, `late result: <status>` |
+| `c<id>:<step>` | call | `prepared`, `read-back done`, `confirmed`, `dialing`, `ringing`, `connected`, `ended: <result>`, `hanging up`, `stopped: <code>`, `refused: <code>`, `failed: <code>` |
+
+### 11.5 Still untested after the build (version 2; section 12.4 is the current list)
+
+Everything on Maincloud (S1 to S6), the station's localhost socket, Chrome throttling, every timing number on a real wearer, and the HTTP handlers on any host (the harness has no handler context, so `/stats` is tested only through `computeStats`). The procedure's env read cannot run in the harness (`env_get` is a host call it does not provide), so the key path is tested through `mintWithKey`, and the request shape is compared with `cartesia/src/token.ts`.
+
+---
+
+## 12. The Maincloud smoke test (Sat Oct 24, 1:09 to 1:43 AM PDT)
+
+### 12.1 What ran
+
+- **Publish.** `env -u CARTESIA_API_KEY spacetime publish say-when-dev --no-config --module-path spacetime --server maincloud --yes=remote` built and uploaded the module in 3.7 s and printed "Created new database with name: say-when-dev, identity: c200da44f7506b54809eb198b17556591cfb8035b08503b560171bb492f4b92e". `init` ran once and stored the publisher (Stephen's CLI login) as `config.owner`; `spacetime env list` showed no values. HTTP handlers were accepted (the publish did not refuse them), so the `stats`, `ping` and `routes` exports stay. The bindings regenerated after the publish are byte for byte the same as the committed ones.
+- **Roles.** The owner through the CLI (questions, pairing approvals, consent, the toggle); a Station over HTTPS from `spacetime/scripts/http_smoke.py` (Python standard library only: session, heartbeats, gestures, read-back reports); a stand-in Agent over WebSocket from `spacetime/scripts/watch-scan.ts` on the generated agent bindings (`npm run smoke -- watch --act-as-agent`: claims, options, a preview, the errand claim and completion). All content was made up ("Smoke test: which drink?"); no wearer, no Apify, Moss, Claude or Cartesia, and nothing was sent anywhere. The station and the agent were paired through `request_pairing` and `approve_pairing` like any device.
+- **Runs.** Three scratch drivers, then the committed `spacetime/scripts/smoke_e2e.py`, which repeats all of it in one command: 17 of 17 checks passed (session 3, 1:34 AM), and 17 of 17 again on the final run (session 4, 1:41 AM). Sessions 1 to 4 stay in the dev database as sample rows; the smoke devices and consents were revoked afterwards and every schedule table was empty (two pairing timers aside, which expire on their own).
+
+### 12.2 Results (**measured**)
+
+| Area | Result |
+|---|---|
+| S1 outbound HTTP from a procedure | Works. `smoke_fetch`: `api.cartesia.ai` 200 in 254, 93, 92 ms; `api.apify.com/v2` 404 (Apify's answer for that bare path) in 37 and 25 ms, timed with transaction timestamps inside the procedure |
+| `mint_voice_token`, no key | Fails closed: `voice_key_missing` for a paired Station (`tts`), `not_paired_for_purpose` unpaired or for the wrong role, `bad_purpose` for anything else. Never a token |
+| S2 HTTP routes | `GET /route/ping` 200 in 108 ms; `GET /route/stats` 200 in 100 to 278 ms; both with `access-control-allow-origin: *`. After session 3: `{"sessionId":3,"questions":4,"questionsAnswered":3,"picks":3,"medianLateByMs":0,"latePicks":1,"pauses":1,"medianPauseLatencyMs":1501,"medianQuestionToFirstOptionMs":4280,"errandsSent":1,"errandsStopped":0,"gestures":9,"gesturesIgnored":5}` |
+| Anonymous SQL | `POST /v1/database/say-when-dev/sql` with no token reads `config`, `scan_state`, `device_status`, `pipeline_event` and the anonymous views `public_board`, `board_ledger`, `board_errands`; a private table answers 400 "no such table ... it may be marked private" |
+| S4 the scan clock | 76 steps run by `scan_tick` over five runs: a median 2 ms after the planned time, max 10 ms (a VetoEnd). A 4-option question read twice with no pick ended `no_pick` 39.4 to 40.8 s after the ask, as the dwell arithmetic predicts (the 4 s clip deadline, then two passes of about 17.5 s). Updates reached a WebSocket client on the build Mac within about 110 ms of the planned gap (median 2 to 3 ms in the three long runs) |
+| Grace window | A YES heard in option 1's window and sent after option 2 began picked option 1 with `late_by_ms` 272, 174 and 216; a YES in a yes or no window picked the yes reply, the 700 ms veto ran out (VetoEnd 10 ms late) and the reply was released |
+| S5 dead-man pause | Heartbeats stopped: `liveness_expired` paused the session 1501 to 1502 ms after the last beat, 4 of 4 (ledger `ms`, server clocks; lease 1500 ms). Healthy beats resumed it 3.5 s after the first good beat (`resume_good_contact_ms` 3000 plus the 500 ms beat) |
+| Consent gate | On three errands, each of these was recorded and ignored, in order: YES during the read-back (`yes_is_not_confirm`), CONFIRM before the read-back (`readback_not_done`), CONFIRM inside the quiet hold (`quiet_hold`), CONFIRM with a digest the person did not hear (`digest_mismatch`), a second CONFIRM (`refractory`). `report_readback_done` with a stale digest was refused (530). The right CONFIRM was accepted; `claim_errand` with the confirmed digest and `complete_errand` followed in 0.31 to 0.71 s |
+| Privacy toggle | Sharing off: `public_board` showed "Question 4" with "Option 1", "Option 2" and `board_errands` an empty read-back. `set_board_sharing true` without a `board_text` consent was refused; with one, the real text appeared; then sharing went off again |
+| Roles | Unpaired: `start_session` 530 "not allowed", `ensure_timers` 530 "owner only", `smoke_fetch` "owner only". A revoked station: 530 "not allowed". A revoked device can ask to pair again, and approving it un-revokes the same identity |
+| Agent over WebSocket | Claim, progress and publish (three reducer calls in a row): 250 to 392 ms. Claim and preview: 181 to 271 ms. Claim errand and complete: 181 to 344 ms |
+| S6 stand-in (`heartbeat`, kept-alive HTTPS) | 20 calls per mode, three runs: confirmed median 95, 93 and 112 ms (p95 106, 108 and 196; max 114, 145 and 220); `confirmed=false` median 94, 93 and 94 ms (p95 100, 95 and 129; max 104, 97 and 151). The third run's gap may be the durability wait or the network; two runs showed none. A new connection's first call: 301, 281 and 434 ms. Host execution 0.28 to 0.36 ms (`spacetime-execution-duration-micros`). 216 heartbeats every 500 ms during the first run: median 95 ms, max 308 ms, no failures |
+| Owner CLI | `spacetime call` takes 1.1 to 1.7 s per call (start-up and a new connection): fine for setup, not a live control |
+
+All network numbers are from the build Mac on its network at the time, not checked to be venue Ethernet.
+
+### 12.3 What Maincloud taught us
+
+- Every procedure call, over HTTP or the CLI, writes `ERROR: <name>: External attempt to call nonexistent reducer "<name>" failed. Have you run spacetime generate recently?` to the database log, then runs the procedure and returns its value. The procedure worked every time; read past that line.
+- `spacetime env list` and `spacetime env get` print secret values (CLI help says so). Check the key by asking a paired station for a token instead.
+- The CLI and HTTP SQL name enum variants in lowerCamelCase (`(station = ())`, `noPick`, `yesNo`, `awaitingConfirm`, `boardText`); in HTTP JSON a sum value is `[variant index, payload]`, an option is a sum named `some`/`none`, and identities and timestamps are one-field products. The TypeScript SDK gives PascalCase tags (`NoPick`). `http_smoke.py` has a decoder.
+- A procedure's HTTP answer is its return value as a JSON array in field order (`[200,93,""]`) and carries no `spacetime-energy-used` header; a reducer's answer does.
+- A kept-alive HTTP connection idle for about two minutes had been closed by the server; the next request on it failed with no answer. Open a new connection after 20 s idle, and never resend a request that failed in flight.
+- A refused reducer is HTTP 530 with the module's message as the body; the CLI prints `Error: Response text: <message>` and then the 530 status, and exits non-zero.
+
+### 12.4 Still untested
+
+- S3: the station page on the deployed https origin opening `ws://127.0.0.1:<port>` to the decoder (Chrome Private Network Access), and Chrome throttling a background tab's heartbeats (a 30-minute soak).
+- Any network number on venue Ethernet, and every timing value on a real wearer.
+- A real `mint_voice_token` with the key; calls (`claim_call`, `report_call_status`, `add_call_line`) on Maincloud; the two-minute idle pause on Maincloud; a republish while a scan is running.
+- The web app and the real agent sidecar against `say-when-dev` (their own workflows).
+- `gesture_http` and the database dispatch: not built.
+
+### 12.5 Run it again
+
+```bash
+cd spacetime
+python3 scripts/smoke_e2e.py --station-token ~/.config/say-when/stdb_token_smoke_station \
+                             --agent-token ~/.config/say-when/stdb_token_smoke_agent --revoke-devices
+```
+
+Owner only (it approves its own devices with the CLI login), dev database only (it refuses a name that does not end in `-dev`), about 90 seconds. It grants the consents it needs and revokes them at the end. `npm run smoke -- watch --seconds 60` watches the clock on any database without writing.
 
 ---
 

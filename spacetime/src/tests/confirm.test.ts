@@ -1,0 +1,478 @@
+// Consent is a row (D12 item 3): a form leaves the room only after the full read-back, a quiet hold, inside the
+// confirm window, with good contact and the digest the person heard, once. Then one digest-checked claim.
+import { expect, test } from 'vitest';
+import * as m from '../index';
+import {
+  advance,
+  AGENT,
+  as,
+  CALL_DIGEST,
+  callOption,
+  claim,
+  errandOption,
+  failure,
+  FORM_KEY,
+  gesture,
+  grantConsent,
+  internal,
+  live,
+  micros,
+  newDb,
+  now,
+  OWNER,
+  question,
+  reply,
+  scan,
+  scanning,
+  settle,
+  STATION,
+  timerAt,
+  type Test,
+} from './harness';
+
+const DIGEST = 'a1b2c3d4e5f60718';
+
+function errandOf(db: Test) {
+  const rows = [...db.db.errand.errandBySession.filter(scan(db).sessionId)];
+  return rows[rows.length - 1]!;
+}
+
+function callOf(db: Test) {
+  const rows = [...db.db.callRequest.callBySession.filter(scan(db).sessionId)];
+  return rows[rows.length - 1]!;
+}
+
+/** Picks the errand option and attaches the Actor's preview: the errand is Previewed. */
+function previewed(db: Test) {
+  grantConsent(db, 'errand', FORM_KEY);
+  const q = scanning(db, [errandOption(), reply('Nothing else')]);
+  expect(gesture(db, 'YES').outcome).toBe('accepted:pick_errand');
+  expect(question(db, q.id).status.tag).toBe('Acting');
+  const e = errandOf(db);
+  expect(e.status.tag).toBe('Drafted');
+  const job = claim(db, q.id, 'ErrandPreview');
+  as(db, AGENT, (ctx) =>
+    m.agentAttachPreview(ctx, {
+      jobId: job.id,
+      attempt: job.attempt,
+      status: 'previewed',
+      formTitle: 'Care team request',
+      readBackText: 'Request: Lunch, please.',
+      readBackJson: '[{"label":"Request","value":"Lunch, please"}]',
+      previewDigest: DIGEST,
+      screenshotUrl: '',
+      reasonCode: '',
+      reason: '',
+      previewMs: 4200,
+    }),
+  );
+  expect(db.db.agentJob.id.find(job.id)!.status.tag).toBe('Done');
+  return errandOf(db);
+}
+
+/** The station read the errand back: AwaitingConfirm, the quiet hold running. */
+function awaiting(db: Test) {
+  const e = previewed(db);
+  as(db, STATION, (ctx) => m.reportReadbackDone(ctx, { kind: 'errand', id: e.id, digest: DIGEST }));
+  return errandOf(db);
+}
+
+function confirmTimer(db: Test, errandId: bigint) {
+  return [...db.db.errandLease.errandId.filter(errandId)].find((r) => r.kind.tag === 'ConfirmWindow');
+}
+
+test('without Errand consent for the form, picking the errand refuses it at once', () => {
+  const db = newDb();
+  scanning(db, [errandOption()]);
+  expect(gesture(db, 'YES').outcome).toBe('accepted:pick_errand');
+  const e = errandOf(db);
+  expect([e.status.tag, e.reasonCode]).toEqual(['Refused', 'no_consent']);
+  expect([...db.db.agentJob.jobByStatus.filter({ tag: 'Pending' })].filter((j) => j.kind.tag === 'ErrandPreview')).toHaveLength(0);
+});
+
+test('a picked errand is Drafted with a preview job, and the preview makes it Previewed with a read-back timer', () => {
+  const db = newDb();
+  const e = previewed(db);
+  expect(e.status.tag).toBe('Previewed');
+  expect([e.previewDigest, e.readBackText, e.previewMs]).toEqual([DIGEST, 'Request: Lunch, please.', 4200]);
+  const timers = [...db.db.errandLease.errandId.filter(e.id)].map((r) => r.kind.tag);
+  expect(timers).toEqual(['Readback']);
+});
+
+test('YES during the read-back is not a confirm, and CONFIRM before the read-back is done is ignored', () => {
+  const db = newDb();
+  previewed(db);
+  settle(db);
+  expect(gesture(db, 'YES').outcome).toBe('ignored:yes_is_not_confirm');
+  settle(db);
+  expect(gesture(db, 'CONFIRM', { heardDigest: DIGEST }).outcome).toBe('ignored:readback_not_done');
+  expect(errandOf(db).status.tag).toBe('Previewed');
+});
+
+test('a read-back report with the wrong digest throws: the station played a stale read-back', () => {
+  const db = newDb();
+  const e = previewed(db);
+  expect(failure(() => as(db, STATION, (ctx) => m.reportReadbackDone(ctx, { kind: 'errand', id: e.id, digest: 'ffffffffffffffff' })))).toContain('digest mismatch');
+  expect(errandOf(db).status.tag).toBe('Previewed');
+});
+
+test('the read-back opens the confirm window after the quiet hold', () => {
+  const db = newDb();
+  const e = awaiting(db);
+  expect(e.status.tag).toBe('AwaitingConfirm');
+  expect(micros(e.confirmOpensAt) - micros(now(db))).toBe(1_000_000n); // quiet_hold_ms
+  expect(micros(e.confirmClosesAt) - micros(e.confirmOpensAt)).toBe(8_000_000n); // confirm_window_ms
+  expect(e.windowSeq).toBe(1);
+  const t = confirmTimer(db, e.id)!;
+  expect(t.seq).toBe(1);
+  expect(micros(timerAt(t))).toBe(micros(e.confirmClosesAt));
+});
+
+test('CONFIRM inside the quiet hold is ignored and the hold restarts', () => {
+  const db = newDb();
+  const before = awaiting(db);
+  advance(db, 1500); // past refractory, but the clench began 800 ms ago: inside the hold
+  const g = gesture(db, 'CONFIRM', { heardDigest: DIGEST, onsetAgeMs: 800 });
+  expect(g.outcome).toBe('ignored:quiet_hold');
+  const after = errandOf(db);
+  expect(after.status.tag).toBe('AwaitingConfirm');
+  expect(after.windowSeq).toBe(before.windowSeq + 1);
+  expect(micros(after.confirmOpensAt) - micros(now(db))).toBe(1_000_000n);
+  expect(confirmTimer(db, after.id)!.seq).toBe(after.windowSeq);
+});
+
+test('CONFIRM after the window closed is ignored, and the window timer stops the errand', () => {
+  const db = newDb();
+  const e = awaiting(db);
+  advance(db, 9001);
+  expect(gesture(db, 'CONFIRM', { heardDigest: DIGEST }).outcome).toBe('ignored:window_closed');
+  // Read harness state before opening a transaction: `db.db` inside `withReducerTx` deadlocks the test datastore.
+  const window = confirmTimer(db, e.id)!;
+  internal(db, (ctx) => m.errandTimeout(ctx, { job: window }));
+  const stopped = errandOf(db);
+  expect([stopped.status.tag, stopped.reasonCode]).toEqual(['Stopped', 'window_closed']);
+});
+
+test('a stale CONFIRM that arrives after the window closed never reopens it, whatever its onset age', () => {
+  const db = newDb();
+  const e = awaiting(db);
+  const window = confirmTimer(db, e.id)!;
+  advance(db, 9001); // the window closed at +9 s; its timer has not run yet
+  // The clench began at the read-back's end, inside the quiet hold, but it arrives after the close.
+  expect(gesture(db, 'CONFIRM', { heardDigest: DIGEST, onsetAgeMs: 9001 }).outcome).toBe('ignored:window_closed');
+  const after = errandOf(db);
+  expect([after.status.tag, after.windowSeq, micros(after.confirmClosesAt)]).toEqual(['AwaitingConfirm', e.windowSeq, micros(e.confirmClosesAt)]);
+  expect(confirmTimer(db, e.id)!.scheduledId).toBe(window.scheduledId); // no new window was armed
+  internal(db, (ctx) => m.errandTimeout(ctx, { job: window }));
+  expect([errandOf(db).status.tag, errandOf(db).reasonCode]).toEqual(['Stopped', 'window_closed']);
+});
+
+test('CONFIRM with a digest the person did not hear is refused', () => {
+  const db = newDb();
+  awaiting(db);
+  live(db, 1500);
+  expect(gesture(db, 'CONFIRM', { heardDigest: 'ffffffffffffffff' }).outcome).toBe('ignored:digest_mismatch');
+  expect(errandOf(db).status.tag).toBe('AwaitingConfirm');
+});
+
+test('CONFIRM without good contact on the latest heartbeat is refused', () => {
+  const db = newDb();
+  awaiting(db);
+  live(db, 1500);
+  for (const l of [...db.db.livenessLease.sessionId.filter(scan(db).sessionId)]) {
+    db.db.livenessLease.scheduledId.update({ ...l, decoderHealthy: false });
+  }
+  expect(gesture(db, 'CONFIRM', { heardDigest: DIGEST }).outcome).toBe('ignored:no_contact');
+});
+
+test('CONFIRM after consent was revoked is refused (and the revoke already stopped the errand)', () => {
+  const db = newDb();
+  awaiting(db);
+  live(db, 1500);
+  const row = [...db.db.consent.consentByScope.filter({ tag: 'Errand' })][0]!;
+  db.db.consent.id.update({ ...row, revokedAt: now(db) }); // revoked behind the reducer's back
+  expect(gesture(db, 'CONFIRM', { heardDigest: DIGEST }).outcome).toBe('ignored:no_consent');
+});
+
+test('a valid CONFIRM confirms once; a second CONFIRM finds nothing to confirm, and a retried id is a no-op', () => {
+  const db = newDb();
+  awaiting(db);
+  live(db, 1500);
+  const g = gesture(db, 'CONFIRM', { heardDigest: DIGEST, gestureId: 'confirm-1' });
+  expect(g.outcome).toBe('accepted:confirm');
+  const e = errandOf(db);
+  expect([e.status.tag, e.confirmedDigest, e.confirmGestureId]).toEqual(['Confirmed', DIGEST, 'confirm-1']);
+  expect(confirmTimer(db, e.id)).toBeUndefined();
+  gesture(db, 'CONFIRM', { heardDigest: DIGEST, gestureId: 'confirm-1' }); // retry: nothing new
+  expect([...db.db.gestureLog.gestureBySession.filter(scan(db).sessionId)].filter((r) => r.gestureId === 'confirm-1')).toHaveLength(1);
+  settle(db);
+  expect(gesture(db, 'CONFIRM', { heardDigest: DIGEST }).outcome).toBe('ignored:nothing_to_confirm');
+});
+
+test('a CONFIRM replayed after its session was purged is refused, so it can never release a new errand', () => {
+  const db = newDb();
+  awaiting(db);
+  live(db, 1500);
+  expect(gesture(db, 'CONFIRM', { heardDigest: DIGEST, gestureId: 'confirm-a' }).outcome).toBe('accepted:confirm');
+  const first = scan(db).sessionId;
+  as(db, STATION, (ctx) => m.endSession(ctx, {}));
+  as(db, OWNER, (ctx) => m.purgeSession(ctx, { sessionId: first }));
+  expect(db.db.gestureLog.gestureId.find('confirm-a')).toBeNull();
+  expect(db.db.spentGesture.gestureId.find('confirm-a')?.gestureId).toBe('confirm-a');
+  // A new session with the same errand (same digest), read back and waiting inside its window.
+  as(db, STATION, (ctx) => m.startSession(ctx, { label: 'demo' }));
+  live(db, 500);
+  const e = awaiting(db);
+  expect(scan(db).sessionId).not.toBe(first);
+  live(db, 1500);
+  expect(failure(() => gesture(db, 'CONFIRM', { heardDigest: DIGEST, gestureId: 'confirm-a' }))).toBe('gesture_id was already used');
+  expect(errandOf(db).status.tag).toBe('AwaitingConfirm');
+  expect(gesture(db, 'CONFIRM', { heardDigest: DIGEST, gestureId: 'confirm-b' }).outcome).toBe('accepted:confirm');
+  expect(errandOf(db).id).toBe(e.id);
+});
+
+test('NO or STOP while waiting for the confirm stops the errand: nothing is sent', () => {
+  const db = newDb();
+  awaiting(db);
+  advance(db, 1500);
+  expect(gesture(db, 'NO').outcome).toBe('accepted:stop_errand');
+  const e = errandOf(db);
+  expect([e.status.tag, e.reasonCode]).toEqual(['Stopped', 'no']);
+  expect(e.stopGestureId).not.toBe('');
+
+  const db2 = newDb();
+  previewed(db2);
+  expect(gesture(db2, 'STOP').outcome).toBe('accepted:stop_errand');
+  expect(errandOf(db2).status.tag).toBe('Stopped');
+});
+
+test('a preview that arrives after STOP leaves the errand stopped and finishes the job', () => {
+  const db = newDb();
+  grantConsent(db, 'errand', FORM_KEY);
+  const q = scanning(db, [errandOption()]);
+  gesture(db, 'YES');
+  const job = claim(db, q.id, 'ErrandPreview');
+  expect(gesture(db, 'STOP').outcome).toBe('accepted:stop_errand');
+  // STOP cancelled the preview job, so the late preview is refused as stale.
+  expect(
+    failure(() =>
+      as(db, AGENT, (ctx) =>
+        m.agentAttachPreview(ctx, { jobId: job.id, attempt: job.attempt, status: 'previewed', formTitle: '', readBackText: 'x', readBackJson: '', previewDigest: DIGEST, screenshotUrl: '', reasonCode: '', reason: '', previewMs: 1 }),
+      ),
+    ),
+  ).toBe('stale attempt');
+  expect(errandOf(db).status.tag).toBe('Stopped');
+});
+
+test('the read-back and preview deadlines stop or fail a waiting errand', () => {
+  const db = newDb();
+  const e = previewed(db);
+  const readback = [...db.db.errandLease.errandId.filter(e.id)].find((r) => r.kind.tag === 'Readback')!;
+  internal(db, (ctx) => m.errandTimeout(ctx, { job: readback }));
+  expect([errandOf(db).status.tag, errandOf(db).reasonCode]).toEqual(['Stopped', 'readback_not_finished']);
+
+  const db2 = newDb();
+  grantConsent(db2, 'errand', FORM_KEY);
+  scanning(db2, [errandOption()]);
+  gesture(db2, 'YES');
+  const e2 = errandOf(db2);
+  const preview = [...db2.db.errandLease.errandId.filter(e2.id)].find((r) => r.kind.tag === 'Preview')!;
+  expect(micros(timerAt(preview)) - micros(now(db2))).toBe(60_000_000n);
+  internal(db2, (ctx) => m.errandTimeout(ctx, { job: preview }));
+  expect([errandOf(db2).status.tag, errandOf(db2).reasonCode]).toEqual(['Failed', 'preview_timeout']);
+});
+
+/** A Confirmed errand. */
+function confirmed(db: Test) {
+  awaiting(db);
+  live(db, 1500);
+  expect(gesture(db, 'CONFIRM', { heardDigest: DIGEST }).outcome).toBe('accepted:confirm');
+  return errandOf(db);
+}
+
+test('claim_errand refuses the wrong digest and anything not Confirmed', () => {
+  const db = newDb();
+  const e = previewed(db);
+  expect(failure(() => as(db, AGENT, (ctx) => m.claimErrand(ctx, { errandId: e.id, digest: DIGEST })))).toBe('errand is not confirmed');
+  const db2 = newDb();
+  const e2 = confirmed(db2);
+  expect(failure(() => as(db2, AGENT, (ctx) => m.claimErrand(ctx, { errandId: e2.id, digest: 'ffffffffffffffff' })))).toBe('digest mismatch');
+  expect(failure(() => as(db2, STATION, (ctx) => m.claimErrand(ctx, { errandId: e2.id, digest: DIGEST })))).toBe('not allowed');
+});
+
+test('the agent claims a confirmed errand once and completes it', () => {
+  const db = newDb();
+  const e = confirmed(db);
+  as(db, AGENT, (ctx) => m.claimErrand(ctx, { errandId: e.id, digest: DIGEST }));
+  const sub = errandOf(db);
+  expect([sub.status.tag, sub.claimAttempt]).toEqual(['Submitting', 1]);
+  const lease = [...db.db.errandLease.errandId.filter(e.id)].find((r) => r.kind.tag === 'Submit')!;
+  expect([lease.seq, micros(timerAt(lease)) - micros(now(db))]).toEqual([1, 60_000_000n]);
+  expect(failure(() => as(db, AGENT, (ctx) => m.claimErrand(ctx, { errandId: e.id, digest: DIGEST })))).toBe('errand is not confirmed');
+  as(db, AGENT, (ctx) =>
+    m.completeErrand(ctx, { errandId: e.id, attempt: 1, status: 'submitted', confirmationText: 'Your response has been recorded.', screenshotUrl: '', reasonCode: '', reason: '', submitMs: 3100 }),
+  );
+  const done = errandOf(db);
+  expect([done.status.tag, done.confirmationText, done.submitMs]).toEqual(['Submitted', 'Your response has been recorded.', 3100]);
+});
+
+test('a lapsed submit lease becomes UnknownOutcome; nothing can claim it again; a late true result is recorded', () => {
+  const db = newDb();
+  const e = confirmed(db);
+  as(db, AGENT, (ctx) => m.claimErrand(ctx, { errandId: e.id, digest: DIGEST }));
+  const lease = [...db.db.errandLease.errandId.filter(e.id)].find((r) => r.kind.tag === 'Submit')!;
+  advance(db, 60_000);
+  internal(db, (ctx) => m.errandTimeout(ctx, { job: lease }));
+  expect([errandOf(db).status.tag, errandOf(db).reasonCode]).toEqual(['UnknownOutcome', 'lease_lapsed']);
+  expect(failure(() => as(db, AGENT, (ctx) => m.claimErrand(ctx, { errandId: e.id, digest: DIGEST })))).toBe('errand is not confirmed');
+  expect(
+    failure(() =>
+      as(db, AGENT, (ctx) => m.completeErrand(ctx, { errandId: e.id, attempt: 2, status: 'submitted', confirmationText: '', screenshotUrl: '', reasonCode: '', reason: '', submitMs: 1 })),
+    ),
+  ).toBe('stale attempt');
+  as(db, AGENT, (ctx) =>
+    m.completeErrand(ctx, { errandId: e.id, attempt: 1, status: 'submitted', confirmationText: 'Recorded.', screenshotUrl: '', reasonCode: '', reason: '', submitMs: 61_000 }),
+  );
+  expect(errandOf(db).status.tag).toBe('Submitted');
+  const kinds = [...db.db.ledger.ledgerBySession.filter(scan(db).sessionId)].map((l) => l.kind);
+  expect(kinds).toContain('late_result');
+});
+
+test('an agent result reported as unknown is UnknownOutcome, never a resubmit', () => {
+  const db = newDb();
+  const e = confirmed(db);
+  as(db, AGENT, (ctx) => m.claimErrand(ctx, { errandId: e.id, digest: DIGEST }));
+  as(db, AGENT, (ctx) => m.completeErrand(ctx, { errandId: e.id, attempt: 1, status: 'unknown', confirmationText: '', screenshotUrl: '', reasonCode: '', reason: '', submitMs: 0 }));
+  expect(errandOf(db).status.tag).toBe('UnknownOutcome');
+  expect(failure(() => as(db, AGENT, (ctx) => m.claimErrand(ctx, { errandId: e.id, digest: DIGEST })))).toBe('errand is not confirmed');
+});
+
+test('complete_errand stores a code-shaped reason code, and the board shows no outside sentence while sharing is off', () => {
+  const db = newDb();
+  const e = confirmed(db);
+  as(db, AGENT, (ctx) => m.claimErrand(ctx, { errandId: e.id, digest: DIGEST }));
+  as(db, AGENT, (ctx) =>
+    m.completeErrand(ctx, { errandId: e.id, attempt: 1, status: 'refused', confirmationText: '', screenshotUrl: '', reasonCode: 'Digest Mismatch', reason: 'The form for Jane Doe changed.', submitMs: 10 }),
+  );
+  const done = errandOf(db);
+  expect([done.status.tag, done.reasonCode]).toEqual(['Refused', 'digest_mismatch']);
+  const board = m.boardErrands(db.anonymousViewContext())[0]!;
+  expect([board.reasonCode, board.reason]).toEqual(['digest_mismatch', '']);
+});
+
+test('a submit timer armed for another attempt does nothing', () => {
+  const db = newDb();
+  const e = confirmed(db);
+  as(db, AGENT, (ctx) => m.claimErrand(ctx, { errandId: e.id, digest: DIGEST }));
+  const lease = [...db.db.errandLease.errandId.filter(e.id)].find((r) => r.kind.tag === 'Submit')!;
+  advance(db, 60_000);
+  internal(db, (ctx) => m.errandTimeout(ctx, { job: { ...lease, seq: lease.seq + 1 } }));
+  expect(errandOf(db).status.tag).toBe('Submitting');
+});
+
+test('while a submit is in flight, YES does not open the menu, and NO or STOP are too late', () => {
+  const db = newDb();
+  const e = confirmed(db);
+  as(db, AGENT, (ctx) => m.claimErrand(ctx, { errandId: e.id, digest: DIGEST }));
+  settle(db);
+  expect(gesture(db, 'YES').outcome).toBe('ignored:busy');
+  expect(scan(db).phase.tag).toBe('Idle');
+  settle(db);
+  expect(gesture(db, 'NO').outcome).toBe('ignored:too_late');
+  expect(gesture(db, 'STOP').outcome).toBe('ignored:too_late');
+  expect(errandOf(db).status.tag).toBe('Submitting');
+});
+
+test('claim_errand refuses once the dead-man deadline passed, even before its timer ran', () => {
+  const db = newDb();
+  const e = confirmed(db);
+  advance(db, 1500); // the newest lease (from the last beat) has just run out; liveness_expired has not run
+  expect(failure(() => as(db, AGENT, (ctx) => m.claimErrand(ctx, { errandId: e.id, digest: DIGEST })))).toBe('no contact');
+  expect(errandOf(db).status.tag).toBe('Confirmed');
+  // The timer (or the next heartbeat) then voids it, so nothing ever leaves the room.
+  const lease = [...db.db.livenessLease.sessionId.filter(scan(db).sessionId)][0]!;
+  internal(db, (ctx) => m.livenessExpired(ctx, { job: lease }));
+  expect([errandOf(db).status.tag, errandOf(db).reasonCode]).toEqual(['Stopped', 'headset_lost']);
+});
+
+test('claim_errand refuses once the idle deadline passed, even before the idle timer ran', () => {
+  const db = newDb();
+  as(db, OWNER, (ctx) => m.setTiming(ctx, { json: JSON.stringify({ idle_pause_ms: 30000 }) }));
+  const e = confirmed(db); // the CONFIRM re-armed the idle timer 30 s ahead
+  live(db, 30_000); // heartbeats keep contact good; no command for 30 s
+  expect(failure(() => as(db, AGENT, (ctx) => m.claimErrand(ctx, { errandId: e.id, digest: DIGEST })))).toBe('idle deadline passed');
+  expect(errandOf(db).status.tag).toBe('Confirmed');
+});
+
+test('claim_errand refuses while the session is paused or after it ended', () => {
+  const db = newDb();
+  const e = confirmed(db);
+  // Paused behind the reducers' back, so the errand is still Confirmed: the claim must still refuse.
+  const s = scan(db);
+  db.db.scanState.sessionId.update({ ...s, phase: { tag: 'Paused' }, pauseReason: { tag: 'Operator' } });
+  expect(failure(() => as(db, AGENT, (ctx) => m.claimErrand(ctx, { errandId: e.id, digest: DIGEST })))).toBe('session paused');
+  db.db.scanState.sessionId.update(s);
+  const session = db.db.session.id.find(s.sessionId)!;
+  db.db.session.id.update({ ...session, endedAt: now(db) });
+  expect(failure(() => as(db, AGENT, (ctx) => m.claimErrand(ctx, { errandId: e.id, digest: DIGEST })))).toBe('session ended');
+});
+
+test('claim_call refuses once the dead-man deadline passed', () => {
+  const db = newDb();
+  grantConsent(db, 'call', 'leon');
+  scanning(db, [callOption(db)]);
+  gesture(db, 'YES');
+  const c = callOf(db);
+  as(db, STATION, (ctx) => m.reportReadbackDone(ctx, { kind: 'call', id: c.id, digest: CALL_DIGEST }));
+  live(db, 1500);
+  expect(gesture(db, 'CONFIRM', { heardDigest: CALL_DIGEST }).outcome).toBe('accepted:confirm');
+  advance(db, 1500);
+  expect(failure(() => as(db, AGENT, (ctx) => m.claimCall(ctx, { callId: c.id, digest: CALL_DIGEST })))).toBe('no contact');
+  expect(callOf(db).status.tag).toBe('Confirmed');
+});
+
+test('a confirmed errand nobody has claimed is voided by a pause', () => {
+  const db = newDb();
+  confirmed(db);
+  expect(gesture(db, 'HEADSET_OFF').outcome).toBe('accepted:pause');
+  expect([errandOf(db).status.tag, errandOf(db).reasonCode]).toEqual(['Stopped', 'headset_off']);
+});
+
+test('a new partner question stops an errand nobody has claimed yet', () => {
+  const db = newDb();
+  awaiting(db);
+  as(db, 'partner', (ctx) => m.askQuestion(ctx, { requestId: 'interrupt-1', text: 'Are you cold?', via: 'typed', listenMs: 0 }));
+  expect([errandOf(db).status.tag, errandOf(db).reasonCode]).toEqual(['Stopped', 'interrupted']);
+});
+
+test('a call is prepared on the pick, confirmed after its read-back, claimed once, and STOP hangs up', () => {
+  const db = newDb();
+  grantConsent(db, 'call', 'leon');
+  scanning(db, [callOption(db)]);
+  expect(gesture(db, 'YES').outcome).toBe('accepted:pick_call');
+  const c = callOf(db);
+  expect([c.status.tag, c.contactName, c.scriptDigest]).toEqual(['Prepared', 'Leon', CALL_DIGEST]);
+  as(db, STATION, (ctx) => m.reportReadbackDone(ctx, { kind: 'call', id: c.id, digest: CALL_DIGEST }));
+  live(db, 1500);
+  expect(gesture(db, 'CONFIRM', { heardDigest: CALL_DIGEST }).outcome).toBe('accepted:confirm');
+  expect(callOf(db).status.tag).toBe('Confirmed');
+  expect(failure(() => as(db, AGENT, (ctx) => m.claimCall(ctx, { callId: c.id, digest: 'ffffffffffffffff' })))).toBe('digest mismatch');
+  as(db, AGENT, (ctx) => m.claimCall(ctx, { callId: c.id, digest: CALL_DIGEST }));
+  expect([callOf(db).status.tag, callOf(db).claimAttempt]).toEqual(['Dialing', 1]);
+  as(db, AGENT, (ctx) => m.reportCallStatus(ctx, { callId: c.id, attempt: 1, status: 'connected', result: '', endReason: '', reasonCode: '', reason: '' }));
+  settle(db);
+  expect(gesture(db, 'STOP').outcome).toBe('accepted:hang_up');
+  expect([callOf(db).cancelRequested, callOf(db).cancelReason]).toEqual([true, 'stop']);
+  as(db, AGENT, (ctx) => m.reportCallStatus(ctx, { callId: c.id, attempt: 1, status: 'ended', result: 'cancelled', endReason: 'hangup', reasonCode: '', reason: '' }));
+  expect([callOf(db).status.tag, callOf(db).result]).toEqual(['Ended', 'cancelled']);
+  as(db, AGENT, (ctx) => m.addCallLine(ctx, { callId: c.id, attempt: 1, lineKey: 'line-1', role: 'assistant', text: 'Hello, this is NeuroLingo.' }));
+  as(db, AGENT, (ctx) => m.addCallLine(ctx, { callId: c.id, attempt: 1, lineKey: 'line-1', role: 'assistant', text: 'Hello, this is NeuroLingo.' }));
+  expect([...db.db.callLine.callId.filter(c.id)]).toHaveLength(1);
+});
+
+test('a call option without consent for the contact is refused at the pick', () => {
+  const db = newDb();
+  scanning(db, [callOption(db, 'call-2', 'stranger')]);
+  gesture(db, 'YES');
+  expect([callOf(db).status.tag, callOf(db).reasonCode]).toEqual(['Refused', 'no_consent']);
+});

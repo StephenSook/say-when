@@ -49,7 +49,7 @@ The hand commands are imagined movements read over the motor cortex, so they onl
 | Apify client (search, places, errand) | `apify/client/` | Built, 166 tests in CI |
 | Cartesia (speech to text, voice, dictionary, call) | `cartesia/` | Built, 117 tests in CI; live API smoke test pending |
 | Moss retrieval | `moss/` | Built, 75 tests in CI; first run against real Moss pending. Memory text stays private unless a memory is marked shareable |
-| SpacetimeDB module | `spacetime/` | In progress; design in [docs/spacetime.md](docs/spacetime.md) |
+| SpacetimeDB module | `spacetime/` | Built, 117 tests in CI. Live on Maincloud as `say-when-dev` (Oct 24) and smoke-tested there: 17 of 17 end-to-end checks ([spacetime/README.md](spacetime/README.md)). Design in [docs/spacetime.md](docs/spacetime.md) |
 | Dashboard and partner phone | `web/` | In progress; spec in [docs/ui.md](docs/ui.md), mockups in `docs/mockups/` |
 | Headset decoder | `switch/` | Shashank; not in this repo yet. Brain test in [docs/brain-mode-test.md](docs/brain-mode-test.md) |
 
@@ -57,11 +57,13 @@ The hand commands are imagined movements read over the motor cortex, so they onl
 
 SpacetimeDB is the whole live backend. One server-side clock (chained scheduled reducers) moves the scan cursor on every screen at once. A heartbeat lease pauses everything if the headset or laptop drops. Consent is a row: a form or a call is released only by a fresh CONFIRM whose digest matches what the person heard. Each device has a role checked in every reducer, per-role views keep private text private, and a public pipeline table drives the live dashboards on any laptop. Details in [docs/spacetime.md](docs/spacetime.md).
 
+Measured on Maincloud (Oct 24, smoke runs with made-up content, not yet a wearer): the scheduled steps ran a median 2 ms after their planned time; a YES that arrived 272 ms after the next option began still picked the option the person heard; with heartbeats stopped, the database paused itself 1501 to 1502 ms after the last one, 4 times out of 4; and every wrong way to release an errand (YES, an early CONFIRM, a CONFIRM inside the quiet hold, a wrong digest, a repeat) was recorded and ignored. Anyone can check the live numbers with no key: `https://maincloud.spacetimedb.com/v1/database/say-when-dev/route/stats`.
+
 ## Repo layout
 
 | Path | What | State |
 |---|---|---|
-| `spacetime/` | SpacetimeDB module: tables, reducers, views, scan clock, consent gate | In progress |
+| `spacetime/` | SpacetimeDB module: tables, reducers, views, scan clock, consent gate; smoke tools in `spacetime/scripts/` | Built; live as `say-when-dev` |
 | `switch/` | Headset reader, four-command decoder, calibration | Planned |
 | `agent/` | Option planner and the agent sidecar | Planned |
 | `apify/form-errand/` | Apify Actor: preview, read back, submit | Built |

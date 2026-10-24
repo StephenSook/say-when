@@ -158,6 +158,34 @@ jobs:
           echo "passing tests: $pass"
           test "$pass" -ge 75
 
+  spacetime:
+    name: SpacetimeDB module (scan clock, dead-man pause, consent gate, roles)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: spacetime
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: spacetime/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - name: Tests (in-memory test datastore, no server)
+        run: |
+          status=0
+          npx vitest run --reporter=default --reporter=json --outputFile.json=test.json > test.log 2>&1 || status=$?
+          cat test.log
+          test "$status" -eq 0
+          failed=$(node -e "console.log(require('./test.json').numFailedTests)")
+          pass=$(node -e "console.log(require('./test.json').numPassedTests)")
+          echo "passing tests: $pass, failing: $failed"
+          test "$failed" -eq 0
+          # Floor on passing tests, so a run that finds no tests cannot pass.
+          test "$pass" -ge 134
+
   web:
     name: Web dashboard (typecheck, tests, production build)
     runs-on: ubuntu-latest

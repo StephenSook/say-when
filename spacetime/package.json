@@ -1,0 +1,24 @@
+{
+  "name": "@say-when/spacetime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "NeuroLingo's SpacetimeDB module: the scan clock, the dead-man pause, the consent gate, the agent job queue and every screen's live data.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "smoke": "vite-node scripts/watch-scan.ts"
+  },
+  "dependencies": {
+    "spacetimedb": "2.13.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
+  },
+  "license": "MIT"
+}

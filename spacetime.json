@@ -1,0 +1,8 @@
+{
+  "server": "maincloud",
+  "module-path": "./spacetime",
+  "generate": [
+    { "language": "typescript", "out-dir": "./spacetime/bindings/web" },
+    { "language": "typescript", "out-dir": "./spacetime/bindings/agent" }
+  ]
+}

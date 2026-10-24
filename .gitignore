@@ -41,9 +41,12 @@ test-results/
 playwright-report/
 .playwright/
 
-# SpacetimeDB build output
+# SpacetimeDB build output, the per-person database name and identity tokens
 spacetime/**/target/
 spacetime/**/dist/
+spacetime.local.json
+spacetime.*.local.json
+.agent-token
 
 # Raw headset recordings stay on the laptop
 switch/recordings/
