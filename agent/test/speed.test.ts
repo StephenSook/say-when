@@ -90,6 +90,11 @@ const NEGATIVES: [string, string][] = [
     ['Do you want me to open the window?', 'request'],
     ['Shall I turn on the lights?', 'request'],
     ['Can I help you with anything?', 'request'],
+    // Review round 3 (Codex): a list of alternatives, with commas or slashes, is a choice for the planner.
+    ['Is your pain mild/moderate/severe?', 'list'],
+    ['Do you prefer tea, coffee, juice?', 'list'],
+    ['Would you like tea & toast?', 'list'],
+    ['Are you okay, Sam?', 'list'],
     ['What do you want for lunch?', 'no_auxiliary'],
     ['Do you know where the station is?', 'wh_word'],
     ['Can you tell me how you feel?', 'wh_word'],

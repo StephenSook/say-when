@@ -17,6 +17,7 @@ export type YesNoReason =
     | 'empty'
     | 'no_auxiliary'
     | 'choice'
+    | 'list'
     | 'wh_word'
     | 'errand_verb'
     | 'request'
@@ -37,6 +38,11 @@ export const AUXILIARIES: readonly string[] = [
 const SMOKE_TAG = '[yes_no]';
 /** A choice between things: "tea or coffee", "pick between them", "would you rather". */
 const CHOICE = /\b(or|either|versus|vs|between|rather|choose|chooses|chose|chosen|choosing|pick|picks|picked|picking)\b/;
+/**
+ * A list of alternatives: "mild/moderate/severe", "tea, coffee, juice", "tea & toast". Any comma, slash or ampersand
+ * counts (also a comma that only names someone, "Are you okay, Sam?"): the planner can still answer yes or no.
+ */
+const LIST = /[,/&]/;
 /**
  * Anything the planner could turn into an errand or a call option ("Can you send the care team a request?", "Do you
  * want to submit a care team request?", "Should I get the nurse?"). A stock Yes would only say "Yes." and do nothing,
@@ -82,6 +88,7 @@ export function classifyYesNo(question: string): YesNoVerdict {
     const first = /^[a-z]+(?:'[a-z]+)?/.exec(body)?.[0] ?? '';
     if (!AUXILIARIES.includes(first)) return { yesNo: false, reason: 'no_auxiliary' };
     if (CHOICE.test(body)) return { yesNo: false, reason: 'choice' };
+    if (LIST.test(body)) return { yesNo: false, reason: 'list' };
     if (WH_WORD.test(body)) return { yesNo: false, reason: 'wh_word' };
     if (ERRAND_VERB.test(body)) return { yesNo: false, reason: 'errand_verb' };
     if (REQUEST_START.test(body)) {
