@@ -1,12 +1,48 @@
 import assert from 'node:assert/strict';
+import type { AddressInfo } from 'node:net';
 import { describe, it } from 'node:test';
 
 import { buildReadBackText, canonicalFormUrl, computeDigest, spokenValue } from '../src/digest.js';
 import { nameScore } from '../src/fields.js';
-import { checkUrl, isSignInUrl, matchesAllowedPrefix, parsePrefixes } from '../src/guards.js';
+import { REASONS, checkUrl, isSignInUrl, matchesAllowedPrefix, parsePrefixes } from '../src/guards.js';
 import { SubmitLedger, type RecordStore } from '../src/ledger.js';
 import { HostPolicy, isPrivateAddress } from '../src/network.js';
+import { createErrandServer } from '../src/server.js';
 import { DEFAULT_DISCLOSURE, InputError, parseInput } from '../src/validate.js';
+
+describe('Standby server', () => {
+    it('never says nothing was sent when the server fails during submit', async () => {
+        const server = createErrandServer(async () => {
+            throw new Error('the browser went away');
+        }, {});
+        await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+        const { port } = server.address() as AddressInfo;
+        const post = async (route: string) => {
+            const res = await fetch(`http://127.0.0.1:${port}${route}`, { method: 'POST', body: '{}' });
+            return { status: res.status, error: ((await res.json()) as { error: string }).error };
+        };
+        try {
+            const submit = await post('/submit');
+            assert.equal(submit.status, 500);
+            assert.match(submit.error, /may or may not have been sent/);
+            assert.doesNotMatch(submit.error, /Nothing was sent/);
+            // Inspect and preview never press send, so saying nothing was sent stays true there.
+            for (const route of ['/preview', '/inspect']) {
+                const r = await post(route);
+                assert.equal(r.status, 500);
+                assert.equal(r.error, 'Internal error. Nothing was sent.');
+            }
+        } finally {
+            server.closeAllConnections();
+            await new Promise<void>((resolve) => server.close(() => resolve()));
+        }
+    });
+
+    it('speaks an uncertain click as possibly sent', () => {
+        assert.match(REASONS.click_uncertain, /may have sent it/i);
+        assert.doesNotMatch(REASONS.click_uncertain, /nothing was sent/i);
+    });
+});
 
 const items = [
     { label: 'Who is this from?', value: 'Demo user', matchedBy: 'label' },

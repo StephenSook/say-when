@@ -77,6 +77,9 @@ export async function startFixtures(): Promise<FixtureServer> {
         '/upload': page('<form><label for="f">Attach</label><input id="f" type="file"></form>'),
         '/empty': page('<p>No form here.</p>'),
         '/img-private': page('<form><label for="a">Name</label><input id="a"></form><img src="http://10.0.0.1/x.png" alt="">'),
+        '/no-button': page('<form><label for="a">Name</label><input id="a" name="a"></form>'),
+        // Its POST reaches the server, which never answers, so the click's navigation never finishes.
+        '/hang': DEMO_FORM_HTML.replace('action="/demo-form/submit"', 'action="/hang/submit"'),
     };
     const server: Server = createServer((req, res) => {
         const path = (req.url ?? '/').split('?')[0];
@@ -89,6 +92,7 @@ export async function startFixtures(): Promise<FixtureServer> {
             req.resume();
             req.on('end', () => {
                 posts.set(path, (posts.get(path) ?? 0) + 1);
+                if (path === '/hang/submit') return;
                 res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
                 res.end(path === '/aria/submit' ? '{}' : DEMO_CONFIRMATION_HTML);
             });
@@ -103,6 +107,11 @@ export async function startFixtures(): Promise<FixtureServer> {
     return {
         base: `http://127.0.0.1:${port}`,
         count: (path) => posts.get(path) ?? 0,
-        close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+        close: () =>
+            new Promise<void>((resolve) => {
+                // The /hang/submit request is still open; drop it so close can finish.
+                server.closeAllConnections();
+                server.close(() => resolve());
+            }),
     };
 }

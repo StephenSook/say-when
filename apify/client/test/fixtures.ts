@@ -256,3 +256,23 @@ export const CAPTCHA_REFUSED: ActorErrandResult = {
     finalUrl: 'https://forms.example.com/f',
     refusal: { code: 'captcha', reason: 'This form has a CAPTCHA. I never get past those, so it needs a person.' },
 };
+
+/** The send click failed partway (runErrand in the Actor's src/errand.ts): the form may have gone out. */
+export const CLICK_UNCERTAIN: ActorErrandResult = {
+    ...SUBMITTED,
+    status: 'failed',
+    confirmationText: null,
+    submittedAt: null,
+    refusal: { code: 'click_uncertain', reason: 'I may have sent it. Check before trying again.' },
+};
+
+export const NO_CONFIRMATION: ActorErrandResult = {
+    ...CLICK_UNCERTAIN,
+    refusal: { code: 'no_confirmation', reason: 'I pressed send but did not see a confirmation. Check before trying again.' },
+};
+
+/** A repeat of a digest whose first send was confirmed. */
+export const CONFIRMED_DUPLICATE: ActorErrandResult = { ...SUBMITTED, status: 'duplicate' };
+
+/** A repeat of a digest whose first send has no confirmation on record. */
+export const UNCONFIRMED_DUPLICATE: ActorErrandResult = { ...SUBMITTED, status: 'duplicate', confirmationText: null };

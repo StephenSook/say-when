@@ -1,5 +1,6 @@
 import { ConfigError, checkToken, parseBaseUrl, type ApifyConfig } from './config.js';
-import type { ErrandResult, ErrandStatus, FieldInput, RefusalCode } from './errand-types.js';
+import { REFUSAL_CODES, checkErrandResult } from './errand-check.js';
+import type { ErrandResult, FieldInput } from './errand-types.js';
 import { elapsedMs, emit, type EventSink } from './events.js';
 import { ApifyHttpError, endpointOf, requestJson, type FetchLike } from './http.js';
 
@@ -55,20 +56,33 @@ export interface ErrandCallOptions {
     signal?: AbortSignal;
 }
 
-export type UnknownOutcomeReason = 'timeout' | 'network' | 'aborted' | 'server_error' | 'bad_response';
+export type UnknownOutcomeReason =
+    | 'timeout'
+    | 'network'
+    | 'aborted'
+    | 'server_error'
+    | 'bad_response'
+    | 'click_uncertain'
+    | 'no_confirmation'
+    | 'unconfirmed_duplicate';
 
 /**
  * The submit may or may not have gone through: it timed out, the connection dropped, the caller cancelled it
- * after it left, or the server answered in a way that proves neither. Do not resend. Check the errand row or
+ * after it left, the reply was invalid, or the Actor itself said it cannot tell (click_uncertain,
+ * no_confirmation, or a duplicate of a send that was never confirmed). Do not resend. Check the errand row or
  * the form's responses first. The Actor also refuses the same digest for ten minutes, so a resend inside that
- * window comes back as "duplicate" rather than a second submission.
+ * window comes back as a duplicate rather than a second submission.
  */
 export class UnknownOutcomeError extends Error {
     readonly reason: UnknownOutcomeReason;
+    /** HTTP status of a failed exchange, or null when there was none or the Actor's own result said this. */
     readonly status: number | null;
     readonly code?: string;
+    /** The Actor's result, when it sent one. Not enumerable, so logging the error never prints form values. */
+    declare readonly result?: ErrandResult;
 
-    constructor(reason: UnknownOutcomeReason, status: number | null, code?: string) {
+    constructor(reason: UnknownOutcomeReason, extra: { status?: number | null; code?: string; result?: ErrandResult } = {}) {
+        const status = extra.status ?? null;
         const detail = status === null ? reason : `${reason}, HTTP ${status}`;
         super(
             `The form submit may or may not have gone through (${detail}). ` +
@@ -77,34 +91,15 @@ export class UnknownOutcomeError extends Error {
         this.name = 'UnknownOutcomeError';
         this.reason = reason;
         this.status = status;
-        if (code) this.code = code;
+        if (extra.code) this.code = extra.code;
+        if (extra.result) Object.defineProperty(this, 'result', { value: extra.result, enumerable: false });
     }
 }
 
 const DEFAULT_TIMEOUTS_MS: Record<ErrandRoute, number> = { inspect: 60_000, preview: 60_000, submit: 120_000 };
 
-const RESULT_STATUSES = new Set<ErrandStatus>(['inspected', 'previewed', 'submitted', 'duplicate', 'refused', 'failed']);
-
-// Event details use only codes from this list, so an odd reply can never put free text on the dashboard.
-// A Record makes the compiler insist every RefusalCode is listed.
-const KNOWN_REFUSALS: Record<RefusalCode, true> = {
-    bad_input: true,
-    bad_url: true,
-    load_failed: true,
-    captcha: true,
-    login: true,
-    payment: true,
-    upload: true,
-    no_form: true,
-    not_allowed: true,
-    unmatched_fields: true,
-    missing_required: true,
-    not_confirmed: true,
-    digest_mismatch: true,
-    no_submit_button: true,
-    no_confirmation: true,
-};
-const REFUSAL_CODES = new Set<string>(Object.keys(KNOWN_REFUSALS));
+// Room for an inline full-page screenshot; anything bigger is refused while it streams in.
+const MAX_REPLY_BYTES = 16 * 1024 * 1024;
 
 // Statuses the platform or the server send before any errand runs, so a submit that got one was not sent.
 const REFUSED_BEFORE_RUN = new Set([400, 401, 402, 403, 404, 405, 413, 429]);
@@ -112,23 +107,6 @@ const REFUSED_BEFORE_RUN = new Set([400, 401, 402, 403, 404, 405, 413, 429]);
 const OPTION_KEYS = ['submitButtonText', 'confirmationPhrases', 'disclosureText', 'disclosureField', 'includeScreenshot'] as const;
 
 const DIGEST_SHAPE = /^[0-9a-f]{16}$/;
-
-/** Loose shape check: enough to trust the fields we read, without rejecting fields the Actor adds later. */
-function isErrandResult(value: unknown): value is ErrandResult {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-    const v = value as Record<string, unknown>;
-    const refusalOk =
-        v.refusal === null || (typeof v.refusal === 'object' && typeof (v.refusal as Record<string, unknown>).code === 'string');
-    return (
-        typeof v.status === 'string' &&
-        RESULT_STATUSES.has(v.status as ErrandStatus) &&
-        Array.isArray(v.questions) &&
-        Array.isArray(v.readBack) &&
-        Array.isArray(v.unmatched) &&
-        Array.isArray(v.missingRequired) &&
-        refusalOk
-    );
-}
 
 function checkFormUrl(formUrl: unknown): string {
     if (typeof formUrl !== 'string' || formUrl.trim() === '') throw new TypeError('formUrl must be a non-empty string.');
@@ -166,16 +144,28 @@ function asSubmitError(error: unknown): unknown {
     if (error.kind === 'http' && error.status !== null && REFUSED_BEFORE_RUN.has(error.status)) return error;
     switch (error.kind) {
         case 'timeout':
-            return new UnknownOutcomeError('timeout', error.status);
+            return new UnknownOutcomeError('timeout', { status: error.status });
         case 'network':
-            return new UnknownOutcomeError('network', null, error.code);
+            return new UnknownOutcomeError('network', error.code ? { code: error.code } : {});
         case 'aborted':
-            return new UnknownOutcomeError('aborted', null);
+            return new UnknownOutcomeError('aborted');
         case 'bad_response':
-            return new UnknownOutcomeError('bad_response', error.status);
+            return new UnknownOutcomeError('bad_response', { status: error.status });
         case 'http':
-            return new UnknownOutcomeError('server_error', error.status);
+            return new UnknownOutcomeError('server_error', { status: error.status });
     }
+}
+
+/** A valid submit result that still does not prove what happened. */
+function uncertainSubmit(result: ErrandResult, confirmDigest: string): UnknownOutcomeError | null {
+    if (result.status === 'failed') {
+        return new UnknownOutcomeError(result.refusal?.code === 'click_uncertain' ? 'click_uncertain' : 'no_confirmation', { result });
+    }
+    // A duplicate of a send that has no confirmation on record: the first one may or may not have arrived.
+    if (result.status === 'duplicate' && result.confirmationText === null) return new UnknownOutcomeError('unconfirmed_duplicate', { result });
+    // "Submitted" with a digest other than the one the person confirmed proves nothing we can stand behind.
+    if (result.status === 'submitted' && result.previewDigest !== confirmDigest) return new UnknownOutcomeError('bad_response', { result });
+    return null;
 }
 
 function errorLabel(error: unknown): string {
@@ -187,8 +177,8 @@ function errorLabel(error: unknown): string {
 
 /**
  * Client for our form-errand Actor in Standby. Inspect and preview are reads and retry on transient errors.
- * Submit is an outward action: it is sent once, never retried, and any doubt about whether it arrived
- * becomes UnknownOutcomeError.
+ * Submit is an outward action: it is sent once, never retried, and resolves only when the outcome is known.
+ * Every reply is checked field by field against what its route can return before anything reads it.
  */
 export class FormErrandClient {
     readonly url: string;
@@ -230,10 +220,9 @@ export class FormErrandClient {
     }
 
     /**
-     * Sends the form, once. Checks confirm and the digest before anything leaves this process. Read the result:
-     * "submitted" and "duplicate" mean it went through once; "refused" means nothing was sent; "failed" with
-     * refusal code "no_confirmation" means send was pressed but no confirmation appeared, so treat it like
-     * UnknownOutcomeError and do not resend.
+     * Sends the form, once. Checks confirm and the digest before anything leaves this process. It resolves
+     * only when the outcome is known: "submitted" (sent once), "duplicate" of a confirmed send (nothing new
+     * went out), or "refused" (nothing was sent). Every other case rejects with UnknownOutcomeError.
      */
     async submit(req: SubmitRequest, call: ErrandCallOptions = {}): Promise<ErrandResult> {
         if (req.confirm !== true) {
@@ -249,15 +238,17 @@ export class FormErrandClient {
             confirmDigest: req.confirmDigest,
             ...optionsOf(req),
         };
-        return this.#call('submit', body, call);
+        return this.#call('submit', body, call, req.confirmDigest);
     }
 
-    async #call(route: ErrandRoute, body: Record<string, unknown>, call: ErrandCallOptions): Promise<ErrandResult> {
+    async #call(route: ErrandRoute, body: Record<string, unknown>, call: ErrandCallOptions, confirmDigest = ''): Promise<ErrandResult> {
         const started = performance.now();
         emit(this.#onEvent, { stage: 'errand', status: 'started', detail: route, ms: 0 });
         let result: ErrandResult;
         try {
             result = await this.#send(route, body, call.signal);
+            const uncertain = route === 'submit' ? uncertainSubmit(result, confirmDigest) : null;
+            if (uncertain) throw uncertain;
         } catch (error) {
             const thrown = route === 'submit' ? asSubmitError(error) : error;
             emit(this.#onEvent, { stage: 'errand', status: 'error', detail: `${route} ${errorLabel(thrown)}`, ms: elapsedMs(started) });
@@ -289,6 +280,7 @@ export class FormErrandClient {
             token: this.#token,
             body,
             timeoutMs: this.#timeouts[route],
+            maxBytes: MAX_REPLY_BYTES,
             idempotent: route !== 'submit',
             retries: this.#retries,
             retryBaseMs: this.#retryBaseMs,
@@ -297,13 +289,15 @@ export class FormErrandClient {
             signal,
             fetch: this.#fetch,
         });
-        if (isErrandResult(res.body)) return res.body;
+        const problem = checkErrandResult(res.body, route);
+        if (problem === null) return res.body as ErrandResult;
         throw new ApifyHttpError({
             service: 'form-errand',
             endpoint: endpointOf('POST', url),
+            // A 400 comes before any errand runs, so it stays a plain refusal; anything else is unusable.
             kind: res.status === 400 ? 'http' : 'bad_response',
             status: res.status,
-            bodySnippet: res.snippet ?? 'The body was not an errand result.',
+            bodySnippet: res.status === 400 && res.snippet ? res.snippet : `The reply was not a valid ${route} result: ${problem}.`,
             attempts: res.attempts,
         });
     }

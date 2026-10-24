@@ -8,7 +8,16 @@ import { FormErrandClient, UnknownOutcomeError, type SubmitRequest } from '../sr
 import type { PipelineEvent } from '../src/events.js';
 import { ApifyHttpError } from '../src/http.js';
 import { TOKEN, fakeFetch, hang, json, networkError, text } from './fake-fetch.js';
-import { BAD_INPUT, CAPTCHA_REFUSED, PREVIEWED, SUBMITTED } from './fixtures.js';
+import {
+    BAD_INPUT,
+    CAPTCHA_REFUSED,
+    CLICK_UNCERTAIN,
+    CONFIRMED_DUPLICATE,
+    NO_CONFIRMATION,
+    PREVIEWED,
+    SUBMITTED,
+    UNCONFIRMED_DUPLICATE,
+} from './fixtures.js';
 
 // Compile-time check, run by `npm run typecheck`: our copies must be identical to the Actor's own types.
 type Same<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
@@ -198,13 +207,16 @@ describe('FormErrandClient', () => {
         }
     });
 
-    it('reports an unrecognized refusal code as "unknown", never its text', async () => {
+    it('refuses a reply with an unrecognized refusal code, and never puts its text in events', async () => {
         const events: PipelineEvent[] = [];
         const odd = { ...CAPTCHA_REFUSED, refusal: { code: 'Call Alex at 555-0100', reason: 'x' } };
         const { fetch } = fakeFetch(json(odd));
-        await client(fetch, { events }).preview({ formUrl: 'demo', fields: FIELDS });
-        assert.equal(events.at(-1)?.detail, 'preview refused: unknown');
+        const error = await rejection(client(fetch, { events }).preview({ formUrl: 'demo', fields: FIELDS }));
+        assert.ok(error instanceof ApifyHttpError);
+        assert.equal(error.kind, 'bad_response');
+        assert.equal(events.at(-1)?.detail, 'preview bad response');
         assert.ok(!JSON.stringify(events).includes('Alex'));
+        assert.ok(!error.message.includes('Alex'));
     });
 
     it('keeps the token out of JSON and checks its URL', () => {
@@ -220,5 +232,106 @@ describe('FormErrandClient', () => {
         const config: ApifyConfig = { token: TOKEN, ragWebBrowserUrl: 'https://rag-web-browser.apify.actor' };
         assert.throws(() => FormErrandClient.fromConfig(config), (e: unknown) => e instanceof ConfigError && /FORM_ERRAND_URL/.test(e.message));
         assert.equal(FormErrandClient.fromConfig({ ...config, formErrandUrl: URL_BASE }).url, URL_BASE);
+    });
+});
+
+describe('FormErrandClient reply checks', () => {
+    const long = 'x'.repeat(20_001);
+    const malformed: Array<[string, unknown]> = [
+        ['a null read-back item', { ...PREVIEWED, readBack: [null] }],
+        ['no timings', { ...PREVIEWED, timings: undefined }],
+        ['a read-back value that is not text', { ...PREVIEWED, readBack: [{ label: 'Details', value: 7, matchedBy: 'label' }] }],
+        ['a question of an unknown kind', { ...PREVIEWED, questions: [{ label: 'Q', kind: 'slider', required: false }] }],
+        ['a digest that is not 16 hex characters', { ...PREVIEWED, previewDigest: 'not-a-digest' }],
+        ['the wrong mode', { ...PREVIEWED, mode: 'submit' }],
+        ['a status preview cannot return', { ...SUBMITTED, mode: 'preview' }],
+        ['a refusal on a preview', { ...PREVIEWED, refusal: { code: 'captcha', reason: 'x' } }],
+        ['a preview without a digest', { ...PREVIEWED, previewDigest: null }],
+        ['a label that is far too long', { ...PREVIEWED, readBack: [{ label: long, value: 'v', matchedBy: 'label' }] }],
+        ['too many read-back items', { ...PREVIEWED, readBack: Array.from({ length: 51 }, () => PREVIEWED.readBack[0]) }],
+        ['an inline screenshot that is not text', { ...PREVIEWED, screenshotBase64: 12 }],
+    ];
+
+    for (const [what, body] of malformed) {
+        it(`preview refuses a reply with ${what}, without quoting it`, async () => {
+            const { fetch } = fakeFetch(json(body));
+            const error = await rejection(client(fetch).preview({ formUrl: 'demo', fields: FIELDS }));
+            assert.ok(error instanceof ApifyHttpError, String(error));
+            assert.equal(error.kind, 'bad_response');
+            for (const content of ['Demo user', 'Meal or drink', 'Lunch', long.slice(0, 50)]) assert.ok(!error.message.includes(content));
+        });
+    }
+
+    it('submit treats a malformed reply as an unknown outcome and never reports it as submitted', async () => {
+        const events: PipelineEvent[] = [];
+        const { fetch } = fakeFetch(json({ ...SUBMITTED, readBack: [null], timings: undefined }));
+        const error = await rejection(client(fetch, { events }).submit(SUBMIT));
+        assert.ok(error instanceof UnknownOutcomeError);
+        assert.equal(error.reason, 'bad_response');
+        assert.deepEqual(events.map((e) => e.detail), ['submit', 'submit unknown outcome (bad_response)']);
+    });
+
+    it('submit never accepts a status only a preview can return', async () => {
+        const { fetch } = fakeFetch(json({ ...PREVIEWED, mode: 'submit' }));
+        const error = await rejection(client(fetch).submit(SUBMIT));
+        assert.ok(error instanceof UnknownOutcomeError);
+        assert.equal(error.reason, 'bad_response');
+    });
+
+    it('a refused result that carries an unknown-outcome code is invalid, so unknown', async () => {
+        const { fetch } = fakeFetch(json({ ...BAD_INPUT, refusal: { code: 'click_uncertain', reason: 'x' } }));
+        const error = await rejection(client(fetch).submit(SUBMIT));
+        assert.ok(error instanceof UnknownOutcomeError);
+        assert.equal(error.reason, 'bad_response');
+    });
+
+    it('click_uncertain and no_confirmation reject with UnknownOutcomeError, keeping the result out of logs', async () => {
+        for (const [reply, reason] of [
+            [CLICK_UNCERTAIN, 'click_uncertain'],
+            [NO_CONFIRMATION, 'no_confirmation'],
+        ] as const) {
+            const events: PipelineEvent[] = [];
+            const { fetch, calls } = fakeFetch(json(reply), json(SUBMITTED));
+            const error = await rejection(client(fetch, { events }).submit(SUBMIT));
+            assert.ok(error instanceof UnknownOutcomeError);
+            assert.equal(error.reason, reason);
+            assert.equal(error.result?.status, 'failed');
+            assert.equal(error.result?.refusal?.code, reason);
+            assert.equal(calls.length, 1);
+            assert.ok(!Object.keys(error).includes('result'));
+            assert.ok(!JSON.stringify(error).includes('Demo user'));
+            assert.equal(events.at(-1)?.detail, `submit unknown outcome (${reason})`);
+        }
+    });
+
+    it('a duplicate resolves only when the first send was confirmed', async () => {
+        const confirmed = fakeFetch(json(CONFIRMED_DUPLICATE));
+        const res = await client(confirmed.fetch).submit(SUBMIT);
+        assert.equal(res.status, 'duplicate');
+        assert.equal(res.confirmationText, 'Your request was received.');
+
+        const unconfirmed = fakeFetch(json(UNCONFIRMED_DUPLICATE));
+        const error = await rejection(client(unconfirmed.fetch).submit(SUBMIT));
+        assert.ok(error instanceof UnknownOutcomeError);
+        assert.equal(error.reason, 'unconfirmed_duplicate');
+    });
+
+    it('does not trust a "submitted" reply for a digest the person did not confirm', async () => {
+        const { fetch } = fakeFetch(json({ ...SUBMITTED, previewDigest: 'aaaaaaaaaaaaaaaa' }));
+        const error = await rejection(client(fetch).submit(SUBMIT));
+        assert.ok(error instanceof UnknownOutcomeError);
+        assert.equal(error.reason, 'bad_response');
+    });
+
+    it('refuses a reply that says it is larger than 16 MiB before reading it', async () => {
+        const huge = (): Response =>
+            new Response(JSON.stringify(SUBMITTED), { status: 200, headers: { 'content-type': 'application/json', 'content-length': String(17 * 1024 * 1024) } });
+        const preview = await rejection(client(fakeFetch(huge).fetch).preview({ formUrl: 'demo', fields: FIELDS }));
+        assert.ok(preview instanceof ApifyHttpError);
+        assert.equal(preview.kind, 'bad_response');
+        assert.match(preview.bodySnippet, /larger than/);
+        const submit = await rejection(client(fakeFetch(huge).fetch).submit(SUBMIT));
+        assert.ok(submit instanceof UnknownOutcomeError);
+        assert.equal(submit.reason, 'bad_response');
     });
 });

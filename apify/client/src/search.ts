@@ -61,13 +61,13 @@ export interface CallOptions {
     onEvent?: EventSink;
     /** Cancels the call. A cancelled call rejects with ApifyHttpError kind "aborted". */
     signal?: AbortSignal;
-    /** Extra attempts after a 429, a 5xx or a network error. Default 2 for web search, 1 for places. */
-    retries?: number;
-    /** Wait before the first retry; doubles each time, capped at 4 s. Default 500. */
-    retryBaseMs?: number;
 }
 
 export interface WebSearchOptions extends CallOptions {
+    /** Extra attempts after a 429, a 5xx or a network error. Default 2. Place search never retries. */
+    retries?: number;
+    /** Wait before the first retry; doubles each time, capped at 4 s. Default 500. */
+    retryBaseMs?: number;
     /** Pages to fetch, 1 to 10. Default 3. Each one adds time and cost. */
     maxResults?: number;
     /** Our limit for one attempt. Default 45,000. Without requestTimeoutSecs, the server gets this minus 5 s. */
@@ -122,10 +122,27 @@ const MAPS_FIELDS = [
 ];
 const WHEELCHAIR_ENTRANCE = 'Wheelchair accessible entrance';
 
+// Bounds on what one reply may hold: bytes are counted while it streams in, before parsing, and every
+// string we keep is capped after. Identifiers that run long are dropped rather than cut.
+const RAG_MAX_BYTES = 16 * 1024 * 1024;
+const MAPS_MAX_BYTES = 4 * 1024 * 1024;
+const MAX_TITLE_CHARS = 300;
+const MAX_URL_CHARS = 2_048;
+const MAX_ADDRESS_CHARS = 300;
+const MAX_CATEGORY_CHARS = 100;
+const MAX_PHONE_CHARS = 40;
+const MAX_PLACE_ID_CHARS = 200;
+const MAX_ACCESSIBILITY_ENTRIES = 100;
+
 // Small readers for untyped JSON.
 const record = (value: unknown): Record<string, unknown> | null =>
     value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 const str = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
+/** An identifier or link kept whole, or dropped when it is too long to be real. */
+const ident = (value: unknown, max: number): string => {
+    const s = str(value);
+    return s.length <= max ? s : '';
+};
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 const shortHash = (text: string): string => createHash('sha256').update(text).digest('hex').slice(0, 16);
 
@@ -211,14 +228,14 @@ function webRow(raw: unknown, maxTextChars: number): SearchRow | null {
     if (!markdown) return null;
     const metadata = record(item.metadata);
     const result = record(item.searchResult);
-    const url = str(metadata?.url) || str(result?.url);
+    const url = ident(metadata?.url, MAX_URL_CHARS) || ident(result?.url, MAX_URL_CHARS);
     if (!url) return null;
     const rankValue = result?.rank;
     const rank = finite(rankValue) ? rankValue : undefined;
     return {
         id: `web:${shortHash(url)}`,
         source: 'web',
-        title: str(metadata?.title) || str(result?.title) || url,
+        title: capText(str(metadata?.title) || str(result?.title) || url, MAX_TITLE_CHARS),
         text: capText(markdown, maxTextChars),
         url,
         fetchedAt: isoTime(crawl.loadedAt) ?? new Date().toISOString(),
@@ -261,6 +278,7 @@ export async function searchWeb(question: string, opts: WebSearchOptions = {}): 
             url,
             token: config.token,
             timeoutMs,
+            maxBytes: RAG_MAX_BYTES,
             idempotent: true,
             retries: opts.retries ?? 2,
             retryBaseMs: opts.retryBaseMs,
@@ -274,7 +292,8 @@ export async function searchWeb(question: string, opts: WebSearchOptions = {}): 
         const rows: SearchRow[] = [];
         const seen = new Set<string>();
         let skipped = 0;
-        for (const raw of res.body) {
+        // Never more than we asked for, however many items the reply holds.
+        for (const raw of res.body.slice(0, maxResults)) {
             const row = webRow(raw, maxTextChars);
             if (!row) {
                 skipped += 1;
@@ -295,15 +314,15 @@ export async function searchWeb(question: string, opts: WebSearchOptions = {}): 
 
 // ---------- Place search: Google Maps Scraper, run synchronously ----------
 
-function mapsClassify(status: number): Verdict {
-    // 408: the run passed the sync API's 300 s limit. Repeating it would take as long again.
-    if (status === 408) return 'timeout';
-    return status === 429 || status >= 500 ? 'retry' : 'fail';
-}
+// 408: the run passed the sync API's 300 s limit. Nothing is retried here (see searchPlaces).
+const mapsClassify = (status: number): Verdict => (status === 408 ? 'timeout' : 'fail');
 
 function hasWheelchairEntrance(additionalInfo: unknown): boolean {
     const list = record(additionalInfo)?.Accessibility;
-    return Array.isArray(list) && list.some((entry) => record(entry)?.[WHEELCHAIR_ENTRANCE] === true);
+    return (
+        Array.isArray(list) &&
+        list.slice(0, MAX_ACCESSIBILITY_ENTRIES).some((entry) => record(entry)?.[WHEELCHAIR_ENTRANCE] === true)
+    );
 }
 
 const sentence = (text: string): string => (/[.!?]$/.test(text) ? text : `${text}.`);
@@ -332,7 +351,7 @@ function placeRow(raw: unknown, position: number): SearchRow | 'closed' | null {
     if (!item) return null;
     // Never offer a place Google lists as permanently closed.
     if (item.permanentlyClosed === true) return 'closed';
-    const title = str(item.title);
+    const title = capText(str(item.title), MAX_TITLE_CHARS);
     if (!title) return null;
 
     const facts: PlaceFacts = {};
@@ -341,15 +360,16 @@ function placeRow(raw: unknown, position: number): SearchRow | 'closed' | null {
     if (typeof item.wasOpenAtScrapeTime === 'boolean') facts.openNow = item.wasOpenAtScrapeTime;
     // Never inferred: only an explicit true on this exact entry counts.
     if (hasWheelchairEntrance(item.additionalInfo)) facts.wheelchairEntrance = true;
-    const address = str(item.address);
+    const address = capText(str(item.address), MAX_ADDRESS_CHARS);
     if (address) facts.address = address;
-    const phone = str(item.phone);
+    // A phone number cut short would be a wrong number, so a long one is dropped.
+    const phone = ident(item.phone, MAX_PHONE_CHARS);
     if (phone) facts.phone = phone;
-    const category = str(item.categoryName);
+    const category = capText(str(item.categoryName), MAX_CATEGORY_CHARS);
     if (category) facts.category = category;
 
-    const placeId = str(item.placeId);
-    const url = str(item.url);
+    const placeId = ident(item.placeId, MAX_PLACE_ID_CHARS);
+    const url = ident(item.url, MAX_URL_CHARS);
     const loc = record(item.location);
     const location = loc && finite(loc.lat) && finite(loc.lng) ? { lat: loc.lat, lng: loc.lng } : undefined;
     return {
@@ -423,10 +443,10 @@ export async function searchPlaces(query: string, opts: PlaceSearchOptions = {})
             body: input,
             // The run's limit plus time to start it and return the items, never past the sync API's 300 s.
             timeoutMs: Math.min(timeoutSecs + 30, 310) * 1000,
-            // A read with no outward effect, so it may repeat; each repeat is a new run under the same charge cap.
-            idempotent: true,
-            retries: opts.retries ?? 1,
-            retryBaseMs: opts.retryBaseMs,
+            maxBytes: MAPS_MAX_BYTES,
+            // Never retried: each POST can start a new paid run, and after a dropped connection the first run
+            // may still be going, with its own charge cap.
+            idempotent: false,
             classify: mapsClassify,
             signal: opts.signal,
             fetch: opts.fetch,
@@ -434,11 +454,13 @@ export async function searchPlaces(query: string, opts: PlaceSearchOptions = {})
         if (!Array.isArray(res.body)) {
             throw badShape('google-maps', 'POST', url, res.status, res.attempts, 'Expected a JSON array of places.');
         }
+        // Never more than we asked for, however many items the reply holds.
+        const items = res.body.slice(0, maxPlaces);
         const rows: SearchRow[] = [];
         const seen = new Set<string>();
         let closed = 0;
         let skipped = 0;
-        res.body.forEach((raw, i) => {
+        items.forEach((raw, i) => {
             const row = placeRow(raw, i + 1);
             if (row === 'closed') closed += 1;
             else if (row === null) skipped += 1;
@@ -450,7 +472,7 @@ export async function searchPlaces(query: string, opts: PlaceSearchOptions = {})
         const ms = elapsedMs(started);
         // The API docs do not say what a run that hits its own time limit returns. If it returns the places
         // found so far, the run took the whole limit and came back short, so flag that as a hint.
-        const partial = skipped > 0 || (res.body.length < maxPlaces && ms >= timeoutSecs * 1000);
+        const partial = skipped > 0 || (items.length < maxPlaces && ms >= timeoutSecs * 1000);
         emit(opts.onEvent, {
             stage: 'search',
             status: 'ok',

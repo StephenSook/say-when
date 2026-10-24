@@ -30,7 +30,8 @@ export type RefusalCode =
     | 'not_confirmed'
     | 'digest_mismatch'
     | 'no_submit_button'
-    | 'no_confirmation';
+    | 'no_confirmation'
+    | 'click_uncertain';
 
 export interface Refusal {
     code: RefusalCode;

@@ -37,6 +37,16 @@ const CASES: Case[] = [
     ["What's the train schedule?", 'facts', true],
     ['Is it cold outside?', 'facts', true],
     ['did you see the game last night', 'facts', true],
+    // Explicit lookups and current events search even though they say "you" (Codex review, round 1).
+    ['can you look up the menu at chipotle?', 'facts', true],
+    ['Can you look up the menu at Chipotle?', 'facts', true],
+    ['can you check if target is closed?', 'places', true],
+    ['Can you check if Target is closed?', 'places', true],
+    ['can you check whether airfares went up this week?', 'facts', true],
+    ['did you see what happened in ukraine today?', 'facts', true],
+    ['Did you see what happened in Ukraine today?', 'facts', true],
+    ['could you find out when the bus comes', 'facts', true],
+    ['Is the pharmacy closed today?', 'places', true],
     // The time and date come from the clock, not the web.
     ['What time is it?', 'facts', false],
 
@@ -50,6 +60,11 @@ const CASES: Case[] = [
     ['Really?', 'smalltalk', false],
     ["Hey Sam, how's it going?", 'smalltalk', false],
     ["How's everyone doing?", 'smalltalk', false],
+    // Talk about what the person already did stays local, even with a place word in it (Codex review, round 1).
+    ['How was your day at the park?', 'smalltalk', false],
+    ['how was your day at the park', 'smalltalk', false],
+    ['Did you have a good time at the restaurant?', 'smalltalk', false],
+    ['did you have a good time at the restaurant', 'smalltalk', false],
     ['', 'smalltalk', false],
 
     // Personal: memory answers, no search.
@@ -71,6 +86,9 @@ const CASES: Case[] = [
     // Lowercase, as a transcript without capitals: no name to spot, the frame still says personal.
     ['how is sarah doing', 'personal', false],
     ['are you cold', 'personal', false],
+    // Only wrappers followed by a real question are stripped.
+    ['Did you see that?', 'personal', false],
+    ['Are your eyes closed?', 'personal', false],
 ];
 
 describe('classifyQuestion', () => {

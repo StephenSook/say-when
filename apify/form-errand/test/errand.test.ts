@@ -266,3 +266,46 @@ describe('built-in demo form', () => {
         assert.match(sent.confirmationText ?? '', /nothing was sent anywhere/);
     });
 });
+
+describe('the send click', () => {
+    it('with no send button, refuses before any click and leaves the digest free', async () => {
+        const deps = makeDeps();
+        const fields = [{ label: 'Name', value: 'Demo user' }];
+        const preview = await runErrand(input({ formUrl: `${fixtures.base}/no-button`, fields }), deps);
+        assert.equal(preview.status, 'previewed');
+        const submit = () =>
+            runErrand(
+                input({ formUrl: `${fixtures.base}/no-button`, fields, mode: 'submit', confirm: true, confirmDigest: preview.previewDigest }),
+                deps,
+            );
+        const first = await submit();
+        assert.equal(first.status, 'refused');
+        assert.equal(first.refusal?.code, 'no_submit_button');
+        // Nothing was clicked, so the claim was released: a repeat is not reported as a duplicate.
+        const second = await submit();
+        assert.equal(second.status, 'refused');
+        assert.equal(second.refusal?.code, 'no_submit_button');
+    });
+
+    it('a click that fails after the form went out keeps the claim and reports an unknown outcome', async () => {
+        const deps = makeDeps({ timeouts: { clickMs: 1_500, confirmMs: 1_000 } });
+        const preview = await runErrand(input({ formUrl: `${fixtures.base}/hang`, fields: CARE }), deps);
+        assert.equal(preview.status, 'previewed');
+        const submit = () =>
+            runErrand(
+                input({ formUrl: `${fixtures.base}/hang`, fields: CARE, mode: 'submit', confirm: true, confirmDigest: preview.previewDigest }),
+                deps,
+            );
+        const first = await submit();
+        assert.equal(first.status, 'failed');
+        assert.equal(first.refusal?.code, 'click_uncertain');
+        assert.match(first.refusal?.reason ?? '', /may have sent it/);
+        // The POST did reach the server, which is why this must never read as "nothing was sent".
+        assert.equal(fixtures.count('/hang/submit'), 1);
+        // The claim is kept, so the same digest cannot go out again inside the window.
+        const again = await submit();
+        assert.equal(again.status, 'duplicate');
+        assert.equal(again.confirmationText, null);
+        assert.equal(fixtures.count('/hang/submit'), 1);
+    });
+});

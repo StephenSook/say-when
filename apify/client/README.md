@@ -83,15 +83,18 @@ if (preview.status === 'previewed' && preview.previewDigest) {
 
 ### Submit outcomes
 
+`submit` resolves only when the outcome is known. Everything else rejects with `UnknownOutcomeError`.
+
 | What comes back | Meaning | What to do |
 |---|---|---|
-| `status: 'submitted'` | Sent once; `confirmationText` is the page's confirmation. | Show it. |
-| `status: 'duplicate'` | This digest was already sent, or is being sent, in the last ten minutes. Nothing new went out. | Treat as sent when `confirmationText` is set; otherwise check, as for an unknown outcome. |
+| `status: 'submitted'` | Sent once, for the digest the person confirmed; `confirmationText` is the page's confirmation. | Show it. |
+| `status: 'duplicate'` | This digest was sent and confirmed in the last ten minutes. Nothing new went out. | Treat as sent; `confirmationText` is the first send's confirmation. |
 | `status: 'refused'` | A gate failed before anything was clicked; `refusal.code` says which. | Nothing was sent. Speak `refusal.reason`. |
-| `status: 'failed'` with `refusal.code: 'no_confirmation'` | Send was pressed but no confirmation appeared. | Unknown. Check before trying again. |
-| `UnknownOutcomeError` | A timeout, a dropped connection, a 5xx or 408, a cancel after sending, or a reply we could not read. | Unknown. Do not resend; check first. |
+| `UnknownOutcomeError` | `reason` says why: `timeout`, `network`, `aborted` (cancelled after sending), `server_error` (a 5xx or 408), `bad_response` (an invalid or oversized reply), `click_uncertain` (the click on send failed partway), `no_confirmation` (send was pressed, no confirmation appeared) or `unconfirmed_duplicate` (a repeat of a send that was never confirmed). | Unknown. Do not resend; check the errand row or the form's responses first. When the Actor sent a result, it is on `error.result`, which is not enumerable, so logging the error does not print form values. |
 | `ApifyHttpError` with `attempts: 0`, or status 400, 401, 402, 403, 404, 405, 413 or 429 | Refused before any errand ran. | Nothing was sent. |
 | `TypeError` | `confirm` was not `true`, or the digest was not 16 hex characters. Thrown before any request. | Fix the call. |
+
+Every reply is checked field by field against `ErrandResult` and against the statuses its route can return (inspect: `inspected` or `refused`; preview: `previewed` or `refused`; submit: `submitted`, `duplicate`, `refused` or `failed`) before anything reads it. An invalid reply is an `ApifyHttpError` with `kind: 'bad_response'` for inspect and preview, and an `UnknownOutcomeError` for submit. The error names the field that failed and never quotes the reply.
 
 ## Search rows
 
@@ -140,6 +143,12 @@ Rules for place facts:
 
 For Moss (the "Moss docs" contract in PLAN.md): metadata values are strings, so convert numbers and booleans with `String()`, and keep `fetchedAt` so an option can say when it was checked. Web text is long; chunk it before indexing.
 
+## Size limits
+
+A reply is counted while it streams in and refused, before any parsing, once it passes its limit: 16 MiB for RAG Web Browser, 4 MiB for the Google Maps Scraper and 16 MiB for the form errand (room for an inline screenshot). A declared `Content-Length` over the limit fails before anything is read. An oversized reply is `ApifyHttpError` with `kind: 'bad_response'` and is not retried.
+
+After parsing, a search keeps at most `maxResults` pages or `maxPlaces` places, whatever the reply holds. Titles are cut to 300 characters, addresses to 300 and categories to 100. Links over 2,048 characters, phone numbers over 40 and place ids over 200 are dropped rather than cut, since a cut one would be wrong; a web page without a usable link is skipped.
+
 ## Partial results and timeouts
 
 Web search:
@@ -159,10 +168,10 @@ Places:
 |---|---|
 | `ConfigError` | A missing or malformed environment variable or token. |
 | `TypeError`, `RangeError` | A bad argument, thrown before any request. |
-| `ApifyHttpError` | `kind` is `http` (see `status`), `timeout`, `network`, `aborted` or `bad_response`. The message names the service, method, host and path, never the query string or the token. `bodySnippet` holds up to 300 characters of the reply with the token scrubbed out. `attempts` counts requests actually sent. |
+| `ApifyHttpError` | `kind` is `http` (see `status`), `timeout`, `network`, `aborted` or `bad_response`. The message names the service, method, host and path, never the query string or the token. `bodySnippet` holds up to 300 characters of the reply with every configured token scrubbed out, whatever its length. `attempts` counts requests actually sent. |
 | `UnknownOutcomeError` | Submit only; see the table above. |
 
-Reads (web, places, inspect, preview) retry after a 429, a 5xx or a network error, waiting 500 ms, then 1 s, doubling up to 4 s, as Apify's API docs suggest. A `Retry-After` of 4 s or less is followed; a longer one fails at once. Timeouts are never retried. Defaults: 2 retries for web, inspect and preview; 1 for places, since each retry is a new paid run under the same charge cap. Submit never retries.
+Web search, inspect and preview retry after a 429, a 5xx or a network error, waiting 500 ms, then 1 s, doubling up to 4 s, as Apify's API docs suggest; the default is 2 retries. A `Retry-After` of 4 s or less is followed; a longer one fails at once. Timeouts and oversized replies are never retried. Place search never retries: each POST can start a new paid run, and after a dropped connection the first run may still be going. Submit never retries.
 
 ## Events
 
@@ -172,7 +181,7 @@ Reads (web, places, inspect, preview) retry after a 429, a 5xx or a network erro
 |---|---|---|---|
 | `searchWeb` | `web` | `web` or `web partial`, counts `{ rows, skipped }` | `web timeout`, `web http 502`, `web network` |
 | `searchPlaces` | `maps` | `maps` or `maps partial`, counts `{ rows, closed, skipped }` | `maps timeout`, `maps http 402` |
-| errand | `preview` | `preview previewed`, counts `{ questions, readBack, unmatched, missingRequired }` | `preview refused: captcha`, `submit unknown outcome (timeout)` |
+| errand | `preview` | `preview previewed`, counts `{ questions, readBack, unmatched, missingRequired }` | `preview refused: captcha`, `preview bad response`, `submit unknown outcome (click_uncertain)` |
 
 Events never carry the question, page text, answers, form values, URLs, digests or reply bodies. A listener that throws is ignored. `counts` is not a column in the `pipeline_event` contract; fold it into `detail` or leave it out.
 
@@ -181,13 +190,14 @@ Events never carry the question, page text, answers, form values, URLs, digests 
 `classifyQuestion(question)` returns `{ needsWeb, kind, reason }`, with `kind` one of `places`, `facts`, `smalltalk` or `personal`. The rules run in this order:
 
 1. The clock. "What time is it?" is `facts` with no search.
-2. Outside facts. Places first (open or closing times, near and nearest, directions, a meal or outing, words such as pharmacy, cafe or restaurant), then facts (weather, news, scores, prices, hours and schedules, "when is the ...", general knowledge). These win even when the question is also personal, so "Want to grab lunch nearby?" searches.
-3. Shared memories ("Do you remember ...?").
-4. Names. A capitalized name in the middle of a sentence is looked up, unless it reads like someone the person knows ("How's Sarah doing?", "Is Dr. Lee coming?").
-5. Small talk and personal questions: greetings, thanks, feelings, wants, care, family and plans. No search.
-6. Anything left is unsure and searches, so the planner can decide.
+2. Outside facts. Places first (open, closed or closing times, near and nearest, directions, a meal or outing), then facts (weather, news, scores, prices, hours and schedules, "when is the ...", general knowledge), then requests to look something up ("can you look up ...", "check if ...", "find out ...") and current events ("what happened ... today"). These win even when the question is also personal, so "Want to grab lunch nearby?" and "Can you check if Target is closed?" search.
+3. Talk about what the person already did ("How was your day at the park?", "Did you have a good time at the restaurant?") and shared memories ("Do you remember ...?"). No search, even with a place word in it.
+4. Place words such as pharmacy, cafe or restaurant.
+5. Names. A capitalized name in the middle of a sentence is looked up, unless it reads like someone the person knows ("How's Sarah doing?", "Is Dr. Lee coming?").
+6. Small talk and personal questions: greetings, thanks, feelings, wants, care, family and plans. No search.
+7. Anything left is unsure and searches, so the planner can decide.
 
-`reason` is one sentence from a fixed list and never quotes the question. These are fast plain rules, not a model: they will misjudge some questions, and they lean toward searching when unsure. A transcript without capital letters loses the name check. The tests cover more than 50 example questions.
+`reason` is one sentence from a fixed list and never quotes the question. These are fast plain rules, not a model: they will misjudge some questions, and they lean toward searching when unsure. A transcript without capital letters loses the name check. The tests cover more than 70 example questions, lowercase transcripts included.
 
 ## Costs and latency (indicative)
 

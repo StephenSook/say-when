@@ -50,7 +50,11 @@ Each refusal comes back as a code plus one short sentence written to be spoken a
 | `missing_required` | A required question is still empty. |
 | `not_confirmed` | Submit without `confirm: true`. |
 | `digest_mismatch` | The page no longer holds what was read back. |
+| `no_submit_button` | No send button was found, so nothing was clicked. |
 | `no_confirmation` | Send was pressed but no confirmation appeared. Check before trying again; the same digest stays blocked for ten minutes. |
+| `click_uncertain` | The click on send failed partway, for example while the page it started loading never answered, so the form may have been sent. Check before trying again; the same digest stays blocked for ten minutes. |
+
+`no_confirmation` and `click_uncertain` come with `status: "failed"`: the outcome is unknown, so never resend without checking.
 
 ## Input
 
@@ -103,6 +107,8 @@ For low latency the Actor also runs as a warm web server. Open the **Endpoints**
 - `POST /inspect` lists the questions.
 - `POST /preview` fills, reads back and returns the screenshot inline. It never sends, even if you pass `mode: "submit"`.
 - `POST /submit` sends, with the same gates as a normal run.
+
+If the server itself fails, it answers HTTP 500. For `/inspect` and `/preview` nothing was sent; for `/submit` the form may or may not have been sent, so check before trying again.
 
 Requests run one at a time on one warm browser. In our local measurement on the built-in demo form, a cold preview took about 5 seconds and a submit about 3 seconds.
 

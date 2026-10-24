@@ -79,6 +79,8 @@ export interface RequestOptions {
     body?: unknown;
     /** Limit for one attempt, covering the response headers and the whole body. */
     timeoutMs: number;
+    /** Largest reply accepted, counted while it streams in and before any parsing. Default 8 MiB. */
+    maxBytes?: number;
     /** True only for calls that change nothing outside, so repeating them is harmless. Retries need it. */
     idempotent: boolean;
     /** Extra attempts for idempotent calls after a 429, a 5xx or a network error. Default 2, at most 5. */
@@ -109,13 +111,15 @@ const MAX_RETRIES = 5;
 const DEFAULT_RETRY_BASE_MS = 500;
 const RETRY_CAP_MS = 4_000;
 const SNIPPET_CHARS = 300;
+export const DEFAULT_MAX_BYTES = 8 * 1024 * 1024;
 
 const defaultClassify = (status: number): Verdict => (status === 429 || status >= 500 ? 'retry' : 'fail');
 
 /** Removes the token, and anything shaped like an Apify token, from text that may end up in a log. */
 export function scrub(text: string, token: string): string {
     let out = text;
-    if (token.length >= 8) out = out.split(token).join('[token]');
+    // Every configured token, whatever its length: a short one is malformed, but still a secret.
+    if (token.length > 0) out = out.split(token).join('[token]');
     return out
         .replace(/apify_api_[A-Za-z0-9]+/g, '[token]')
         .replace(/([?&]token=)[^&\s"']+/gi, '$1[token]')
@@ -199,11 +203,48 @@ function networkCode(error: unknown): string | undefined {
 
 type Outcome =
     | { type: 'response'; status: number; text: string; retryAfterMs: number | null }
+    | { type: 'too_large'; status: number }
     | { type: 'timeout' }
     | { type: 'aborted' }
     | { type: 'network'; code?: string };
 
-async function attemptOnce(doFetch: FetchLike, url: string, init: RequestInit, timeoutMs: number, signal?: AbortSignal): Promise<Outcome> {
+/**
+ * Reads the body and gives up as soon as it passes maxBytes, so an oversized reply is never held, or parsed,
+ * whole. Null means too large. A declared Content-Length over the limit fails before reading anything.
+ */
+async function readCapped(res: Response, maxBytes: number, stopped: Promise<never>): Promise<string | null> {
+    const declared = Number(res.headers.get('content-length') ?? '');
+    if (Number.isFinite(declared) && declared > maxBytes) {
+        res.body?.cancel().catch(() => undefined);
+        return null;
+    }
+    if (!res.body) return '';
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+        const next = reader.read();
+        next.catch(() => undefined);
+        const { done, value } = await Promise.race([next, stopped]);
+        if (done) break;
+        total += value.byteLength;
+        if (total > maxBytes) {
+            reader.cancel().catch(() => undefined);
+            return null;
+        }
+        chunks.push(value);
+    }
+    return new TextDecoder().decode(Buffer.concat(chunks));
+}
+
+async function attemptOnce(
+    doFetch: FetchLike,
+    url: string,
+    init: RequestInit,
+    timeoutMs: number,
+    maxBytes: number,
+    signal?: AbortSignal,
+): Promise<Outcome> {
     const controller = new AbortController();
     let timedOut = false;
     const onAbort = () => controller.abort();
@@ -221,9 +262,8 @@ async function attemptOnce(doFetch: FetchLike, url: string, init: RequestInit, t
         const pending = doFetch(url, { ...init, signal: controller.signal });
         pending.catch(() => undefined);
         const res = await Promise.race([pending, stopped]);
-        const reading = res.text();
-        reading.catch(() => undefined);
-        const text = await Promise.race([reading, stopped]);
+        const text = await readCapped(res, maxBytes, stopped);
+        if (text === null) return { type: 'too_large', status: res.status };
         return { type: 'response', status: res.status, text, retryAfterMs: parseRetryAfter(res.headers.get('retry-after')) };
     } catch (error) {
         if (timedOut) return { type: 'timeout' };
@@ -248,6 +288,7 @@ export async function requestJson(opts: RequestOptions): Promise<HttpResult> {
     const retries = Math.min(MAX_RETRIES, Math.max(0, Math.floor(opts.retries ?? DEFAULT_RETRIES)));
     const maxAttempts = opts.idempotent ? 1 + retries : 1;
     const baseMs = Math.max(0, opts.retryBaseMs ?? DEFAULT_RETRY_BASE_MS);
+    const maxBytes = opts.maxBytes ?? DEFAULT_MAX_BYTES;
     const endpoint = endpointOf(opts.method, opts.url);
     const fail = (kind: HttpErrorKind, status: number | null, attempts: number, extra: Partial<HttpErrorInit> = {}) =>
         new ApifyHttpError({ service: opts.service, endpoint, kind, status, attempts, ...extra });
@@ -264,8 +305,11 @@ export async function requestJson(opts: RequestOptions): Promise<HttpResult> {
     for (;;) {
         if (opts.signal?.aborted) throw fail('aborted', null, attempts);
         attempts += 1;
-        const outcome = await attemptOnce(doFetch, opts.url, init, opts.timeoutMs, opts.signal);
+        const outcome = await attemptOnce(doFetch, opts.url, init, opts.timeoutMs, maxBytes, opts.signal);
 
+        if (outcome.type === 'too_large') {
+            throw fail('bad_response', outcome.status, attempts, { bodySnippet: `The reply was larger than ${maxBytes} bytes.` });
+        }
         if (outcome.type === 'timeout') throw fail('timeout', null, attempts, { timeoutMs: opts.timeoutMs });
         if (outcome.type === 'aborted') throw fail('aborted', null, attempts);
         if (outcome.type === 'network') {

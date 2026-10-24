@@ -27,6 +27,8 @@ const REASON = {
     schedule: 'Asks about opening hours or a schedule.',
     when: 'Asks when something happens.',
     general: 'Asks a general knowledge question.',
+    lookup: 'Asks to look something up.',
+    current: 'Asks about something happening now.',
     memory: 'Asks about a shared memory, so memory can answer.',
     person: 'Asks about someone the person knows, so memory can answer.',
     name: 'Mentions a name that may need a lookup.',
@@ -57,8 +59,9 @@ function normalize(text: string): string {
 }
 
 // "Do you know when the pharmacy closes?" asks the same thing as "When does the pharmacy close?".
+// Only stripped when more words follow, so "Did you see that?" stays a question to the person.
 const WRAPPER =
-    /^(?:(?:so|um|uh|oh|hey|ok|okay|well)\s+)*(?:do you (?:happen to )?know|any idea|can you tell me|could you tell me|did you hear|have you heard|i wonder|i was wondering)\s+(?=(?:what|when|where|who|whose|which|how|why|if|whether|about|that|the)\b)(?:(?:if|whether|about|that)\s+)?/;
+    /^(?:(?:so|um|uh|oh|hey|ok|okay|well)\s+)*(?:do you (?:happen to )?know|any idea|can you tell me|could you tell me|did you hear|have you heard|did you see|have you seen|i wonder|i was wondering)\s+(?=(?:what|when|where|who|whose|which|how|why|if|whether|about|that|the)\s+\S)(?:(?:if|whether|about|that)\s+)?/;
 
 const CLOCK =
     /^(?:what time is it|what time it is|what's the time|what is the time|what day is it|what day it is|what day is today|what's the date|what is the date|what's today's date|what is today's date)(?: now| right now| today)?$/;
@@ -71,13 +74,27 @@ const HOUSEHOLD = new Set([
     'fridge', 'gate', 'tab', 'app', 'file', 'eye', 'eyes', 'mouth', 'book', 'letter', 'package', 'present', 'gift', 'bag', 'mind',
 ]);
 
-/** "Is the cafe on Bancroft still open?", but not "Is the window open?" or "Are you open to it?". */
-function asksIfOpen(t: string): boolean {
-    const m = /\b(?:is|are|was)\s+((?:[a-z']+\s+){0,4}?[a-z']+)\s+(?:still\s+)?open\b/.exec(t);
-    if (!m) return false;
-    const words = m[1].split(' ');
-    if (words.some((w) => PRONOUNS.has(w))) return false;
-    return !HOUSEHOLD.has(words[words.length - 1]);
+const CONNECTORS = new Set(['if', 'whether', 'when', 'that', 'and', 'or', 'but', 'so']);
+
+/**
+ * A place being open or closed: "Is the cafe on Bancroft still open?", "Can you check if target is closed?".
+ * Not "Is the window open?", "Are you open to it?" or "My eyes are closed".
+ */
+function asksOpenOrClosed(t: string): boolean {
+    // Question order: "is <place> (still) open/closed".
+    const q = /\b(?:is|are|was)\s+((?:[a-z']+\s+){0,4}?[a-z']+)\s+(?:still\s+)?(?:open|closed)\b/.exec(t);
+    if (q) {
+        const words = q[1].split(' ');
+        if (!words.some((w) => PRONOUNS.has(w)) && !HOUSEHOLD.has(words[words.length - 1])) return true;
+    }
+    // Statement order: "<place> is (still) open/closed", the place being the few words before "is".
+    const s = /\b(?:is|are)\s+(?:still\s+)?(?:open|closed)\b/.exec(t);
+    if (!s) return false;
+    const before = t.slice(0, s.index).trim().split(' ').filter(Boolean);
+    let start = before.length;
+    while (start > 0 && before.length - start < 3 && !CONNECTORS.has(before[start - 1]) && !PRONOUNS.has(before[start - 1])) start -= 1;
+    const subject = before.slice(start);
+    return subject.length > 0 && !HOUSEHOLD.has(subject[subject.length - 1]);
 }
 
 const OPEN_TIMES =
@@ -169,15 +186,25 @@ interface Rule {
 const when = (pattern: RegExp, unless?: (t: string) => boolean) => (t: string) => pattern.test(t) && !(unless?.(t) ?? false);
 
 /** Checked first and in order: a question that needs outside facts searches even when it is also personal. */
+// A request to look something up, wherever the pronouns are: "Can you look up the menu at Chipotle?".
+const LOOKUP =
+    /\b(?:look up|look it up|looking up|look into|search for|search the web|search online|google it|google that|check online|find out|(?:check|see) (?:if|whether))\b/;
+// Something happening now: "What happened in Ukraine today?".
+const NEWS_NOW =
+    /\bwhat(?:'s| is)? happen(?:ed|ing)\b.*\b(?:today|tonight|yesterday|last night|this week|this weekend|this morning|lately|recently|right now)\b|\b(?:latest|breaking) news\b/;
+// Talk about something the person already did: "How was your day at the park?".
+const RETRO =
+    /\bhow (?:was|did) your [a-z']+\b|\bhow did you (?:like|enjoy|find)\b|\bdid you (?:have (?:a )?(?:good|nice|great|lovely|fun|bad|rough|hard) (?:time|day|night|evening|morning)|have fun|enjoy|like|love|hate)\b/;
+
+/** Checked first and in order: a question that needs outside facts searches even when it is also personal. */
 const WEB_RULES: Rule[] = [
-    { kind: 'places', reason: REASON.placeOpen, test: asksIfOpen },
+    { kind: 'places', reason: REASON.placeOpen, test: asksOpenOrClosed },
     { kind: 'places', reason: REASON.placeOpen, test: when(OPEN_TIMES) },
     { kind: 'places', reason: REASON.placeOpen, test: when(WHEN_OPEN) },
     { kind: 'places', reason: REASON.outing, test: when(OUTING) },
     { kind: 'places', reason: REASON.nearby, test: when(NEARBY) },
     { kind: 'places', reason: REASON.directions, test: when(DIRECTIONS) },
     { kind: 'places', reason: REASON.place, test: when(RESTROOM_WHERE) },
-    { kind: 'places', reason: REASON.place, test: when(PLACE_NOUN) },
     { kind: 'facts', reason: REASON.weather, test: when(WEATHER, (t) => SMALLTALK_WEATHER.test(t) && !FORECAST.test(t)) },
     { kind: 'facts', reason: REASON.news, test: when(NEWS, (t) => NEWS_PERSONAL.test(t)) },
     { kind: 'facts', reason: REASON.sports, test: when(SPORTS, (t) => SCORE_PERSONAL.test(t)) },
@@ -185,6 +212,8 @@ const WEB_RULES: Rule[] = [
     { kind: 'facts', reason: REASON.schedule, test: when(SCHEDULE, (t) => SCHEDULE_PERSONAL.test(t)) },
     { kind: 'facts', reason: REASON.when, test: when(WHEN, (t) => CARE.test(t)) },
     { kind: 'facts', reason: REASON.general, test: when(GENERAL) },
+    { kind: 'facts', reason: REASON.lookup, test: when(LOOKUP) },
+    { kind: 'facts', reason: REASON.current, test: when(NEWS_NOW) },
 ];
 
 // ---------- Names ----------
@@ -265,8 +294,9 @@ function markNames(text: string, names: string[], focus: number): string {
 
 /**
  * Decides, with plain rules and no network, whether a question needs a web or place search.
- * Order: the local clock, then outside-fact rules (places, then facts), then shared memories, then names,
- * then small talk and personal rules. Anything left over is treated as unsure and searches.
+ * Order: the local clock; outside-fact rules (places, facts, lookups, current events); talk about what the
+ * person already did and shared memories; plain place words; names; then small talk and personal rules.
+ * Anything left over is treated as unsure and searches.
  */
 export function classifyQuestion(question: string): QuestionClass {
     const original = typeof question === 'string' ? question.replace(/\s+/g, ' ').trim() : '';
@@ -276,7 +306,10 @@ export function classifyQuestion(question: string): QuestionClass {
 
     if (CLOCK.test(asked)) return result(false, 'facts', REASON.clock);
     for (const rule of WEB_RULES) if (rule.test(asked)) return result(true, rule.kind, rule.reason);
+    // These come before plain place words, so "How was your day at the park?" stays on the laptop.
+    if (RETRO.test(asked)) return result(false, 'smalltalk', REASON.smalltalk);
     if (MEMORY.test(asked)) return result(false, 'personal', REASON.memory);
+    if (PLACE_NOUN.test(asked)) return result(true, 'places', REASON.place);
 
     const names = findNames(original);
     if (names.length > 0) {

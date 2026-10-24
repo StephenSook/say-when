@@ -5,7 +5,7 @@ import { ConfigError, type ApifyConfig } from '../src/config.js';
 import type { PipelineEvent } from '../src/events.js';
 import { ApifyHttpError } from '../src/http.js';
 import { searchPlaces, searchWeb } from '../src/search.js';
-import { TOKEN, fakeFetch, hang, json } from './fake-fetch.js';
+import { TOKEN, fakeFetch, hang, json, networkError } from './fake-fetch.js';
 import {
     PLACE_BARE,
     PLACE_GONE,
@@ -48,7 +48,8 @@ describe('searchWeb', () => {
 
     it('maps loaded pages to rows and drops failed, timed-out, error and empty pages', async () => {
         const { fetch } = fakeFetch(json([RAG_LOADED, RAG_TIMED_OUT, RAG_NOT_FOUND, RAG_EMPTY, RAG_LONG]));
-        const res = await searchWeb(QUESTION, { config, fetch });
+        // Five pages come back only when five were asked for; extra items beyond maxResults are ignored.
+        const res = await searchWeb(QUESTION, { config, fetch, maxResults: 5 });
         assert.equal(res.query, QUESTION);
         assert.equal(res.partial, true);
         assert.equal(typeof res.ms, 'number');
@@ -165,6 +166,25 @@ describe('searchWeb', () => {
         await assert.rejects(searchWeb(QUESTION, { config, fetch, maxResults: 11 }), RangeError);
         await assert.rejects(searchWeb(QUESTION, { config, fetch, requestTimeoutSecs: 301 }), RangeError);
         assert.equal(calls.length, 0);
+    });
+
+    it('keeps no more pages than asked for, caps titles and drops overlong links', async () => {
+        const pages = Array.from({ length: 6 }, (_, i) => ({
+            ...RAG_LOADED,
+            metadata: { ...RAG_LOADED.metadata, url: `https://cafe.example.com/${i}`, title: 't'.repeat(5_000) },
+        }));
+        const { fetch } = fakeFetch(json(pages));
+        const res = await searchWeb(QUESTION, { config, fetch, maxResults: 2 });
+        assert.equal(res.rows.length, 2);
+        for (const row of res.rows) assert.ok(row.title.length <= 300);
+
+        const longLink = `https://cafe.example.com/${'p'.repeat(3_000)}`;
+        const second = fakeFetch(
+            json([{ ...RAG_LOADED, metadata: { ...RAG_LOADED.metadata, url: longLink }, searchResult: { ...RAG_LOADED.searchResult, url: longLink } }]),
+        );
+        const dropped = await searchWeb(QUESTION, { config, fetch: second.fetch });
+        assert.equal(dropped.rows.length, 0);
+        assert.equal(dropped.partial, true);
     });
 
     it('refuses a hand-built config that would put a token in the URL', async () => {
@@ -320,7 +340,7 @@ describe('searchPlaces', () => {
     it('treats 408 as a timeout and does not retry it', async () => {
         const body = { error: { type: 'run-timeout-exceeded', message: 'Actor run exceeded the timeout of 300 seconds for this API endpoint' } };
         const { fetch, calls } = fakeFetch(json(body, 408), json([PLACE_OPEN], 201));
-        const error = await rejection(searchPlaces('lunch', { config, fetch, retryBaseMs: 1 }));
+        const error = await rejection(searchPlaces('lunch', { config, fetch }));
         assert.ok(error instanceof ApifyHttpError);
         assert.equal(error.kind, 'timeout');
         assert.equal(error.status, 408);
@@ -328,10 +348,48 @@ describe('searchPlaces', () => {
         assert.equal(calls.length, 1);
     });
 
-    it('retries a 5xx once by default, then gives up', async () => {
-        const { fetch, calls } = fakeFetch(json({}, 502));
-        await rejection(searchPlaces('lunch', { config, fetch, retryBaseMs: 1 }));
-        assert.equal(calls.length, 2);
+    it('never retries, since each POST can start another paid run', async () => {
+        for (const reply of [json({}, 502), json({}, 429), networkError('ECONNRESET')]) {
+            const { fetch, calls } = fakeFetch(reply, json([PLACE_OPEN], 201));
+            await rejection(searchPlaces('lunch', { config, fetch }));
+            assert.equal(calls.length, 1);
+        }
+    });
+
+    it('keeps no more places than asked for and caps every field', async () => {
+        const huge = 'y'.repeat(250_000);
+        const many = Array.from({ length: 20 }, (_, i) => ({
+            ...PLACE_OPEN,
+            placeId: `ChIJmany${i}`,
+            title: `${huge} ${i}`,
+            address: huge,
+            categoryName: huge,
+            phone: huge,
+            url: `https://www.google.com/maps/${huge}`,
+        }));
+        const { fetch } = fakeFetch(json(many.slice(0, 3), 201));
+        const res = await searchPlaces('lunch', { config, fetch, maxPlaces: 1 });
+        assert.equal(res.rows.length, 1);
+        const [row] = res.rows;
+        assert.ok(row.title.length <= 300);
+        assert.ok((row.facts?.address ?? '').length <= 300);
+        assert.ok((row.facts?.category ?? '').length <= 100);
+        assert.equal(row.facts?.phone, undefined);
+        assert.equal(row.url, undefined);
+        assert.ok(row.text.length < 1_000, String(row.text.length));
+
+        const longId = fakeFetch(json([{ ...PLACE_BARE, placeId: 'z'.repeat(500) }], 201));
+        const [bare] = (await searchPlaces('lunch', { config, fetch: longId.fetch })).rows;
+        assert.equal(bare.placeId, undefined);
+        assert.match(bare.id, /^maps:[0-9a-f]{16}$/);
+    });
+
+    it('refuses a reply over 4 MiB while it streams in', async () => {
+        const { fetch } = fakeFetch(json(Array.from({ length: 20 }, () => ({ ...PLACE_OPEN, title: 'y'.repeat(250_000) })), 201));
+        const error = await rejection(searchPlaces('lunch', { config, fetch }));
+        assert.ok(error instanceof ApifyHttpError);
+        assert.equal(error.kind, 'bad_response');
+        assert.match(error.bodySnippet, /larger than/);
     });
 
     it('checks its arguments before any request', async () => {

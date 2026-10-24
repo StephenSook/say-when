@@ -6,6 +6,14 @@ export type RouteHandler = (route: Route, body: unknown) => Promise<{ status: nu
 const ROUTES: Route[] = ['/inspect', '/preview', '/submit'];
 const MAX_BODY_BYTES = 256 * 1024;
 
+// Inspect and preview never press send, so a failure there sent nothing. A failure during submit can come
+// after the click, and the server cannot tell, so it never claims nothing was sent.
+const CRASH_MESSAGES: Record<Route, string> = {
+    '/inspect': 'Internal error. Nothing was sent.',
+    '/preview': 'Internal error. Nothing was sent.',
+    '/submit': 'Internal error. The form may or may not have been sent. Check before trying again.',
+};
+
 function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
     res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify(body));
@@ -63,7 +71,7 @@ export function createErrandServer(handler: RouteHandler, about: Record<string, 
                 queue = run.catch(() => undefined);
                 run.then(
                     (out) => sendJson(res, out.status, out.body),
-                    () => sendJson(res, 500, { error: 'Internal error. Nothing was sent.' }),
+                    () => sendJson(res, 500, { error: CRASH_MESSAGES[path as Route] }),
                 );
             },
             () => sendJson(res, 413, { error: 'The body is too large.' }),

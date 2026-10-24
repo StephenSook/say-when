@@ -20,6 +20,7 @@ export const REASONS: Record<RefusalCode, string> = {
     digest_mismatch: 'The form changed since it was read back, so nothing was sent.',
     no_submit_button: 'I could not find the send button, so nothing was sent.',
     no_confirmation: 'I pressed send but did not see a confirmation. Check before trying again.',
+    click_uncertain: 'I may have sent it. Check before trying again.',
 };
 
 export const refusal = (code: RefusalCode, detail?: string): Refusal => ({

@@ -223,4 +223,68 @@ describe('token safety', () => {
         assert.ok(out.length <= 300);
         assert.ok(!out.includes(TOKEN.slice(0, 12)));
     });
+
+    it('scrubs a short configured token too', async () => {
+        const short = 'k3y9Zq';
+        const { fetch } = fakeFetch(json({ error: { type: 'invalid-token', message: `token ${short} rejected` } }, 401));
+        const error = await rejection(requestJson(base({ fetch, token: short })));
+        assert.ok(error instanceof ApifyHttpError);
+        assert.ok(!error.message.includes(short), error.message);
+        assert.ok(!String(error.stack).includes(short));
+        assert.equal(scrub(`a ${short} b`, short), 'a [token] b');
+    });
+});
+
+/** A streamed reply of `chunks` pieces of `size` bytes, counting how many pieces were pulled. */
+function streamed(chunks: number, size: number, headers: Record<string, string> = {}): { reply: () => Response; pulled: () => number } {
+    let pulled = 0;
+    const piece = new TextEncoder().encode('x'.repeat(size));
+    const reply = () =>
+        new Response(
+            new ReadableStream<Uint8Array>(
+                {
+                    pull(controller) {
+                        if (pulled >= chunks) {
+                            controller.close();
+                            return;
+                        }
+                        pulled += 1;
+                        controller.enqueue(piece);
+                    },
+                },
+                // Produce a piece only when a read asks for one, so "pulled" counts what the client read.
+                { highWaterMark: 0 },
+            ),
+            { status: 200, headers },
+        );
+    return { reply, pulled: () => pulled };
+}
+
+describe('reply size limit', () => {
+    it('stops reading as soon as the reply passes maxBytes, before parsing it', async () => {
+        const big = streamed(1_000, 1_024);
+        const error = await rejection(requestJson(base({ fetch: fakeFetch(big.reply).fetch, maxBytes: 10 * 1_024 })));
+        assert.ok(error instanceof ApifyHttpError);
+        assert.equal(error.kind, 'bad_response');
+        assert.match(error.bodySnippet, /larger than 10240 bytes/);
+        assert.ok(big.pulled() <= 12, `pulled ${big.pulled()} pieces`);
+    });
+
+    it('fails before reading when the declared length is over the limit', async () => {
+        const declared = streamed(5, 10, { 'content-length': String(64 * 1_024) });
+        const error = await rejection(requestJson(base({ fetch: fakeFetch(declared.reply).fetch, maxBytes: 1_024 })));
+        assert.ok(error instanceof ApifyHttpError);
+        assert.equal(error.kind, 'bad_response');
+        assert.equal(declared.pulled(), 0);
+    });
+
+    it('reads a reply under the limit and does not retry an oversized one', async () => {
+        const { fetch, calls } = fakeFetch(json(['ok']));
+        assert.deepEqual((await requestJson(base({ fetch, maxBytes: 1_024 }))).body, ['ok']);
+        const big = streamed(100, 1_024);
+        const second = fakeFetch(big.reply);
+        await rejection(requestJson(base({ fetch: second.fetch, maxBytes: 1_024, retries: 3 })));
+        assert.equal(second.calls.length, 1);
+        assert.equal(calls.length, 1);
+    });
 });

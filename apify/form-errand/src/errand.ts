@@ -1,4 +1,4 @@
-import type { Browser, Page } from 'playwright';
+import type { Browser, Locator, Page } from 'playwright';
 
 import { startDemoServer, type DemoServer } from './demo-form.js';
 import { buildReadBackText, computeDigest, normalizeText } from './digest.js';
@@ -22,6 +22,8 @@ export interface ErrandDeps {
     /** Lets tests open http://127.0.0.1 forms. Never set in production. */
     allowLocal: boolean;
     log?: (message: string) => void;
+    /** Tests only: shorter limits for the send click and the confirmation wait. */
+    timeouts?: { clickMs?: number; confirmMs?: number };
 }
 
 const NAV_TIMEOUT_MS = 30_000;
@@ -61,25 +63,27 @@ async function pageLines(page: Page): Promise<string[]> {
         .filter(Boolean);
 }
 
-async function clickSubmit(page: Page, text: string): Promise<boolean> {
+/** Finds the send button without clicking it. Null when there is none or the lookup itself failed. */
+async function findSubmitButton(page: Page, text: string): Promise<Locator | null> {
     const options = [
         page.getByRole('button', { name: text, exact: true }),
         page.getByRole('button', { name: text }),
         page.locator('button[type=submit], input[type=submit]'),
     ];
-    for (const option of options) {
-        if ((await option.count()) > 0) {
-            await option.first().click();
-            return true;
+    try {
+        for (const option of options) {
+            if ((await option.count()) > 0) return option.first();
         }
+    } catch {
+        // Nothing has been clicked yet, so a failed lookup is the same as no button.
     }
-    return false;
+    return null;
 }
 
 /** Waits for a line containing one of the phrases that was not on the page before the click. */
-async function waitForConfirmation(page: Page, before: Set<string>, phrases: string[]): Promise<string | null> {
+async function waitForConfirmation(page: Page, before: Set<string>, phrases: string[], timeoutMs: number): Promise<string | null> {
     const wanted = phrases.map((p) => p.toLowerCase());
-    const deadline = Date.now() + CONFIRM_TIMEOUT_MS;
+    const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
         const fresh = (await pageLines(page))
             .map((line) => line.slice(0, 300))
@@ -266,27 +270,37 @@ export async function runErrand(input: ErrandInput, deps: ErrandDeps): Promise<E
 
         const submitStart = Date.now();
         const before = new Set(await pageLines(page));
-        // Sending needs the network for the POST and the confirmation page; the guard still applies.
-        guard.thaw();
-        let clicked = false;
-        try {
-            clicked = await clickSubmit(page, input.submitButtonText);
-        } catch {
-            clicked = false;
-        }
-        if (!clicked) {
+        // The only case that may release the claim and say nothing was sent: no button, so no click.
+        const button = await findSubmitButton(page, input.submitButtonText);
+        if (!button) {
             await deps.ledger.release(claim.key);
             return refuse(refusal('no_submit_button'));
         }
-        const confirmation = await waitForConfirmation(page, before, input.confirmationPhrases);
+        // Sending needs the network for the POST and the confirmation page; the guard still applies.
+        guard.thaw();
+        // From the click on, the form may have been sent, so the claim is kept whatever happens.
+        let clickFailed = false;
+        try {
+            await button.click(deps.timeouts?.clickMs ? { timeout: deps.timeouts.clickMs } : {});
+        } catch {
+            // A click can throw after it was delivered, for example while the navigation it started never
+            // finishes. Still look for a confirmation, and never report this as "not sent".
+            clickFailed = true;
+        }
+        const confirmation = await waitForConfirmation(
+            page,
+            before,
+            input.confirmationPhrases,
+            deps.timeouts?.confirmMs ?? CONFIRM_TIMEOUT_MS,
+        ).catch(() => null);
         result.timings.submitMs = Date.now() - submitStart;
         await shoot('CONFIRMATION').catch(() => undefined);
 
         if (!confirmation) {
             await deps.ledger.finish(claim.key, 'unconfirmed', null);
             result.status = 'failed';
-            result.refusal = refusal('no_confirmation');
-            log('submit clicked, no confirmation seen');
+            result.refusal = refusal(clickFailed ? 'click_uncertain' : 'no_confirmation');
+            log(clickFailed ? 'submit click failed partway, outcome unknown' : 'submit clicked, no confirmation seen');
             return done();
         }
         await deps.ledger.finish(claim.key, 'submitted', confirmation);
