@@ -6,8 +6,8 @@
 import { createHash } from 'node:crypto';
 import { appendFileSync, readFileSync } from 'node:fs';
 
-import { checkAgentScript, firstDifference, loadAgentScript, renderTemplate, type AgentScript } from './call-script.js';
-import { emit, redact, type OnEvent } from './events.js';
+import { checkAgentScript, firstDifference, heardOptOut, loadAgentScript, renderTemplate, type AgentScript } from './call-script.js';
+import { emit, redactAll, type OnEvent } from './events.js';
 import { buildRequest, send, type FetchLike, type HttpResponse } from './http.js';
 import { isEmergencyNumber, spokenNumber, toUsE164 } from './phone.js';
 import { checkLibraryVoices } from './voices.js';
@@ -343,9 +343,6 @@ function resultFor(status: string | null, endReason: string | null, sawConnected
     return 'unknown';
 }
 
-// Strict phrases only: a stray "stop" ("I'll stop by") must not block future calls by accident.
-const OPT_OUT = /\b(stop calling|don't call|do not call|remove me|take me off|no more calls|unsubscribe|opt out)\b/i;
-
 function readTranscript(raw: unknown): { role: string; text: string }[] | null {
     if (!Array.isArray(raw)) return null;
     return raw.flatMap((turn: unknown) => {
@@ -355,8 +352,24 @@ function readTranscript(raw: unknown): { role: string; text: string }[] | null {
     });
 }
 
-function hearsOptOut(transcript: readonly { role: string; text: string }[]): boolean {
-    return transcript.some((turn) => turn.role === 'user' && OPT_OUT.test(turn.text.replace(/[\u2018\u2019]/g, "'")));
+/**
+ * Each speaker's turns are masked together, so a number split across one speaker's turns is masked in all of them,
+ * and any run of 3 or more digits is masked, so a fragment shown before the rest of a number arrives is masked too.
+ */
+function maskedTranscript(turns: readonly { role: string; text: string }[]): { role: string; text: string }[] {
+    const out = turns.map((turn) => ({ role: turn.role, text: '' }));
+    for (const role of new Set(turns.map((turn) => turn.role))) {
+        const indexes = turns.flatMap((turn, i) => (turn.role === role ? [i] : []));
+        const masked = redactAll(
+            indexes.map((i) => turns[i]?.text ?? ''),
+            3,
+        );
+        indexes.forEach((i, k) => {
+            const slot = out[i];
+            if (slot) slot.text = masked[k] ?? '';
+        });
+    }
+    return out;
 }
 
 function toMs(value: unknown): number | null {
@@ -746,7 +759,7 @@ export class Dialer {
                 cancelPending: handle.cancelPending,
                 callId: handle.callId,
                 // Phone numbers spoken on the call are masked before they leave the dialer.
-                transcript: handle.transcript.map((turn) => ({ role: turn.role, text: redact(turn.text) })),
+                transcript: maskedTranscript(handle.transcript),
             });
         } catch {
             // A dashboard problem must not stop a cancel.
@@ -800,12 +813,18 @@ export class Dialer {
             const check = await verifyAgent({ apiKey: this.config.apiKey, agentId: this.config.agentId, fetch: this.deps.fetch });
             if (!check.ok) return end('refused', { refusal: refusal(check.code ?? 'agent_unverified') });
             if (handle.cancelReason) return end('cancelled');
-            // Every guard again, right before the request: consent, do-not-call, the number, the hours, a fresh confirm.
             const blocked = this.recheck(call, this.now());
             if (blocked) return end('refused', { refusal: blocked });
             handle.phase = 'dialing';
             emit(this.deps.onEvent, { stage: 'call', status: 'started', detail: 'dialing', ms: 0 });
             this.update(handle);
+            // The last check, after the last application callback above, with nothing between it and the request:
+            // a STOP, HEADSET-OFF, opt-out or list change made from the dialing notice still stops the call.
+            // Every guard runs again: consent, do-not-call, the number, the hours and a fresh confirm.
+            const at = this.now();
+            if (handle.cancelReason) return end('cancelled');
+            const lastBlocked = this.recheck(call, at);
+            if (lastBlocked) return end('refused', { refusal: lastBlocked });
             const request = buildRequest(this.config.apiKey, 'POST', '/agents/calls', {
                 body: {
                     agent_id: this.config.agentId,
@@ -873,7 +892,7 @@ export class Dialer {
                 if (typeof data.summary === 'string') summary = data.summary;
                 handle.transcript = readTranscript(data.transcript) ?? handle.transcript;
                 // An opt-out counts the moment it is heard, so no later timeout or error can lose it.
-                if (!handle.optedOut && hearsOptOut(handle.transcript)) {
+                if (!handle.optedOut && heardOptOut(handle.transcript)) {
                     handle.optedOut = true;
                     this.addDoNotCall(call.toNumber);
                     emit(this.deps.onEvent, { stage: 'call', status: 'ok', detail: 'opt-out recorded', ms: this.now() - started });
@@ -890,7 +909,9 @@ export class Dialer {
             if (handle.cancelReason && !handle.cancelConfirmed && (data === null || handle.phase === 'connected')) await this.sendCancel(handle);
             if (handle.status !== null && TERMINAL.has(handle.status)) break;
         }
-        const masked = summary === null ? null : redact(summary);
+        // The summary is call content like the transcript, so it gets the same short threshold: "area code 415, then
+        // 555, then 0188" never shows a group.
+        const masked = summary === null ? null : (redactAll([summary], 3)[0] ?? null);
         if (handle.status === null || !TERMINAL.has(handle.status)) {
             if (!handle.cancelConfirmed) await this.sendCancel(handle);
             return end('unknown', { dialed: true, endReason, summary: masked });

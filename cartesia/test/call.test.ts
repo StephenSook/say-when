@@ -16,8 +16,8 @@ import {
     type CallSnapshot,
     type DialerConfig,
 } from '../src/call.js';
-import { checkAgentScript, loadAgentScript, PRODUCT_NAME, renderTemplate } from '../src/call-script.js';
-import type { PipelineEvent } from '../src/events.js';
+import { checkAgentScript, heardOptOut, loadAgentScript, OPT_OUT_REPLY, OPT_OUT_REQUESTS, plainSpeech, PRODUCT_NAME, renderTemplate } from '../src/call-script.js';
+import { redact, type PipelineEvent } from '../src/events.js';
 import { isEmergencyNumber, spokenNumber, toUsE164 } from '../src/phone.js';
 import { fakeFetch, type FakeAnswer, type FetchCall } from './fakes.js';
 
@@ -67,7 +67,14 @@ interface Scenario {
     agentHook?: (state: { lists: CallLists; clock: { t: number } }) => void;
 }
 
-function harness(options: { now?: number; scenario?: Scenario; dnc?: string[]; consent?: string; config?: Partial<DialerConfig> } = {}) {
+/** Extra application callbacks, run after the harness records each one. */
+interface Hooks {
+    onNow?: () => void;
+    onEvent?: (event: PipelineEvent) => void;
+    onUpdate?: (snapshot: CallSnapshot) => void;
+}
+
+function harness(options: { now?: number; scenario?: Scenario; dnc?: string[]; consent?: string; config?: Partial<DialerConfig>; hooks?: Hooks } = {}) {
     const clock = { t: options.now ?? MORNING };
     const events: PipelineEvent[] = [];
     const updates: CallSnapshot[] = [];
@@ -115,13 +122,22 @@ function harness(options: { now?: number; scenario?: Scenario; dnc?: string[]; c
         lists,
         {
             fetch,
-            now: () => clock.t,
+            now: () => {
+                options.hooks?.onNow?.();
+                return clock.t;
+            },
             sleep: async (ms) => {
                 sleeps.push(ms);
                 clock.t += ms;
             },
-            onEvent: (event) => events.push(event),
-            onUpdate: (snapshot) => updates.push(snapshot),
+            onEvent: (event) => {
+                events.push(event);
+                options.hooks?.onEvent?.(event);
+            },
+            onUpdate: (snapshot) => {
+                updates.push(snapshot);
+                options.hooks?.onUpdate?.(snapshot);
+            },
             onDoNotCall: (number) => optOuts.push(number),
         },
     );
@@ -580,6 +596,181 @@ describe('Dialer review fixes', () => {
     });
 });
 
+const ANSWERED = { status: 'completed', end_reason: 'agent_hangup' };
+const heard = (transcript: { role: string; text: string }[]) => harness({ scenario: { statuses: [{ status: 'started', transcript }, ANSWERED] } });
+
+describe('Dialer round 2 fixes', () => {
+    it('a STOP or HEADSET-OFF sent from the dialing update places no call', async () => {
+        for (const reason of ['stop', 'headset_off'] as const) {
+            let dialer: Dialer | undefined;
+            const h = harness({ hooks: { onUpdate: (snapshot) => void (snapshot.phase === 'dialing' && dialer?.cancelActive(reason)) } });
+            dialer = h.dialer;
+            const outcome = await prepareAndPlace(h).handle.done;
+            assert.equal(outcome.result, 'cancelled', reason);
+            assert.equal(outcome.cancelReason, reason);
+            assert.equal(outcome.dialed, false, reason);
+            assert.equal(outcome.spoken, 'Cancelled. No call was made.');
+            assert.equal(dials(h.fetch.calls), 0, reason);
+        }
+    });
+
+    it('an opt-out or a consent change made from the dialing notice places no call', async () => {
+        let dialer: Dialer | undefined;
+        const h = harness({ hooks: { onEvent: (event) => void (event.detail === 'dialing' && dialer?.optOut('leon')) } });
+        dialer = h.dialer;
+        const outcome = await prepareAndPlace(h).handle.done;
+        assert.equal(outcome.refusal?.code, 'do_not_call');
+        assert.deepEqual(h.optOuts, [LEON]);
+        assert.equal(dials(h.fetch.calls), 0);
+        const lists: CallLists[] = [];
+        const removed = harness({ hooks: { onUpdate: (snapshot) => void (snapshot.phase === 'dialing' && lists[0]?.consent.splice(0)) } });
+        lists.push(removed.lists);
+        assert.equal((await prepareAndPlace(removed).handle.done).refusal?.code, 'not_consented');
+        assert.equal(dials(removed.fetch.calls), 0);
+    });
+
+    it('a cancel from the last application callback before the dial request still stops it', async () => {
+        // A normal call first, recording every application callback in order up to the dial request.
+        const order: string[] = [];
+        const probe = harness({
+            hooks: { onNow: () => order.push('now'), onEvent: (event) => order.push(`event ${event.detail}`), onUpdate: (snapshot) => order.push(`update ${snapshot.phase}`) },
+            scenario: {
+                dial: () => {
+                    order.push('dial');
+                    return { status: 200, body: { calls: [{ number: LEON, agent_call_id: 'ac_test' }] } };
+                },
+            },
+        });
+        await prepareAndPlace(probe).handle.done;
+        const last = order.indexOf('dial') - 1;
+        assert.ok(last >= 0);
+        // Then the same call again, cancelled from inside exactly that callback.
+        let seen = -1;
+        let dialer: Dialer | undefined;
+        const tick = () => {
+            if (++seen === last) dialer?.cancelActive('headset_off');
+        };
+        const h = harness({ hooks: { onNow: tick, onEvent: tick, onUpdate: tick } });
+        dialer = h.dialer;
+        const outcome = await prepareAndPlace(h).handle.done;
+        assert.equal(outcome.cancelReason, 'headset_off', order[last]);
+        assert.equal(outcome.dialed, false, order[last]);
+        assert.equal(dials(h.fetch.calls), 0, order[last]);
+    });
+
+    it('records the refusals the script promises to honor', async () => {
+        for (const said of [
+            'I do not want these calls.',
+            'Please never call me again.',
+            'I don\u{2019}t want any more calls from you.',
+            'We no longer want your calls',
+            'I don\u{2019}t want to be called again.',
+            'Can you stop calling this number?',
+            'Take me off your list, please.',
+            'Remove my number.',
+            'Put me on your do\u{2011}not\u{2011}call list.',
+            'Opt-out.',
+            'I don\u{2019}t want to receive these calls.',
+            'I don\u{2019}t want any more of these calls.',
+            'I don\u{2019}t want this call to be recorded.',
+        ]) {
+            const h = heard([{ role: 'user', text: said }]);
+            const outcome = await prepareAndPlace(h).handle.done;
+            assert.equal(outcome.optedOut, true, said);
+            assert.deepEqual(h.optOuts, [LEON], said);
+        }
+    });
+
+    it('does not count a passing "stop" or other everyday words as an opt-out', async () => {
+        const said = [
+            'I\u{2019}ll stop by later.',
+            'Wait, stop. Say that again.',
+            'I\u{2019}ll stop. Calling my mom now.',
+            'Thanks for calling.',
+            'Sure, call me any time.',
+            'I do not mind these calls.',
+            'I don\u{2019}t want this call to end.',
+            'You never call me.',
+            'Take me home.',
+            'I don\u{2019}t want this call to take too long.',
+            'Why don\u{2019}t you call me back later?',
+            'Don\u{2019}t stop calling!',
+        ];
+        const h = heard(said.map((text) => ({ role: 'user', text })));
+        const outcome = await prepareAndPlace(h).handle.done;
+        assert.equal(outcome.optedOut, false);
+        assert.deepEqual(h.optOuts, []);
+    });
+
+    it('counts the agent saying it will not call again, but not a log line or the recipient saying it', async () => {
+        const agreed = heard([
+            { role: 'user', text: 'Leave me alone.' },
+            { role: 'assistant', text: 'I am sorry. I will not call again. Goodbye.' },
+        ]);
+        assert.equal((await prepareAndPlace(agreed).handle.done).optedOut, true);
+        assert.deepEqual(agreed.optOuts, [LEON]);
+        const other = heard([
+            { role: 'system', text: 'log_event: will not call again' },
+            { role: 'user', text: 'Got it. I will not call again today, I will text.' },
+        ]);
+        assert.equal((await prepareAndPlace(other).handle.done).optedOut, false);
+    });
+
+    it('masks numbers written with Unicode dashes and spaces in updates and in the summary', async () => {
+        const h = harness({
+            scenario: {
+                statuses: [
+                    { status: 'started', transcript: [{ role: 'user', text: 'Call me back at 415\u{2011}555\u{2011}0188 please' }] },
+                    { status: 'completed', end_reason: 'agent_hangup', summary: 'Leon said to call 415\u{00A0}555\u{2013}0188.' },
+                ],
+            },
+        });
+        const outcome = await prepareAndPlace(h).handle.done;
+        const updates = JSON.stringify(h.updates);
+        assert.equal(/555|0188/.test(updates), false);
+        assert.ok(updates.includes('Call me back at [number] please'));
+        assert.equal(outcome.summary, 'Leon said to call [number].');
+    });
+
+    it('masks a number one speaker splits across turns, even with the agent talking in between', async () => {
+        const transcript = [
+            { role: 'user', text: 'My number is 415 555' },
+            { role: 'assistant', text: 'Go on.' },
+            { role: 'user', text: '0188, thanks.' },
+        ];
+        const h = heard(transcript);
+        await prepareAndPlace(h).handle.done;
+        const last = h.updates.at(-1);
+        assert.deepEqual(
+            last?.transcript.map((turn) => turn.text),
+            ['My number is [number]', 'Go on.', '[number], thanks.'],
+        );
+        assert.equal(/555|0188/.test(JSON.stringify(h.updates)), false);
+    });
+
+    it('masks a fragment shown before the rest of the number arrives', async () => {
+        const h = harness({
+            scenario: {
+                statuses: [
+                    { status: 'started', transcript: [{ role: 'user', text: 'My number is 415 555' }] },
+                    { status: 'completed', end_reason: 'agent_hangup', transcript: [{ role: 'user', text: 'My number is 415 555' }, { role: 'user', text: '0188.' }] },
+                ],
+            },
+        });
+        await prepareAndPlace(h).handle.done;
+        const first = h.updates.find((update) => update.transcript.length > 0);
+        assert.deepEqual(first?.transcript.map((turn) => turn.text), ['My number is [number]']);
+        assert.equal(/555|0188/.test(JSON.stringify(h.updates)), false);
+    });
+
+    it('masks every group of a number dictated in parts in the summary, and keeps its dates', async () => {
+        const summary = 'On 10/24/2026 Leon said call me at area code 415, then 555, then 0188.';
+        const h = harness({ scenario: { statuses: [{ status: 'started' }, { status: 'completed', end_reason: 'agent_hangup', summary }] } });
+        const outcome = await prepareAndPlace(h).handle.done;
+        assert.equal(outcome.summary, 'On 10/24/2026 Leon said call me at area code [number], then [number], then [number].');
+    });
+});
+
 describe('call data', () => {
     it('deletes call data, retrying a 500 as the reference says', async () => {
         let attempts = 0;
@@ -632,5 +823,145 @@ describe('the reviewed script', () => {
         assert.ok(checkAgentScript(unnamed).some((problem) => problem.includes(PRODUCT_NAME.toLowerCase())));
         const late = { welcome: `${unnamed.welcome} ${PRODUCT_NAME}.`, instructions: script.instructions };
         assert.ok(checkAgentScript(late).some((problem) => problem.includes('before the message')));
+    });
+});
+
+describe('the opt-out promise and the detector', () => {
+    it('uses one list for what the instructions promise and what the dialer listens for', () => {
+        assert.ok(OPT_OUT_REQUESTS.length >= 2);
+        for (const request of OPT_OUT_REQUESTS) {
+            assert.ok(script.instructions.includes(request.promise), request.promise);
+            const dropped = { welcome: script.welcome, instructions: script.instructions.replace(request.promise, 'asks you anything') };
+            assert.ok(checkAgentScript(dropped).some((problem) => problem.includes(request.promise)), request.promise);
+            // The promise's own words, said by the recipient, are heard by that promise's own patterns.
+            const core = request.promise.replace(/^(?:asks you to|says they) /, '');
+            assert.ok(request.heard.some((pattern) => pattern.test(plainSpeech(core))), core);
+            assert.equal(heardOptOut([{ role: 'user', text: `Please, ${core}.` }]), true, core);
+        }
+        assert.ok(script.instructions.includes(`say you ${OPT_OUT_REPLY}`));
+        const noReply = { welcome: script.welcome, instructions: script.instructions.replace(OPT_OUT_REPLY, 'will call later') };
+        assert.ok(checkAgentScript(noReply).some((problem) => problem.includes(OPT_OUT_REPLY)));
+    });
+
+    it('reads one sentence at a time with look-alike characters folded', () => {
+        assert.equal(plainSpeech('Stop. Calling\u{2014}my MOM, now!'), 'stop\ncalling my mom now');
+        assert.equal(plainSpeech('Don\u{2019}t\u{00A0}call'), "don't call");
+        assert.equal(heardOptOut([{ role: 'assistant', text: 'Thanks. Goodbye.' }]), false);
+        assert.equal(heardOptOut([{ role: 'assistant', text: 'Understood, we won\u{2019}t be calling you again.' }]), true);
+        assert.equal(heardOptOut([{ role: 'user', text: 'Can you take me off speaker?' }]), false);
+        assert.equal(heardOptOut([{ role: 'User', text: 'Stop calling.' }]), true);
+    });
+
+    it('hears other wordings of a refusal, and nothing that means the opposite', () => {
+        const refusals = [
+            'Don\u{2019}t bother calling again.',
+            'No more of these calls.',
+            'I\u{2019}d like to be removed from your list.',
+            'I don\u{2019}t need these calls.',
+            'I don\u{2019}t want this call.',
+            'Stop recording me.',
+            'I do not consent to being recorded.',
+            'I do not want this recorded.',
+            'Don\u{2019}t you dare call me again.',
+            'Lose my number.',
+            'I do not wish to receive any more calls.',
+            'I don\u{2019}t want you calling me.',
+            'Do not contact me again.',
+            'Unsubscribe me.',
+            'Never contact us again.',
+            'Please STOP CALLING!',
+            'I don\u{2069}t want these calls.',
+            'I don\u{2019}t want you to record this call.',
+            'I don\u{2019}t want this call, please.',
+            'I don\u{2019}t want to be called again, thank you.',
+            'I don\u{2019}t want any more of these automated phone calls.',
+            'I don\u{2019}t want these calls to continue.',
+            'Turn off the recording.',
+            'I did not consent to this.',
+            'I didn\u{2019}t agree to being recorded.',
+            'Never call me.',
+            'Please never call here.',
+            'Please stop the recording.',
+            'Please turn the recording off.',
+            'I don\u{2019}t agree to recording.',
+            'I object to the recording.',
+            'Stop the calls.',
+            'Leave me alone.',
+            'I don\u{2019}t want these calls to keep coming.',
+            'I\u{2019}m not interested, stop calling me.',
+            'Enough with the calls.',
+            'I\u{2019}d rather not be called.',
+            'I\u{2019}d prefer you didn\u{2019}t call.',
+            'Can you not call me?',
+            'Take my name off your list.',
+            'I don\u{2019}t want to be on a recorded line.',
+            'Please delete the recording.',
+            'No recording, please.',
+            'Could you please not call me again?',
+            'Would you kindly never contact us?',
+            'I\u{2019}d appreciate it if you didn\u{2019}t call again.',
+            'I would appreciate it if you stopped calling.',
+            'If you don\u{2019}t stop calling me, I\u{2019}ll report you.',
+            'I don\u{2019}t want you to keep calling me.',
+            'I don\u{2019}t want you to ever call me again.',
+            'Could you please not record this?',
+            'I don\u{2019}t want you to keep calling my number.',
+            'I don\u{2019}t want you to call my phone again.',
+        ];
+        for (const text of refusals) assert.equal(heardOptOut([{ role: 'user', text }]), true, text);
+        const notRefusals = [
+            'Why don\u{2019}t you call me back later?',
+            'Don\u{2019}t stop calling!',
+            'Please don\u{2019}t remove me from the list.',
+            'Don\u{2019}t take me off the list.',
+            'I don\u{2019}t want to miss your calls.',
+            'I don\u{2019}t want you to call my mom.',
+            'I don\u{2019}t want these calls to stop.',
+            'I don\u{2019}t want this call to take too long.',
+            'I don\u{2019}t want calls to take too long.',
+            'Is this call being recorded?',
+            'Please do not stop recording.',
+            'I don\u{2019}t agree with that plan.',
+            'You never call me.',
+            'Don\u{2019}t turn off the recording.',
+            'I don\u{2019}t want you to stop recording.',
+            'Please don\u{2019}t stop the recording.',
+            'I don\u{2019}t want you to stop calling.',
+            'I don\u{2019}t want calls to keep dropping.',
+            'I don\u{2019}t want these calls to go on mute.',
+            'I don\u{2019}t want the recording to stop.',
+            'I don\u{2019}t want to be removed from your list.',
+            'I don\u{2019}t object to the recording.',
+            'I do not object to being recorded.',
+            'No, recording is fine.',
+            'I\u{2019}m not asking you to stop calling.',
+            'There is no need to stop calling.',
+            'Please don\u{2019}t ever remove me.',
+            'Why don\u{2019}t you record it?',
+            'Please don\u{2019}t leave me alone.',
+            'I don\u{2019}t want to opt out.',
+            'I don\u{2019}t want you to ever stop calling.',
+            'If you don\u{2019}t call me back, I\u{2019}ll be upset.',
+            'There is no need to lose my number.',
+        ];
+        for (const text of notRefusals) assert.equal(heardOptOut([{ role: 'user', text }]), false, text);
+        // Accepted on purpose: a name correction reads as a refusal. Honoring too much only costs a new consent.
+        for (const text of ['Don\u{2019}t call me Lee.', 'I don\u{2019}t want to be called Bob.']) assert.equal(heardOptOut([{ role: 'user', text }]), true, text);
+    });
+
+    it('stays fast on long near-miss input', () => {
+        const started = performance.now();
+        // 26 is where the old overlapping pattern took seconds: enough to fail this test, not enough to hang the run.
+        const near = [
+            `I don't want ${'any more '.repeat(26)}information.`,
+            `I don't want ${'these '.repeat(500)}people.`,
+            `I don't want you to call ${'my '.repeat(500)}mom.`,
+            `Please ${'stop '.repeat(500)}by.`,
+        ];
+        for (const text of near) assert.equal(heardOptOut([{ role: 'user', text }]), false);
+        // Sizes where a quadratic pattern would take seconds and a linear one takes milliseconds.
+        for (const text of [`${'1 '.repeat(30000)}x`, `444${'-'.repeat(60000)}`, '1/'.repeat(30000), `${'one '.repeat(30000)}x`, 'a'.repeat(100000), '1/1 '.repeat(25000), `1/1${' '.repeat(60000)}2`, `415 ${'5/5 '.repeat(25000)}`]) redact(text);
+        const ms = performance.now() - started;
+        assert.ok(ms < 1000, `${Math.round(ms)} ms`);
     });
 });
