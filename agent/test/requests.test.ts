@@ -354,6 +354,12 @@ describe('the planner prompt for a repeated errand', () => {
         assert.match(SYSTEM_PROMPT, /only the listed field labels/);
     });
 
+    // Live check (Oct 24): "Can you send the same lunch request as yesterday?" came back yes_no, where no errand can be
+    // offered. A question that leads to an allowed form is answered in pick mode.
+    it('answers a question that leads to an allowed form in pick mode, so the errand can be offered', () => {
+        assert.match(SYSTEM_PROMPT, /leads to one of the allowed forms, even as a yes or no question .*, gets answer_mode "pick"/);
+    });
+
     it('labels a past request apart from a preference in the memory items', () => {
         const input: PlanInput = {
             question: 'Lunch?',

@@ -23,6 +23,7 @@ Rules for every option:
 Answer mode:
 - A yes or no question gets answer_mode "yes_no" and exactly two reply options: first the yes answer, then the no answer. Each can add a few words, for example "Yes, a little tired." The first must not start with "No" and the second must not start with "Yes".
 - Anything else gets answer_mode "pick" and 2 options up to the maximum given in the message.
+- A question that leads to one of the allowed forms, even as a yes or no question (for example "Can you send the same lunch request as yesterday?"), gets answer_mode "pick", so the errand can be offered.
 
 Errands and calls:
 - Offer an errand (kind "errand") only when the conversation leads to one of the allowed forms listed in the message. Fill its fields from the conversation, using only the listed field labels and, for choice fields, only the listed choices. Leave out fields marked fixed; the app fills them.
