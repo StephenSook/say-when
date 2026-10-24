@@ -45,6 +45,7 @@ import { Heartbeat, heartbeatInterval, inputHealthy, workerTicker, FOCUS_GRACE_M
 import { canLearnSwitchKey, isTypingTarget, keyboardCommand, SwitchPattern } from './keys';
 import { cliTargetOf, SESSION_LABEL_RE, sessionLabel } from './model';
 import { MENU_ITEM_TEXTS, phraseText, warmPhraseKeys, type PhraseKey } from './phrases';
+import { indexedDbClipStore, persistentSynth, type ClipStore } from './phrase-store';
 import { Readback, readbackSegments, type WorkLite } from './readback';
 import type { Ownership, PauseReasonWord, Purpose, ScanView, StationSnapshot } from './snapshot';
 import { StalenessWatch } from './staleness';
@@ -92,6 +93,8 @@ export interface StationEngineOptions {
   pronunciationDictId?: string;
   /** More subscriptions on this connection, for a page that reads more than the station does (the try page). */
   extraQueries?: RoleDeviceOptions<DbConnection>['queries'];
+  /** Where stock phrase audio is kept across loads (lib/station/phrase-store.ts): IndexedDB by default, null for none. */
+  phraseStore?: ClipStore | null;
   /** For tests: the connection builder, the voice mint and the heartbeat tick. */
   builder?: RoleDeviceOptions<DbConnection>['builder'];
   mint?: RoleDeviceOptions<DbConnection>['mint'];
@@ -1064,7 +1067,9 @@ export class StationEngine {
     const device = this.device;
     const dict = this.options_.pronunciationDictId?.trim();
     this.player = new TtsPlayer({ getToken: () => device.voice.getToken(), maxActive: 1, ...(dict ? { pronunciationDictId: dict } : {}) });
-    this.cache = new PhraseCache(this.player);
+    // Stock phrases and menu items come from the browser's store after the first load, so a reload costs no credits.
+    const store = this.options_.phraseStore === undefined ? indexedDbClipStore() : this.options_.phraseStore;
+    this.cache = new PhraseCache(persistentSynth(this.player, store));
     // Options that arrived before the voice was ready are voiced now.
     this.earpiece.kick();
   }
