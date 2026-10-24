@@ -5,18 +5,199 @@ import { readFileSync } from 'node:fs';
 
 import {
     choosePlan,
+    COLUMNSTORE_AFTER,
+    COLUMNSTORE_LAYOUT,
     EXPECTED_COLUMNS,
     EXPECTED_TEXT_CHECKS,
     FORBIDDEN_COLUMNS,
     HYPERTABLES,
     IDENTITY_COLUMNS,
+    COLUMNSTORE_BOOTSTRAP_SECONDS,
+    COLUMNSTORE_OVERDUE_GRACE_SECONDS,
+    COLUMNSTORE_SCHEDULE_SECONDS,
+    judgeChunkLayouts,
     judgeColumns,
+    judgeColumnstore,
+    judgeColumnstorePolicy,
+    judgeColumnstoreRuns,
     judgeIdentityIndex,
+    RAW_RETENTION,
     readMigrations,
     splitStatements,
+    type ChunkColumnstoreRow,
     type ColumnRow,
+    type ColumnstoreRunStat,
+    type ColumnstoreSettingRow,
+    type Hypertable,
     type IdentityIndexRow,
+    type JobRow,
 } from '../src/migrate.js';
+
+/** Catalog-shaped compression_settings rows for a layout, as the live service printed them for sql/050. */
+function settingRows(name: string, segmentby: readonly string[], orderby: ReadonlyArray<{ col: string; asc: boolean; nullsFirst: boolean }>): ColumnstoreSettingRow[] {
+    return [
+        ...segmentby.map((attname, i) => ({ hypertable_name: name, attname, segmentby_column_index: i + 1, orderby_column_index: null, orderby_asc: null, orderby_nullsfirst: null })),
+        ...orderby.map((o, i) => ({ hypertable_name: name, attname: o.col, segmentby_column_index: null, orderby_column_index: i + 1, orderby_asc: o.asc, orderby_nullsfirst: o.nullsFirst })),
+    ];
+}
+
+/** A layout term (`col` or `col DESC`) with PostgreSQL's default NULLS placement. */
+const term = (t: string) => (t.endsWith(' DESC') ? { col: t.slice(0, -5), asc: false, nullsFirst: true } : { col: t, asc: true, nullsFirst: false });
+
+describe('the columnstore check', () => {
+    const layoutRows = (name: Hypertable) => settingRows(name, COLUMNSTORE_LAYOUT[name].segmentby, COLUMNSTORE_LAYOUT[name].orderby.map(term));
+    const good = layoutRows('switch_events');
+
+    test('on, with exactly the expected segmentby and orderby: passes, for every hypertable', () => {
+        const verdict = judgeColumnstore('switch_events', true, good);
+        assert.equal(verdict.ok, true);
+        assert.equal(verdict.detail, 'segmentby session_id; orderby time DESC, ledger_id');
+        for (const t of HYPERTABLES) assert.equal(judgeColumnstore(t, true, layoutRows(t)).ok, true, t);
+        // Rows of other hypertables are ignored, not mistaken for this one's.
+        assert.equal(judgeColumnstore('switch_events', true, [...good, ...layoutRows('rest_minutes')]).ok, true);
+    });
+
+    test('off, missing, no settings, or any change to segmentby, orderby, direction or NULLS: fails', () => {
+        const desc = { col: 'time', asc: false, nullsFirst: true };
+        const ledger = { col: 'ledger_id', asc: true, nullsFirst: false };
+        const bad: Array<[string, boolean | undefined, ColumnstoreSettingRow[]]> = [
+            ['columnstore not enabled', false, good],
+            ['hypertable missing', undefined, good],
+            ['no settings at all', true, []],
+            ['another table only', true, layoutRows('rest_minutes')],
+            ['no segmentby', true, settingRows('switch_events', [], [desc, ledger])],
+            ['an extra segmentby column', true, settingRows('switch_events', ['session_id', 'command'], [desc, ledger])],
+            ['segmented by another column', true, settingRows('switch_events', ['command'], [desc, ledger])],
+            ['time ascending', true, settingRows('switch_events', ['session_id'], [{ col: 'time', asc: true, nullsFirst: false }, ledger])],
+            ['ledger_id dropped from the orderby', true, settingRows('switch_events', ['session_id'], [desc])],
+            ['orderby reordered', true, settingRows('switch_events', ['session_id'], [ledger, desc])],
+            ['ledger_id descending', true, settingRows('switch_events', ['session_id'], [desc, { col: 'ledger_id', asc: false, nullsFirst: true }])],
+            ['time DESC NULLS LAST', true, settingRows('switch_events', ['session_id'], [{ col: 'time', asc: false, nullsFirst: false }, ledger])],
+        ];
+        for (const [name, enabled, rows] of bad) assert.equal(judgeColumnstore('switch_events', enabled, rows).ok, false, name);
+        assert.match(judgeColumnstore('switch_events', false, good).detail, /not enabled/);
+        assert.match(judgeColumnstore('switch_events', true, settingRows('switch_events', ['session_id'], [{ col: 'time', asc: false, nullsFirst: false }])).detail, /time DESC NULLS LAST/);
+    });
+
+    test('every idempotency column is a segmentby or orderby column, and time leads the orderby, newest first', () => {
+        for (const t of HYPERTABLES) {
+            const { segmentby, orderby } = COLUMNSTORE_LAYOUT[t];
+            const covered = new Set([...segmentby, ...orderby.map((o) => term(o).col)]);
+            for (const col of IDENTITY_COLUMNS[t]) assert.ok(covered.has(col), `${t}.${col} is neither segmentby nor orderby`);
+            assert.equal(orderby[0], 'time DESC', t);
+            for (const col of segmentby) assert.ok(!orderby.some((o) => term(o).col === col), `${t}.${col} is both segmentby and orderby`);
+        }
+    });
+});
+
+describe('the columnstore policy check', () => {
+    const job = (patch: Partial<JobRow> = {}): JobRow => ({
+        job_id: 1034,
+        proc_name: 'policy_compression',
+        hypertable_schema: 'telemetry',
+        hypertable_name: 'switch_events',
+        config: { hypertable_id: 17, compress_after: '3 days' },
+        every: '12:00:00',
+        scheduled: true,
+        ...patch,
+    });
+
+    test('a scheduled policy converting at exactly COLUMNSTORE_AFTER passes', () => {
+        const verdict = judgeColumnstorePolicy('switch_events', [job()]);
+        assert.equal(verdict.ok, true);
+        assert.equal(verdict.detail, 'after 3 days, every 12:00:00, scheduled true');
+        assert.equal(verdict.job?.job_id, 1034);
+    });
+
+    test('a dropped, altered, paused, misplaced or created_before policy fails', () => {
+        const bad: Array<[string, JobRow[]]> = [
+            ['dropped', []],
+            ['after altered to 2 days', [job({ config: { hypertable_id: 17, compress_after: '2 days' } })]],
+            ['after altered to 7 days', [job({ config: { hypertable_id: 17, compress_after: '7 days' } })]],
+            ['paused', [job({ scheduled: false })]],
+            ['on another hypertable', [job({ hypertable_name: 'picks' })]],
+            ['a retention job of the same table', [job({ proc_name: 'policy_retention', config: { drop_after: '3 days' } })]],
+            ['created_before instead of after', [job({ config: { hypertable_id: 17, created_before: '3 days' } })]],
+            ['schedule altered to 30 days', [job({ every: '30 days' })]],
+            ['schedule altered to 1 day', [job({ every: '1 day' })]],
+            ['schedule altered to 1 hour', [job({ every: '01:00:00' })]],
+        ];
+        for (const [name, jobs] of bad) assert.equal(judgeColumnstorePolicy('switch_events', jobs).ok, false, name);
+        assert.equal(judgeColumnstorePolicy('switch_events', []).detail, 'missing');
+    });
+});
+
+describe('the columnstore run check', () => {
+    const limit = COLUMNSTORE_SCHEDULE_SECONDS + COLUMNSTORE_OVERDUE_GRACE_SECONDS;
+    const ran = (patch: Partial<ColumnstoreRunStat> = {}): ColumnstoreRunStat => ({
+        runs: 1,
+        failures: 0,
+        lastStatus: 'Success',
+        lastSuccessAgeSeconds: 1_080,
+        policyAgeSeconds: 1_085,
+        ...patch,
+    });
+
+    test('a last success within the schedule plus the grace passes, and so does a policy inside its bootstrap allowance', () => {
+        assert.equal(judgeColumnstoreRuns(ran()).ok, true);
+        assert.equal(judgeColumnstoreRuns(ran({ lastSuccessAgeSeconds: limit, policyAgeSeconds: 10 * 86_400 })).ok, true);
+        assert.match(judgeColumnstoreRuns(ran()).detail, /^1 runs, 0 failures, last Success; last success 0\.3 h ago \(overdue after 13 h\)$/);
+        const fresh = ran({ runs: 0, lastStatus: null, lastSuccessAgeSeconds: null, policyAgeSeconds: 600 });
+        assert.equal(judgeColumnstoreRuns(fresh).ok, true);
+        assert.equal(judgeColumnstoreRuns({ ...fresh, policyAgeSeconds: COLUMNSTORE_BOOTSTRAP_SECONDS }).ok, true);
+        assert.match(judgeColumnstoreRuns(fresh).detail, /not run yet; policy 0\.2 h old \(bootstrap allowance 13 h\)/);
+    });
+
+    test('an overdue, failing, never-successful or unanchored job fails', () => {
+        const bad: Array<[string, ColumnstoreRunStat]> = [
+            ['last success one second past the limit', ran({ lastSuccessAgeSeconds: limit + 1 })],
+            ['last success two days ago', ran({ lastSuccessAgeSeconds: 2 * 86_400 })],
+            ['the last run failed, though an earlier one succeeded recently', ran({ runs: 2, failures: 1, lastStatus: 'Failed' })],
+            ['runs but never succeeded', ran({ runs: 3, failures: 3, lastStatus: 'Failed', lastSuccessAgeSeconds: null })],
+            ['never run, past the bootstrap allowance', ran({ runs: 0, lastStatus: null, lastSuccessAgeSeconds: null, policyAgeSeconds: COLUMNSTORE_BOOTSTRAP_SECONDS + 1 })],
+            ['never run, and sql/050 not recorded', ran({ runs: 0, lastStatus: null, lastSuccessAgeSeconds: null, policyAgeSeconds: null })],
+        ];
+        for (const [name, stat] of bad) assert.equal(judgeColumnstoreRuns(stat).ok, false, name);
+    });
+});
+
+describe('the columnstore chunk layout check', () => {
+    const CHUNK = '_timescaledb_internal._hyper_17_8_chunk';
+    // As timescaledb_information.chunk_columnstore_settings printed the converted picks chunk on the live service.
+    const row = (patch: Partial<ChunkColumnstoreRow> = {}): ChunkColumnstoreRow => ({
+        hypertable: 'telemetry.switch_events',
+        chunk: CHUNK,
+        segmentby: 'session_id',
+        orderby: '"time" DESC,ledger_id',
+        ...patch,
+    });
+
+    test('every chunk in the columnstore on the expected layout passes, and so does no chunk at all', () => {
+        assert.equal(judgeChunkLayouts('switch_events', [CHUNK], [row()]).ok, true);
+        assert.equal(judgeChunkLayouts('switch_events', [CHUNK], [row()]).detail, '1 chunk in the columnstore, each on the expected layout');
+        assert.deepEqual(judgeChunkLayouts('switch_events', [], []), { ok: true, detail: 'no chunk in the columnstore yet' });
+        // Another hypertable's chunks are not this one's business.
+        assert.equal(judgeChunkLayouts('switch_events', [CHUNK], [row(), row({ hypertable: 'telemetry.picks', chunk: 'x', orderby: 'ledger_id' })]).ok, true);
+        for (const t of HYPERTABLES) {
+            const printed = COLUMNSTORE_LAYOUT[t].orderby.map((o) => (o.startsWith('time') ? `"${o.replace(' DESC', '')}"${o.endsWith(' DESC') ? ' DESC' : ''}` : o)).join(',');
+            assert.equal(judgeChunkLayouts(t, ['c'], [row({ hypertable: `telemetry.${t}`, chunk: 'c', orderby: printed })]).ok, true, t);
+        }
+    });
+
+    test('a chunk on an older or different layout, or in the columnstore with no recorded layout, fails', () => {
+        const bad: Array<[string, string[], ChunkColumnstoreRow[]]> = [
+            ['converted before ledger_id was in the orderby', [CHUNK], [row({ orderby: '"time" DESC' })]],
+            ['time ascending', [CHUNK], [row({ orderby: '"time",ledger_id' })]],
+            ['NULLS LAST on time DESC', [CHUNK], [row({ orderby: '"time" DESC NULLS LAST,ledger_id' })]],
+            ['no segmentby', [CHUNK], [row({ segmentby: null })]],
+            ['segmented by another column', [CHUNK], [row({ segmentby: 'command' })]],
+            ['in the columnstore with no recorded layout', [CHUNK], []],
+            ['one good chunk and one on an old layout', [CHUNK, 'old'], [row(), row({ chunk: 'old', orderby: '"time" DESC' })]],
+        ];
+        for (const [name, chunks, rows] of bad) assert.equal(judgeChunkLayouts('switch_events', chunks, rows).ok, false, name);
+        assert.match(judgeChunkLayouts('switch_events', [CHUNK], []).detail, /no recorded layout/);
+    });
+});
 
 describe('the content-free column check', () => {
     // Catalog-shaped rows for switch_events as the live service has them.
@@ -131,6 +312,7 @@ describe('the sql files', () => {
             '022_picks_1m.toolkit.sql': 3,
             '030_retention.sql': 8,
             '040_switch_events_no_gesture_id.sql': 1,
+            '050_columnstore.sql': 10,
         });
         for (const f of files) for (const s of f.statements) assert.ok(!s.includes(';'), `${f.file}: a statement still holds a semicolon`);
     });
@@ -142,7 +324,7 @@ describe('the sql files', () => {
     test('the plan takes one variant per migration', () => {
         assert.deepEqual(
             choosePlan(files, 'toolkit').map((f) => f.file),
-            ['001_schema.sql', '010_switch_events.sql', '011_scan_steps.sql', '012_picks.sql', '013_action_outcomes.sql', '014_rest_minutes.sql', '020_switch_1m.sql', '021_idle_1m.sql', '022_picks_1m.toolkit.sql', '030_retention.sql', '040_switch_events_no_gesture_id.sql'],
+            ['001_schema.sql', '010_switch_events.sql', '011_scan_steps.sql', '012_picks.sql', '013_action_outcomes.sql', '014_rest_minutes.sql', '020_switch_1m.sql', '021_idle_1m.sql', '022_picks_1m.toolkit.sql', '030_retention.sql', '040_switch_events_no_gesture_id.sql', '050_columnstore.sql'],
         );
         assert.equal(choosePlan(files, 'exact').find((f) => f.id === '022_picks_1m')?.variant, 'exact');
     });
@@ -167,5 +349,33 @@ describe('the sql files', () => {
             assert.deepEqual(m![1]!.split(',').map((c) => c.trim()), [...IDENTITY_COLUMNS[t]], t);
             assert.equal(IDENTITY_COLUMNS[t].at(-1), 'time');
         }
+    });
+
+    test('sql/050 sets exactly the layout and policy the verifier expects on the five hypertables, and no aggregate', () => {
+        const sql = files.map((f) => f.statements.join('\n')).join('\n');
+        const layouts = [...sql.matchAll(/ALTER TABLE telemetry\.(\w+) SET \(timescaledb\.enable_columnstore = true, timescaledb\.segmentby = '([^']*)', timescaledb\.orderby = '([^']*)'\)/g)];
+        assert.deepEqual(layouts.map((m) => m[1]).sort(), [...HYPERTABLES].sort());
+        for (const m of layouts) {
+            const t = m[1] as Hypertable;
+            assert.deepEqual({ segmentby: m[2]!.split(', '), orderby: m[3]!.split(', ') }, { segmentby: [...COLUMNSTORE_LAYOUT[t].segmentby], orderby: [...COLUMNSTORE_LAYOUT[t].orderby] }, t);
+        }
+        const policies = [...sql.matchAll(/CALL add_columnstore_policy\('telemetry\.(\w+)', after => INTERVAL '([^']*)', if_not_exists => true\)/g)];
+        assert.deepEqual(policies.map((m) => m[1]).sort(), [...HYPERTABLES].sort());
+        for (const m of policies) assert.equal(m[2], COLUMNSTORE_AFTER, m[1]);
+        // Exactly these ten statements touch the columnstore; the aggregates stay in the rowstore.
+        assert.equal([...sql.matchAll(/columnstore/g)].length, 10);
+        assert.doesNotMatch(sql, /ALTER MATERIALIZED VIEW/);
+    });
+
+    test('the columnstore starts at or past every refresh window and before raw retention', () => {
+        const sql = files.map((f) => f.statements.join('\n')).join('\n');
+        const days = (interval: string) => Number(/^(\d+) days$/.exec(interval)![1]);
+        const after = days(COLUMNSTORE_AFTER);
+        const starts = [...sql.matchAll(/start_offset => INTERVAL '(\d+) days'/g)].map((m) => Number(m[1]));
+        const rawDrops = [...sql.matchAll(/add_retention_policy\('telemetry\.(switch_events|scan_steps|picks|action_outcomes|rest_minutes)', drop_after => INTERVAL '(\d+) days'/g)].map((m) => Number(m[2]));
+        assert.ok(starts.length >= 3 && rawDrops.length === 5);
+        for (const s of starts) assert.ok(after >= s, `columnstore after ${after} days must not start inside the refresh window of ${s} days`);
+        for (const d of rawDrops) assert.ok(after < d, `columnstore after ${after} days must come before raw retention ${d} days`);
+        assert.equal(days(RAW_RETENTION), Math.max(...rawDrops));
     });
 });

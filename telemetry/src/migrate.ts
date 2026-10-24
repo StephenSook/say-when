@@ -156,6 +156,170 @@ export const IDENTITY_COLUMNS: Record<Hypertable, readonly string[]> = {
 };
 export const RAW_RETENTION = '7 days';
 export const AGGREGATE_RETENTION = '30 days';
+/** A raw chunk moves to the columnstore once its end is this old (sql/050): at or past every refresh window. */
+export const COLUMNSTORE_AFTER = '3 days';
+/**
+ * Each hypertable's columnstore layout (sql/050_columnstore.sql). An orderby term is a column (ascending) or
+ * `column DESC`, with the default NULLS placement. Together they cover every column of the idempotency index.
+ */
+export const COLUMNSTORE_LAYOUT: { readonly [T in Hypertable]: { readonly segmentby: readonly string[]; readonly orderby: readonly string[] } } = {
+    switch_events: { segmentby: ['session_id'], orderby: ['time DESC', 'ledger_id'] },
+    scan_steps: { segmentby: ['session_id'], orderby: ['time DESC', 'step_seq'] },
+    picks: { segmentby: ['session_id'], orderby: ['time DESC', 'ledger_id'] },
+    action_outcomes: { segmentby: ['session_id'], orderby: ['time DESC', 'kind', 'action_id', 'status'] },
+    rest_minutes: { segmentby: ['session_id'], orderby: ['time DESC'] },
+};
+
+/** One row of timescaledb_information.compression_settings: one segmentby or orderby column of one hypertable. */
+export interface ColumnstoreSettingRow {
+    readonly hypertable_name: string;
+    readonly attname: string;
+    readonly segmentby_column_index: number | null;
+    readonly orderby_column_index: number | null;
+    readonly orderby_asc: boolean | null;
+    readonly orderby_nullsfirst: boolean | null;
+}
+
+/** An orderby column written as sql/050 writes it: DESC when descending, NULLS only when it is not the default. */
+function orderTerm(r: ColumnstoreSettingRow): string {
+    const desc = r.orderby_asc === false;
+    // PostgreSQL's default: NULLS FIRST for DESC, NULLS LAST for ASC.
+    const nulls = r.orderby_nullsfirst === desc ? '' : r.orderby_nullsfirst ? ' NULLS FIRST' : ' NULLS LAST';
+    return `${r.attname}${desc ? ' DESC' : ''}${nulls}`;
+}
+
+/**
+ * Whether a hypertable's columnstore is on with exactly the expected segmentby and orderby, in order. `enabled` is
+ * timescaledb_information.hypertables.compression_enabled (undefined when the hypertable is missing).
+ */
+export function judgeColumnstore(name: Hypertable, enabled: boolean | undefined, rows: readonly ColumnstoreSettingRow[]): { ok: boolean; detail: string } {
+    if (enabled === undefined) return { ok: false, detail: 'missing' };
+    const want = COLUMNSTORE_LAYOUT[name];
+    const mine = rows.filter((r) => r.hypertable_name === name);
+    const byIndex = (key: 'segmentby_column_index' | 'orderby_column_index') =>
+        mine.filter((r) => r[key] !== null).sort((a, b) => Number(a[key]) - Number(b[key]));
+    const segmentby = byIndex('segmentby_column_index').map((r) => r.attname);
+    const orderby = byIndex('orderby_column_index').map(orderTerm);
+    const got = `segmentby ${segmentby.join(', ') || '(none)'}; orderby ${orderby.join(', ') || '(none)'}`;
+    const ok = enabled && segmentby.join(',') === want.segmentby.join(',') && orderby.join(',') === want.orderby.join(',');
+    return { ok, detail: enabled ? got : `columnstore not enabled; ${got}` };
+}
+
+/** A timescaledb_information.jobs row, as verifySchema reads it. */
+export interface JobRow {
+    readonly job_id: number;
+    readonly proc_name: string;
+    readonly hypertable_schema: string;
+    readonly hypertable_name: string;
+    readonly config: Record<string, unknown>;
+    readonly every: string;
+    readonly scheduled: boolean;
+}
+
+/**
+ * How often each columnstore policy runs, as timescaledb_information.jobs prints it. sql/050 leaves the default, which
+ * TimescaleDB sets for a policy on a time hypertable to half the chunk interval, at most 12 hours (compression_api.c):
+ * 12 hours for 1-day chunks.
+ */
+export const COLUMNSTORE_SCHEDULE = '12:00:00';
+export const COLUMNSTORE_SCHEDULE_SECONDS = 12 * 3_600;
+/** A columnstore job is overdue once its last success is older than its schedule plus this much. */
+export const COLUMNSTORE_OVERDUE_GRACE_SECONDS = 3_600;
+/**
+ * The bootstrap allowance: a policy that has never run passes only while sql/050 was applied less than this long ago
+ * (one schedule plus the grace). After that, a policy with no successful run fails.
+ */
+export const COLUMNSTORE_BOOTSTRAP_SECONDS = COLUMNSTORE_SCHEDULE_SECONDS + COLUMNSTORE_OVERDUE_GRACE_SECONDS;
+/** The migration that creates the columnstore policies; its applied_at is the policies' age for the bootstrap rule. */
+export const COLUMNSTORE_MIGRATION = '050_columnstore';
+
+/** Whether a hypertable's columnstore policy exists, is scheduled every COLUMNSTORE_SCHEDULE, and converts at exactly COLUMNSTORE_AFTER. */
+export function judgeColumnstorePolicy(name: Hypertable, jobs: readonly JobRow[]): { ok: boolean; detail: string; job?: JobRow } {
+    const job = jobs.find((j) => j.proc_name === 'policy_compression' && j.hypertable_schema === 'telemetry' && j.hypertable_name === name);
+    if (!job) return { ok: false, detail: 'missing' };
+    const after = String(job.config.compress_after ?? '');
+    return {
+        ok: job.scheduled && after === COLUMNSTORE_AFTER && job.every === COLUMNSTORE_SCHEDULE,
+        detail: `after ${after || '(none)'}, every ${job.every}, scheduled ${job.scheduled}`,
+        job,
+    };
+}
+
+/** A columnstore job's run history, with ages in seconds measured on the database clock. */
+export interface ColumnstoreRunStat {
+    readonly runs: number;
+    readonly failures: number;
+    readonly lastStatus: string | null;
+    /** Seconds since the last successful run finished; null if it never succeeded. */
+    readonly lastSuccessAgeSeconds: number | null;
+    /** Seconds since sql/050 was applied; null if it is not recorded. */
+    readonly policyAgeSeconds: number | null;
+}
+
+const hours = (s: number) => `${Math.round((s / 3_600) * 10) / 10} h`;
+
+/**
+ * Whether a columnstore job is running on time: its last run succeeded and its last success is no older than the
+ * schedule plus the grace. A job that has never run passes only inside the bootstrap allowance after sql/050.
+ */
+export function judgeColumnstoreRuns(stat: ColumnstoreRunStat): { ok: boolean; detail: string } {
+    const limit = COLUMNSTORE_SCHEDULE_SECONDS + COLUMNSTORE_OVERDUE_GRACE_SECONDS;
+    if (stat.runs === 0) {
+        const young = stat.policyAgeSeconds !== null && stat.policyAgeSeconds <= COLUMNSTORE_BOOTSTRAP_SECONDS;
+        const age = stat.policyAgeSeconds === null ? 'unknown' : hours(stat.policyAgeSeconds);
+        return { ok: young, detail: `not run yet; policy ${age} old (bootstrap allowance ${hours(COLUMNSTORE_BOOTSTRAP_SECONDS)})` };
+    }
+    const fresh = stat.lastSuccessAgeSeconds !== null && stat.lastSuccessAgeSeconds <= limit;
+    const age = stat.lastSuccessAgeSeconds === null ? 'never' : `${hours(stat.lastSuccessAgeSeconds)} ago`;
+    return {
+        ok: stat.lastStatus === 'Success' && fresh,
+        detail: `${stat.runs} runs, ${stat.failures} failures, last ${stat.lastStatus ?? 'unknown'}; last success ${age} (overdue after ${hours(limit)})`,
+    };
+}
+
+/** One row of timescaledb_information.chunk_columnstore_settings: the layout a chunk in the columnstore was converted with. */
+export interface ChunkColumnstoreRow {
+    /** `telemetry.<hypertable>` */
+    readonly hypertable: string;
+    /** `_timescaledb_internal._hyper_N_M_chunk` */
+    readonly chunk: string;
+    readonly segmentby: string | null;
+    /** As TimescaleDB prints it, for example `"time" DESC,ledger_id`. */
+    readonly orderby: string | null;
+}
+
+/** A printed column list as layout terms: quotes dropped, split on commas. */
+function printedTerms(text: string | null): string[] {
+    return (text ?? '')
+        .split(',')
+        .map((t) => t.replaceAll('"', '').trim())
+        .filter((t) => t.length > 0);
+}
+
+/**
+ * Whether every chunk of a hypertable that is in the columnstore was converted with the expected layout. TimescaleDB
+ * keeps a converted chunk on the layout it was converted with when the hypertable's settings change later, so the
+ * hypertable's own settings say nothing about chunks already converted. A chunk in the columnstore with no recorded
+ * layout fails too.
+ */
+export function judgeChunkLayouts(name: Hypertable, compressedChunks: readonly string[], rows: readonly ChunkColumnstoreRow[]): { ok: boolean; detail: string } {
+    const want = COLUMNSTORE_LAYOUT[name];
+    const mine = rows.filter((r) => r.hypertable === `telemetry.${name}`);
+    const problems: string[] = [];
+    for (const r of mine) {
+        const segmentby = printedTerms(r.segmentby);
+        const orderby = printedTerms(r.orderby);
+        if (segmentby.join(',') !== want.segmentby.join(',') || orderby.join(',') !== want.orderby.join(',')) {
+            problems.push(`${r.chunk} has segmentby ${segmentby.join(', ') || '(none)'}; orderby ${orderby.join(', ') || '(none)'}`);
+        }
+    }
+    for (const chunk of compressedChunks) if (!mine.some((r) => r.chunk === chunk)) problems.push(`${chunk} is in the columnstore with no recorded layout`);
+    const n = new Set([...mine.map((r) => r.chunk), ...compressedChunks]).size;
+    return {
+        ok: problems.length === 0,
+        detail: problems.length > 0 ? problems.join('; ') : n === 0 ? 'no chunk in the columnstore yet' : `${n} chunk${n === 1 ? '' : 's'} in the columnstore, each on the expected layout`,
+    };
+}
 
 export interface Check {
     readonly name: string;
@@ -361,11 +525,13 @@ export async function verifySchema(pool: pg.Pool): Promise<VerifyReport> {
     const checks: Check[] = [];
     const add = (name: string, ok: boolean, detail: string) => checks.push({ name, ok, detail });
 
-    const hypertables = new Map<string, { dims: number }>();
+    const hypertables = new Map<string, { dims: number; columnstore: boolean }>();
     for (const row of (
-        await pool.query("SELECT hypertable_name, num_dimensions FROM timescaledb_information.hypertables WHERE hypertable_schema = 'telemetry'")
-    ).rows as Array<{ hypertable_name: string; num_dimensions: number }>) {
-        hypertables.set(row.hypertable_name, { dims: row.num_dimensions });
+        await pool.query(
+            "SELECT hypertable_name, num_dimensions, compression_enabled FROM timescaledb_information.hypertables WHERE hypertable_schema = 'telemetry'",
+        )
+    ).rows as Array<{ hypertable_name: string; num_dimensions: number; compression_enabled: boolean }>) {
+        hypertables.set(row.hypertable_name, { dims: row.num_dimensions, columnstore: row.compression_enabled });
     }
     for (const name of HYPERTABLES) {
         add(`hypertable telemetry.${name}`, hypertables.has(name), hypertables.has(name) ? 'present' : 'missing');
@@ -386,23 +552,40 @@ export async function verifySchema(pool: pg.Pool): Promise<VerifyReport> {
 
     const caRows = (
         await pool.query(
-            "SELECT view_name, materialized_only, materialization_hypertable_name AS mat FROM timescaledb_information.continuous_aggregates WHERE view_schema = 'telemetry'",
+            "SELECT view_name, materialized_only, compression_enabled, materialization_hypertable_name AS mat FROM timescaledb_information.continuous_aggregates WHERE view_schema = 'telemetry'",
         )
-    ).rows as Array<{ view_name: string; materialized_only: boolean; mat: string }>;
+    ).rows as Array<{ view_name: string; materialized_only: boolean; compression_enabled: boolean; mat: string }>;
     const aggregates = new Map(caRows.map((r) => [r.view_name, r]));
     for (const name of AGGREGATES) {
         const ca = aggregates.get(name);
         add(`continuous aggregate telemetry.${name}`, !!ca, ca ? 'present' : 'missing');
         add(`real-time telemetry.${name}`, !!ca && ca.materialized_only === false, ca ? `materialized_only = ${ca.materialized_only}` : 'missing');
+        // sql/050 keeps the aggregates in the rowstore (its header says why); a columnstore turned on later fails here.
+        add(`rowstore telemetry.${name}`, !!ca && ca.compression_enabled === false, ca ? `columnstore ${ca.compression_enabled ? 'ON' : 'off'}` : 'missing');
     }
 
     const jobs = (
         await pool.query(
             `SELECT job_id, proc_name, hypertable_schema, hypertable_name, config, schedule_interval::text AS every, scheduled
              FROM timescaledb_information.jobs
-             WHERE proc_name IN ('policy_retention', 'policy_refresh_continuous_aggregate')`,
+             WHERE proc_name IN ('policy_retention', 'policy_refresh_continuous_aggregate', 'policy_compression')`,
         )
-    ).rows as Array<{ job_id: number; proc_name: string; hypertable_schema: string; hypertable_name: string; config: Record<string, unknown>; every: string; scheduled: boolean }>;
+    ).rows as JobRow[];
+    // A policy that exists but fails is no policy: read the job's own run history.
+    const jobRuns = async (jobId: number): Promise<{ ok: boolean; detail: string }> => {
+        const stat = (
+            await pool.query(
+                `SELECT s.total_runs, s.total_failures, s.last_run_status, s.last_run_started_at::text AS last_run
+                 FROM timescaledb_information.job_stats s WHERE s.job_id = $1`,
+                [jobId],
+            )
+        ).rows[0] as { total_runs: string | number; total_failures: string | number; last_run_status: string | null; last_run: string | null } | undefined;
+        const runs = Number(stat?.total_runs ?? 0);
+        return {
+            ok: runs === 0 || stat?.last_run_status === 'Success',
+            detail: runs === 0 ? 'scheduled, not run yet' : `${runs} runs, ${Number(stat?.total_failures ?? 0)} failures, last ${stat?.last_run_status ?? 'unknown'} at ${stat?.last_run ?? 'unknown'}`,
+        };
+    };
     const retentionOf = (schema: string, table: string) =>
         jobs.find((j) => j.proc_name === 'policy_retention' && j.hypertable_schema === schema && j.hypertable_name === table);
     for (const name of HYPERTABLES) {
@@ -414,6 +597,8 @@ export async function verifySchema(pool: pg.Pool): Promise<VerifyReport> {
     // hypertable. Accept either, so the check reads the real job rather than guessing.
     const isAggregateJob = (j: (typeof jobs)[number], name: string, mat: string) =>
         (j.hypertable_schema === 'telemetry' && j.hypertable_name === name) || (j.hypertable_schema === '_timescaledb_internal' && j.hypertable_name === mat);
+    /** Every refresh policy's start_offset that was found, for the columnstore invariant below. */
+    const refreshStarts: string[] = [];
     for (const name of AGGREGATES) {
         const ca = aggregates.get(name);
         const retention = ca ? jobs.find((j) => j.proc_name === 'policy_retention' && isAggregateJob(j, name, ca.mat)) : undefined;
@@ -430,24 +615,82 @@ export async function verifySchema(pool: pg.Pool): Promise<VerifyReport> {
             refresh ? `start_offset ${start}, end_offset ${end}, every ${refresh.every}` : 'missing',
         );
         if (refresh) {
+            refreshStarts.push(start);
             // The retention invariant: raw rows must outlive the window the refresh recomputes.
             const safe = await scalar<boolean>(pool, 'SELECT $1::interval > $2::interval', [RAW_RETENTION, start]);
             add(`raw retention outlives telemetry.${name} refresh`, safe === true, `${RAW_RETENTION} > ${start}`);
-            // A policy that exists but fails is no policy: read the job's own run history.
-            const stat = (
-                await pool.query(
-                    `SELECT s.total_runs, s.total_failures, s.last_run_status, s.last_run_started_at::text AS last_run
-                     FROM timescaledb_information.job_stats s WHERE s.job_id = $1`,
-                    [refresh.job_id],
-                )
-            ).rows[0] as { total_runs: string | number; total_failures: string | number; last_run_status: string | null; last_run: string | null } | undefined;
-            const runs = Number(stat?.total_runs ?? 0);
-            const lastOk = stat?.last_run_status === 'Success';
-            add(
-                `refresh job runs telemetry.${name}`,
-                runs === 0 || lastOk,
-                runs === 0 ? 'scheduled, not run yet' : `${runs} runs, ${Number(stat?.total_failures ?? 0)} failures, last ${stat?.last_run_status ?? 'unknown'} at ${stat?.last_run ?? 'unknown'}`,
-            );
+            const runs = await jobRuns(refresh.job_id);
+            add(`refresh job runs telemetry.${name}`, runs.ok, runs.detail);
+        }
+    }
+
+    // The columnstore (sql/050), read from the live catalog: on, with exactly the expected segmentby and orderby (so
+    // every idempotency column stays a segmentby or orderby column), every chunk already in the columnstore converted
+    // with that layout, a policy scheduled every COLUMNSTORE_SCHEDULE at exactly COLUMNSTORE_AFTER, the invariant that
+    // the policy starts at or past every refresh window and before raw retention, and the policy's run history (not
+    // overdue). A dropped, altered, late or failing policy, or a changed layout, fails here.
+    const settings = (
+        await pool.query(
+            `SELECT hypertable_name, attname, segmentby_column_index, orderby_column_index, orderby_asc, orderby_nullsfirst
+             FROM timescaledb_information.compression_settings WHERE hypertable_schema = 'telemetry'`,
+        )
+    ).rows as ColumnstoreSettingRow[];
+    const chunkLayouts = (
+        await pool.query(
+            `SELECT hypertable::text AS hypertable, chunk::text AS chunk, segmentby, orderby
+             FROM timescaledb_information.chunk_columnstore_settings WHERE hypertable::text LIKE 'telemetry.%'`,
+        )
+    ).rows as ChunkColumnstoreRow[];
+    const compressedChunks = (
+        await pool.query(
+            `SELECT hypertable_name, chunk_schema || '.' || chunk_name AS chunk
+             FROM timescaledb_information.chunks WHERE hypertable_schema = 'telemetry' AND is_compressed`,
+        )
+    ).rows as Array<{ hypertable_name: string; chunk: string }>;
+    const columnstoreRuns = async (jobId: number): Promise<{ ok: boolean; detail: string }> => {
+        const r = (
+            await pool.query(
+                `SELECT coalesce(s.total_runs, 0)::int AS runs, coalesce(s.total_failures, 0)::int AS failures, s.last_run_status,
+                        extract(epoch FROM now() - s.last_successful_finish)::float8 AS success_age,
+                        (SELECT extract(epoch FROM now() - m.applied_at)::float8 FROM telemetry.migrations m WHERE m.id = $2) AS policy_age
+                 FROM (SELECT 1) one LEFT JOIN timescaledb_information.job_stats s ON s.job_id = $1`,
+                [jobId, COLUMNSTORE_MIGRATION],
+            )
+        ).rows[0] as { runs: number; failures: number; last_run_status: string | null; success_age: number | null; policy_age: number | null };
+        return judgeColumnstoreRuns({
+            runs: r.runs,
+            failures: r.failures,
+            lastStatus: r.last_run_status,
+            lastSuccessAgeSeconds: r.success_age,
+            policyAgeSeconds: r.policy_age,
+        });
+    };
+    for (const name of HYPERTABLES) {
+        const verdict = judgeColumnstore(name, hypertables.get(name)?.columnstore, settings);
+        add(`columnstore telemetry.${name}`, verdict.ok, verdict.detail);
+        const chunks = judgeChunkLayouts(
+            name,
+            compressedChunks.filter((c) => c.hypertable_name === name).map((c) => c.chunk),
+            chunkLayouts,
+        );
+        add(`columnstore chunks telemetry.${name}`, chunks.ok, chunks.detail);
+        const policy = judgeColumnstorePolicy(name, jobs);
+        add(`columnstore policy telemetry.${name}`, policy.ok, policy.detail);
+        const after = policy.job ? String(policy.job.config.compress_after ?? '') : '';
+        const ordered =
+            after !== '' && refreshStarts.length === AGGREGATES.length
+                ? await scalar<boolean>(pool, 'SELECT $1::interval >= ALL ($2::interval[]) AND $1::interval < $3::interval', [after, refreshStarts, RAW_RETENTION])
+                : false;
+        add(
+            `columnstore after the refresh windows, before raw retention: telemetry.${name}`,
+            ordered === true,
+            after === '' ? 'no columnstore policy' : `${refreshStarts.join(', ') || 'no refresh policy'} <= ${after} < ${RAW_RETENTION}`,
+        );
+        if (policy.job) {
+            const runs = await columnstoreRuns(policy.job.job_id);
+            add(`columnstore job runs telemetry.${name}`, runs.ok, runs.detail);
+        } else {
+            add(`columnstore job runs telemetry.${name}`, false, 'no columnstore policy');
         }
     }
 

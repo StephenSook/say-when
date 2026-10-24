@@ -17,7 +17,7 @@
         "build": "tsc -p tsconfig.build.json",
         "typecheck": "tsc --noEmit",
         "test": "tsx --test test/*.test.ts",
-        "test:live": "TIGER_IT=1 tsx --test test/live/*.test.ts",
+        "test:live": "TIGER_IT=1 tsx --test --test-concurrency=1 test/live/*.test.ts",
         "migrate": "tsx src/cli/migrate.ts",
         "verify": "tsx src/cli/verify.ts",
         "stats": "tsx src/cli/stats.ts",

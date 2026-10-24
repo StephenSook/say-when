@@ -20,8 +20,8 @@ import { backlogRange, PgSink, refreshAggregate } from '../../src/sink.js';
 import { FakeSource } from '../../src/sources/fake.js';
 import { getStats, percentileCont } from '../../src/stats.js';
 import { loadPin, pinnedSsl } from '../../src/tls.js';
-import type { Micros, PickRow } from '../../src/types.js';
-import { Scenario } from '../fixtures.js';
+import type { PickRow } from '../../src/types.js';
+import { syntheticSession } from './synthetic.js';
 
 const LIVE = process.env.TIGER_IT === '1';
 const RUN = `test-it-${Date.now().toString(36)}`;
@@ -29,76 +29,8 @@ const SESSION = `${RUN}:1`;
 const TABLES = ['switch_events', 'scan_steps', 'picks', 'action_outcomes', 'rest_minutes'];
 const AGGREGATES = ['switch_1m', 'idle_1m', 'picks_1m'];
 
-/** Synthetic times: eight minutes ago plus `s` seconds, on whole milliseconds. */
+/** Synthetic times: eight minutes ago plus `s` seconds, on whole milliseconds (test/live/synthetic.ts). */
 const anchorMs = Date.now() - 8 * 60_000;
-const anchor: Micros = BigInt(anchorMs) * 1_000n;
-const ms = (s: number): number => Math.round(s * 1_000);
-const at = (s: number): Micros => anchor + BigInt(ms(s)) * 1_000n;
-/** Seconds (epoch) whose midpoint lies in [a, b): the rule the tracker uses, computed here on its own. */
-const secondsIn = (a: number, b: number): number => Math.ceil((anchorMs + ms(b) - 500) / 1_000) - Math.ceil((anchorMs + ms(a) - 500) / 1_000);
-
-interface Expected {
-    commands: number;
-    falseActivations: number;
-    idleMs: number;
-    timesToPick: number[];
-}
-
-/** A test session whose answers are known in advance, computed here independently of the tracker. */
-function syntheticSession(): { events: Scenario['events']; expected: Expected } {
-    const s = new Scenario(1n).start(at(0)).ready();
-    let restSeconds = 0;
-    let restStart = 0;
-    const rest = (until: number) => {
-        restSeconds += secondsIn(restStart, until);
-    };
-    // The station's device_status row every 2 s, as the module refreshes it, interleaved in time order.
-    let lastBeat = 0;
-    const beatTo = (until: number) => {
-        while (lastBeat + 2 <= until) {
-            lastBeat += 2;
-            s.tick(at(lastBeat));
-        }
-    };
-    // Three minutes at rest with three misfires that had nothing to act on.
-    beatTo(20);
-    s.gesture(at(20), 'NO', 'ignored:idle');
-    beatTo(80);
-    s.gesture(at(80), 'CONFIRM', 'ignored:nothing_to_confirm');
-    beatTo(140);
-    s.gesture(at(140), 'NO', 'ignored:idle');
-    beatTo(180);
-    rest(180);
-    // 21 questions, each picked on its first option after 1.0 s, 1.2 s, ... 5.0 s.
-    const timesToPick: number[] = [];
-    for (let k = 0; k <= 20; k++) {
-        const t0 = 180 + k * 8;
-        const ttp = 1 + 0.2 * k;
-        const q = BigInt(100 + k);
-        if (k > 0) rest(t0);
-        beatTo(t0);
-        s.preparing(at(t0), q).read(at(t0 + 0.5), q, 1);
-        beatTo(t0 + 0.5 + ttp);
-        s.pick(at(t0 + 0.5 + ttp), q, 1, 'reply');
-        s.gesture(at(t0 + 0.5 + ttp), 'YES', 'accepted:pick', { questionId: q, optionId: 1_000n + q, cursor: 1 });
-        s.veto(at(t0 + 0.5 + ttp));
-        beatTo(t0 + 0.5 + ttp + 0.7);
-        s.idle(at(t0 + 0.5 + ttp + 0.7), 'picked');
-        beatTo(t0 + 7);
-        restStart = t0 + 0.5 + ttp + 0.7;
-        timesToPick.push(ms(ttp));
-    }
-    // A STOP at rest pauses (it acted, so it is not a false activation); a second STOP while paused had nothing to do.
-    // A deliberate pause is still rest.
-    beatTo(352);
-    s.gesture(at(352), 'STOP', 'accepted:pause');
-    s.pause(at(352), 'stop');
-    beatTo(360);
-    s.gesture(at(360), 'STOP', 'ignored:already_paused');
-    beatTo(400);
-    rest(400);
-    return { events: s.events, expected: { commands: 3 + 21 + 2, falseActivations: 4, idleMs: restSeconds * 1_000, timesToPick } };
-}
 
 async function refreshRecent(pool: pg.Pool): Promise<void> {
     for (const ca of AGGREGATES) {
@@ -164,7 +96,7 @@ describe('the live Tiger service', { skip: !LIVE && 'set TIGER_IT=1 (npm run tes
     });
 
     test('a synthetic test session written through the pipeline reads back as the expected numbers', async () => {
-        const { events, expected } = syntheticSession();
+        const { events, expected } = syntheticSession(anchorMs);
         const log = memoryLogger();
         const pipeline = createPipeline({ source: new FakeSource(RUN, events), sink: new PgSink(conn.pool), log, describeError: (e) => conn.describe(e) });
         await pipeline.start();
