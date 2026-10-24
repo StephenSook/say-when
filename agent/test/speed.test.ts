@@ -55,6 +55,10 @@ const POSITIVES = [
     'Is the Berkeley Public Library open on Sunday?',
     'Are you able to hear me?',
     'Have you slept?',
+    'Do you want me to stay?',
+    'Can you see the screen from there?',
+    'Are you feeling okay?',
+    'Are you coming?',
     // Review round 2: offers to rest, go or sit stay fast.
     'Do you want to go outside?',
     'Would you like to rest now?',
@@ -109,6 +113,21 @@ const NEGATIVES: [string, string][] = [
     // Found while preparing round 6: the same rule after have, has and had.
     ['Have you decided on lunch?', 'main_verb'],
     ['Has it stopped raining?', 'main_verb'],
+    // Review round 6 (Codex): an approved verb must not carry a request after it. Every "to" verb is checked, the
+    // words after the main verb are few and have no particle ("come up with"), and the question is short.
+    ['Can you come up with a name for the baby?', 'long'],
+    ['Do you care to elaborate on your pain?', 'request'],
+    ['Are you going to the store?', 'request'],
+    ['Do you feel like talking about it?', 'main_verb'],
+    ['Do you need help getting up?', 'errand_verb'],
+    ['Do you want to sit up?', 'main_verb'],
+    ['Do you want the big red cup now?', 'main_verb'],
+    // Found while preparing round 7: "is there" asks what there is, and be + pronoun + a verb in -ing is checked too.
+    ['Is there a name you like for the baby?', 'open_ended'],
+    ['Are there any questions?', 'open_ended'],
+    ['Are you thinking of a word?', 'main_verb'],
+    ['Can you come up with one?', 'main_verb'],
+    ['Is the big pharmacy near the old train station still open today?', 'long'],
     // Review round 3 (Codex): a list of alternatives, with commas or slashes, is a choice for the planner.
     ['Is your pain mild/moderate/severe?', 'list'],
     ['Do you prefer tea, coffee, juice?', 'list'],

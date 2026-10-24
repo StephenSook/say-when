@@ -25,6 +25,7 @@ export type YesNoReason =
     | 'compound'
     | 'request'
     | 'main_verb'
+    | 'long'
     | 'statement'
     | 'several_sentences';
 
@@ -74,8 +75,8 @@ const OFFER_SAFE: readonly string[] = [...REQUEST_SAFE, 'go', 'sit', 'rest', 'st
 const WH_WORD = /\b(what|whats|when|where|which|who|whom|whose|why|how|whether|if)\b/;
 /** A question about what the person knows ("Do you know the doctor's name?"): it asks for the content, not a yes. */
 const KNOWLEDGE = /\b(know|knows|knew|remember|remembers|remembered|recall|recalls|recalled)\b/;
-/** A need left open ("Do you need anything?"): the planner can offer what it could be, errands included. */
-const OPEN_ENDED = /\b(anything|something|someone|somebody|anyone|anybody)\b/;
+/** A need left open ("Do you need anything?", "Is there ..."): the planner can offer what it could be, errands included. */
+const OPEN_ENDED = /\b(anything|something|someone|somebody|anyone|anybody)\b|^(is|are|was|were) there\b/;
 /** A sentence break followed by more words: two questions, or a question and a statement. */
 const SENTENCE_BREAK = /[.?!;]\s+\S/;
 /** Two things asked at once ("Can you hear me and say your name?"): a safe first part must not approve the rest. */
@@ -93,6 +94,16 @@ const MAIN_SAFE: readonly string[] = [...OFFER_SAFE, 'be', 'hurt', 'ache', 'agre
 const PRONOUN_VERB = /^[a-z]+ (?:you|i|we|it|he|she|they) ([a-z]+)/;
 /** After have, has and had: a pronoun subject and one of these plain participles ("Have you eaten yet?"). */
 const HAVE: readonly string[] = ['have', 'has', 'had'];
+/** Every "to" with a verb after it is checked, not only the first ("Do you care to elaborate?", "going to the store"). */
+const TO_VERB = /\bto ([a-z]+)/g;
+/** At most this many words in a fast question; longer ones go to the planner. */
+const MAX_WORDS = 9;
+/** At most this many words after the main verb, none a particle that changes the verb ("come up with"). */
+const MAX_TAIL_WORDS = 4;
+const PARTICLES: readonly string[] = ['up', 'out', 'off', 'over', 'down', 'back', 'about', 'around', 'through', 'into', 'onto', 'away', 'together', 'along'];
+/** After is, are, was or were and a pronoun, a verb in -ing must be one of these ("Are you feeling okay?"). */
+const BE: readonly string[] = ['is', 'are', 'was', 'were'];
+const GERUND_SAFE: readonly string[] = ['feeling', 'coming', 'going', 'sleeping', 'listening', 'eating', 'resting', 'waiting', 'watching', 'hurting', 'breathing', 'sitting', 'staying'];
 const PARTICIPLE_SAFE: readonly string[] = ['eaten', 'slept', 'heard', 'seen', 'felt', 'been', 'had', 'rested', 'drunk', 'tried', 'enjoyed', 'liked', 'understood', 'come', 'gone', 'walked', 'met'];
 
 /**
@@ -132,9 +143,23 @@ export function classifyYesNo(question: string): YesNoVerdict {
         const verb = offer.exec(body)?.[1];
         if (verb !== undefined && !OFFER_SAFE.includes(verb)) return { yesNo: false, reason: 'request' };
     }
+    for (const match of body.matchAll(TO_VERB)) {
+        if (!OFFER_SAFE.includes(match[1] ?? '')) return { yesNo: false, reason: 'request' };
+    }
     const end = body.replace(/["'“”)\s]+$/, '');
     if (end.endsWith('.') || end.endsWith('!')) return { yesNo: false, reason: 'statement' };
     if (SENTENCE_BREAK.test(end)) return { yesNo: false, reason: 'several_sentences' };
+    const words = end.replace(/[?]+$/, '').split(' ').filter((word) => word !== '');
+    if (words.length > MAX_WORDS) return { yesNo: false, reason: 'long' };
+    if (DO_OR_MODAL.includes(first) || HAVE.includes(first)) {
+        // [auxiliary, pronoun, verb, ...tail]: the main verb's company is checked too.
+        const tail = words.slice(3);
+        if (tail.length > MAX_TAIL_WORDS || tail.some((word) => PARTICLES.includes(word))) return { yesNo: false, reason: 'main_verb' };
+    }
+    if (BE.includes(first)) {
+        const word = PRONOUN_VERB.exec(body)?.[1];
+        if (word !== undefined && word.endsWith('ing') && !GERUND_SAFE.includes(word)) return { yesNo: false, reason: 'main_verb' };
+    }
     if (DO_OR_MODAL.includes(first)) {
         const verb = PRONOUN_VERB.exec(body)?.[1];
         if (verb === undefined || !MAIN_SAFE.includes(verb)) return { yesNo: false, reason: 'main_verb' };
