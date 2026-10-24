@@ -136,6 +136,21 @@ finally:
 ' "$1"
 }
 
+# macOS only: warn when the system's open-file table is nearly full (seen on this Mac on Oct 24 at 30,710 of 30,720),
+# because then every new socket, pipe and file fails, the sidecar's included. Says nothing where sysctl has no answer.
+files_check() {
+    local used max
+    used="$(sysctl -n kern.num_files 2>/dev/null || true)"
+    max="$(sysctl -n kern.maxfiles 2>/dev/null || true)"
+    case "$used$max" in '' | *[!0-9]*) return 0 ;; esac
+    [ "$max" -gt 0 ] || return 0
+    if [ $((used * 100 / max)) -ge 90 ]; then
+        echo "Warning: $used of $max open files are in use on this Mac. Quit apps you do not need (or restart) before the demo, or new connections will fail." >&2
+    else
+        echo "open files: $used of $max"
+    fi
+}
+
 # The state file: one key=value per line, written by `up`, read by status and stop.
 state_get() {
     [ -f "$state_file" ] || return 0
@@ -278,6 +293,7 @@ cmd_status() {
         echo "not running: $db"
     fi
     if pid_matches "$caffeinate_pid" caffeinate; then echo "caffeinate: on (pid $caffeinate_pid)"; else echo "caffeinate: off"; fi
+    files_check
     if body="$(health_json "http://127.0.0.1:$state_port/healthz" 2>/dev/null)"; then
         echo "health: $body"
     else
@@ -369,6 +385,7 @@ cmd_up() {
     if port_in_use "$port"; then
         die "port $port already answers on this Mac (8790 is the try sidecar). Pick another with --port."
     fi
+    files_check
     base_env
     load_keys
     if [ "$calls" -eq 1 ]; then prepare_calls; fi

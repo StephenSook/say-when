@@ -222,6 +222,24 @@ describe('calls', () => {
     });
 });
 
+describe('the open-file table', () => {
+    function sysctlBin(used) {
+        const dir = mkdtempSync(join(root, 'sysctl-'));
+        writeFileSync(join(dir, 'sysctl'), `#!/bin/sh\ncase "$2" in kern.num_files) echo ${used} ;; kern.maxfiles) echo 30720 ;; esac\n`);
+        chmodSync(join(dir, 'sysctl'), 0o755);
+        return `${dir}:${bin}:${process.env.PATH}`;
+    }
+
+    it('warns when the system is nearly out of open files, and starts nothing differently otherwise', async () => {
+        const full = demoUp(['--db', 'say-when-dev', '--port', String(await freePort()), '--dry-run'], setup(), { PATH: sysctlBin(30710) });
+        assert.equal(full.code, 0, full.text);
+        assert.match(full.text, /30710 of 30720 open files are in use/);
+        const fine = demoUp(['--db', 'say-when-dev', '--port', String(await freePort()), '--dry-run'], setup(), { PATH: sysctlBin(1200) });
+        assert.match(fine.text, /open files: 1200 of 30720/);
+        assert.doesNotMatch(fine.text, /Warning/);
+    });
+});
+
 describe('status and stop', () => {
     it('stop with nothing running says so', () => {
         const r = demoUp(['--db', 'say-when-dev', 'stop'], setup());
