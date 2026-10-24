@@ -28,6 +28,8 @@ NEXT_PUBLIC_SPACETIMEDB_HOST=https://maincloud.spacetimedb.com NEXT_PUBLIC_SPACE
 npx next start -p 3217     # http://localhost:3217/conversation shows say-when-dev, chip Live
 ```
 
+Production (Vercel project `neurolingo-web`, served at https://eleven-calhacks.vercel.app): both values are stored as Production environment variables on the project (`NEXT_PUBLIC_SPACETIMEDB_HOST=https://maincloud.spacetimedb.com`, `NEXT_PUBLIC_SPACETIMEDB_DB=say-when-demo`), so `vercel --prod` from `web/` builds against the demo database. Before Oct 24 they were passed as `--build-env` flags; one deploy without the flags shipped pages with no database ("This page has no database to pair with") and was rolled back. After any deploy, run the deployed smoke test (`cd scripts && npm run smoke`).
+
 The board shows the module's current or most recent session (`config.active_session_id`). To watch it move, run the module's smoke test from `spacetime/` (owner only, made-up content, about 90 s; `spacetime/README.md`, "Smoke test"); it starts a session, plays a station and a stand-in agent, ends the session and revokes its devices. `?replay=1` still plays the bannered sample replay on the same build.
 
 ## Where the rows come from

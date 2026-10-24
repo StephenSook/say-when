@@ -7,7 +7,7 @@
  *
  * Every check prints one line, PASS or FAIL, and the run exits 1 if any check failed.
  *
- * It never writes to the database. The dashboards (/live, /agents, /conversation, /judge) only read, as an anonymous
+ * It never writes to the database. The dashboards (/live, /agents, /conversation, /replies, /judge) only read, as an anonymous
  * viewer. /partner is loaded but nothing is clicked: the phone pairs only after a person picks a label. /station and
  * /speaker are NOT opened in a browser, because loading either one sends `request_pairing` on its own
  * (web/lib/role/pairing.ts: station and speaker ask for a code at once), and that reducer inserts a pairing request
@@ -53,6 +53,8 @@ const BROWSER_PAGES = [
   { path: '/agents', expect: liveDashboard },
   { path: '/conversation', expect: liveDashboard },
   { path: '/conversation?replay=1', expect: replay },
+  { path: '/replies', expect: liveDashboard },
+  { path: '/replies?replay=1', expect: replay },
   { path: '/partner', expect: partner },
   { path: '/judge', expect: judge },
 ];
