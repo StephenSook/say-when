@@ -99,7 +99,8 @@ describe('judge page model', () => {
     const fromSection8 = NOT_MEASURED.filter((c) => c.cite.file === 'docs/station.md' && c.cite.section === '8');
     assert.ok(fromSection8.length >= 4, 'most come from docs/station.md section 8');
     const texts = NOT_MEASURED.map((c) => c.text).join('\n');
-    for (const must of [/no wearer/i, /key presses/i, /brain test/i, /no voice/i, /latency/i]) assert.match(texts, must);
+    // The voiced run is measured since Oct 24; what stays unmeasured about voice is the room voice after its fix.
+    for (const must of [/no wearer/i, /key presses/i, /brain test/i, /room voice/i, /latency/i]) assert.match(texts, must);
   });
 
   test('the rest of the page states no number of its own', () => {

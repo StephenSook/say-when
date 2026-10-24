@@ -120,7 +120,7 @@ The tests use a fake that implements the same interface as the SDK calls this pa
 
 ## Honest limits
 
-- **Not yet run against real Moss.** No credentials were used to build this. The first real run is the smoke test: start, add a few documents, query, close, and read the portal's usage page before and after.
+- **First real run, Oct 24.** In the first end-to-end live run (`docs/station.md` 7.5) the sidecar opened real Moss, indexed each question's web passages, searched them, recalled from memory in 86 to 117 ms with 0 hits (the memory was empty) and wrote one memory back. Moss closes itself after 3 idle minutes, so the first question after a quiet stretch had no recall; for the demo, start the sidecar within 3 minutes of the first question or set `AGENT_MOSS_REOPEN=on`.
 - **Starting guesses.** The score floor (0.5) and the ranking weights (0.6 memory, 0.4 support) are not measured. Tune them on real questions on the demo laptop; Moss's own docs say to tune score floors on your own queries.
 - **Typed but not yet seen in a real run:** metadata and payload on JS session hits. Recall falls back to the document id and text if they are missing.
 - **Snapshots.** Moss's Python docs give one error code for a missing and a damaged snapshot, so this package tells a first run apart by whether the snapshot folder exists. A damaged snapshot fails the start instead of being overwritten with an empty memory; move the folder aside to start fresh. The core can also report a snapshot "locked by another process", so use one snapshot folder per process.

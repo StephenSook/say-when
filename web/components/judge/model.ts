@@ -111,6 +111,16 @@ export const MEASURED: readonly Claim[] = [
       'Live keyboard run on `say-when-dev` (Oct 24, no voice yet): 11 of 13 checks pass, including a pick that landed 52 ms after the next option began and still took the option heard',
   },
   {
+    text: 'The first end-to-end live run, voiced: Claude drafted, Apify searched, Moss recalled, Cartesia read the options, and an errand was sent only after a fresh CONFIRM, 3.9 s after it.',
+    cite: { file: 'docs/station.md', section: '7.5', date: OCT_24 },
+    evidence: 'the errand read Sent 3.9 s after the confirm',
+  },
+  {
+    text: 'In that run, a question reached its first option read in 19.2 to 27.0 s.',
+    cite: { file: 'docs/station.md', section: '7.5', date: OCT_24 },
+    evidence: 'Question to first option read: 19.2 to 27.0 s on the four open questions that were not paused',
+  },
+  {
     text: 'The form-errand Actor, build 0.1.4 on Apify: a preview, a submit with the confirmed digest, and a repeat submit refused as a duplicate.',
     cite: { file: 'README.md', section: 'Status', date: OCT_24 },
     evidence:
@@ -140,14 +150,14 @@ export const NOT_MEASURED: readonly Claim[] = [
     evidence: 'That the headset drives the deployed station page: 5.1 and L4 have not run.',
   },
   {
-    text: 'No voiced run is recorded yet: the Cartesia key went onto both databases that morning, after the silent test runs.',
-    cite: { file: 'docs/station.md', section: '9.1', date: OCT_24 },
-    evidence: 'Still open: one real mint and a voiced run',
+    text: 'Moss memory was empty in that run, so no memory hit has been shown yet.',
+    cite: { file: 'docs/station.md', section: '7.5', date: OCT_24 },
+    evidence: 'Moss recall ran in 86 to 117 ms with 0 hits, because the memory was empty',
   },
   {
-    text: 'The agent sidecar with the Claude planner has not run against the live services yet.',
-    cite: { file: 'README.md', section: 'Status', date: OCT_24 },
-    evidence: 'Not yet run against the live services',
+    text: 'The room voice speaking a reply live has not been seen since its fix.',
+    cite: { file: 'docs/station.md', section: '7.5', date: OCT_24 },
+    evidence: 'the room voice ignored a reply arriving as an update to the session row (it never spoke live)',
   },
   {
     text: 'No phone call has run yet.',
