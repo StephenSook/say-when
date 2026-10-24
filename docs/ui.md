@@ -327,7 +327,7 @@ Focus: the agent that is working gets the big card. The other agent is one line 
  [ ] Ended
 ```
 
-- Parts: card with the preview screenshot (a click opens the dialog), step list, rows for the transcript, digest in `--font-mono`.
+- Parts: card with the preview screenshot (a click opens the dialog), step list, rows for the transcript. The digest is our proof, not the person's job: it sits in the read-back step's tooltip, never in its words (Oct 24 polish).
 - Rows: `errand` (`form`, `status`, `preview_digest`, `read_back_text`, `confirmation_text`, `screenshot_url`), `call_request` (`contact`, `script_digest`, `status`), and the command event that released or stopped each one.
 - Errand steps: Preview made (`screenshot_url` set), Read back (`read_back_text` set), Waiting for CONFIRM, a double jaw clench (row awaits confirmation), Sent (`confirmation_text` set). A NO, a timeout, PAUSE or HEADSET-OFF fails the waiting step with "Not sent: <reason>".
 - Call steps: Prepared (`script_digest` set), Ringing, Connected, Ended, from `status`.

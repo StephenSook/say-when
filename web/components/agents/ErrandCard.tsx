@@ -7,7 +7,7 @@
  * 1 Picked with YES        the errand option, from the option rows
  * 2 Form filled            the Actor filled the form in a browser; nothing is sent
  * 3 Values read back       the values the Actor read back off the page
- * 4 Read back              the read-back plays in the earpiece, with its digest
+ * 4 Read back              the read-back plays in the earpiece; its digest is in the tooltip only
  * 5 CONFIRM                the confirm window and its countdown; only CONFIRM sends it (a double jaw clench
  *                          with the headset, the key or the switch press otherwise)
  * 6 Sent                   with the form's confirmation text
@@ -24,7 +24,7 @@ import type { RunStatus } from '@/lib/status';
 import { AgentCard } from './AgentCard';
 import { FormPreview } from './FormPreview';
 import { errandBadge, errandMaybeSent, errandPlan, pauseWords, rowReason, screenText, stopReason, type SafetyWord } from './model';
-import { Digest, Note, numbered, Quote, ReadBackValues } from './StepParts';
+import { Note, numbered, Quote, ReadBackValues, WithDigest } from './StepParts';
 import { Countdown, Elapsed } from './Timers';
 
 export interface ErrandCardProps {
@@ -126,17 +126,7 @@ function readBackStep(errand: Errand, status: RunStatus, notSent: ReactNode, end
     case 'done':
       return {
         ...step,
-        label: numbered(
-          4,
-          <>
-            Read back in the earpiece
-            {errand.previewDigest ? (
-              <>
-                , digest <Digest value={errand.previewDigest} />
-              </>
-            ) : null}
-          </>,
-        ),
+        label: numbered(4, <WithDigest value={errand.previewDigest}>Read back in the earpiece</WithDigest>),
         time: clock(errand.readAloudAt),
         detail: text ? <Quote text={text} /> : undefined,
       };
