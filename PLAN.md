@@ -22,15 +22,15 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⛔ blocked
 | 2.2 | Calibration: per-person signal map and thresholds | `switch/` | Shashank | ⬜ | 2.1 | Idle false-activation rate goes on the dashboard |
 | 2.3 | STOP, HEADSET-OFF watchdog and idle auto-pause | `switch/` | Shashank | ⬜ | 2.1 | 0.5 s packet watchdog; long jaw clench is STOP |
 | 2.4 | Brain commands: imagined right fist = YES, left fist = NO | `switch/` | Shashank | ⬜ | 2.2 | Needs a C3/C4 headset (Q1). Must pass `docs/brain-mode-test.md` (left vs right vs rest) at the venue; else jaw-only fallback. See D11 |
-| 3.1 | Partner speech to text (Cartesia Ink-2) | `cartesia/` | Stephen | 🟡 | - | Stephen, since Oct 23 9:30pm PT. Claude implementing |
-| 3.2 | Apify search and scrape client (RAG Web Browser, Google Maps) | `apify/client/` | Stephen | 🟡 | - | Stephen, since Oct 23 8:45pm PT. Claude implementing |
-| 3.3 | Moss retrieval over Apify results and memory | `moss/` | Stephen | 🟡 | 3.2 | Stephen, since Oct 23 9:30pm PT. Research landed; Claude implementing |
+| 3.1 | Partner speech to text (Cartesia Ink-2) | `cartesia/` | Stephen | ✅ | - | Built and tested offline (117 tests in `cartesia/`). Live smoke test pending |
+| 3.2 | Apify search and scrape client (RAG Web Browser, Google Maps) | `apify/client/` | Stephen | ✅ | - | Built, 166 tests, Codex round 1 fixed (4891a05) |
+| 3.3 | Moss retrieval over Apify results and memory | `moss/` | Stephen | ✅ | 3.2 | Built, 75 tests, six Codex rounds (last two clean). Memory first; text private unless shareable. First real Moss run pending |
 | 3.4 | Option planner (Claude, up to four options) | `agent/` | Shashank | ⬜ | 3.2, 3.3 | Skip the web search when no outside facts are needed. See D8 |
-| 3.5 | Earpiece voice (Cartesia Sonic, pronunciation dictionary) | `cartesia/` | Stephen | 🟡 | 3.4 | Stephen, since Oct 23 9:30pm PT. Claude implementing |
-| 4.1 | Form-errand Apify Actor: preview, read back, submit | `apify/form-errand/` | Stephen | ✅ | - | Public on the Apify Store: https://apify.com/stephensookra/confirm-gated-form-errand (build 0.1.1). Preview and submit verified on the platform |
+| 3.5 | Earpiece voice (Cartesia Sonic, pronunciation dictionary) | `cartesia/` | Stephen | ✅ | 3.4 | Built and tested offline. Nobody has heard Sonic say "NeuroLingo" yet |
+| 4.1 | Form-errand Apify Actor: preview, read back, submit | `apify/form-errand/` | Stephen | ✅ | - | Public on the Apify Store: https://apify.com/stephensookra/confirm-gated-form-errand (build 0.1.3, includes the round 1 fixes). Platform preview and submit verified on 0.1.1; re-check on 0.1.3 pending |
 | 4.2 | Errand wiring: errand option or idle menu, read-back, CONFIRM, submit | `agent/` | Shashank | ⬜ | 1.1, 4.1 | Errands and calls are options, not gestures (D11) |
 | 4.3 | Care team request form (demo target) | external | Leon | ⬜ | - | Owned by the consenting caregiver |
-| 4.4 | Outbound call agent (Cartesia Managed Agents) | `cartesia/` | Stephen | 🟡 | 1.1, 4.2 | Stephen, since Oct 23 9:30pm PT. Consenting number only. Claude implementing |
+| 4.4 | Outbound call agent (Cartesia Managed Agents) | `cartesia/` | Stephen | 🟡 | 1.1, 4.2 | Code built and tested offline. Still needed: create the agent from `cartesia/agent/*.txt`, consent re-confirmed under the NeuroLingo name (D13), one live test call to a consenting number |
 | 5.0 | UI reference: `docs/ui.md` with tokens, wireframes and mockups | `docs/` | Stephen | ✅ | - | Open `docs/mockups/index.html`. Stephen builds the UI from it |
 | 5.1 | Dashboard shell: Next.js, SpacetimeDB WebSocket subscriptions, layout | `web/` | Stephen | 🟡 | 1.1 | Stephen, since Oct 23 10:20pm PT. Claude building. Must work on any laptop with no login. See D7 |
 | 5.2 | Screen 1, Live data: each pipeline stage with its real payload as it flows | `web/` | Stephen | 🟡 | 5.1 | Stephen, since Oct 23 10:20pm PT. Claude building. Reads `pipeline_event` |
@@ -181,7 +181,7 @@ All three update over SpacetimeDB subscriptions, so every laptop shows the same 
 ## Open Questions
 
 - [ ] **Q1:** Which headset are we using? It decides which signals are possible (a Muse cannot read an imagined movement). Needs Shashank.
-- [ ] **Q2:** Lock the SpacetimeDB table and reducer names in Shared Contracts. Needs Shashank.
+- [ ] **Q2:** Lock the SpacetimeDB table and reducer names in Shared Contracts. Needs Stephen (row 1.2); Shashank checks the decoder side.
 - [ ] **Q3:** Demo form: a Google Form owned by the caregiver, or our own page on the dashboard domain? Needs Leon and Stephen.
 - [ ] **Q4:** Can the free Cartesia phone number be set up without a card? Needs Shashank.
 - [ ] **Q5:** Who plays the caller's recipient, and is their consent written down? Needs Leon.

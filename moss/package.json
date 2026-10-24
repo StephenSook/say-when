@@ -1,0 +1,30 @@
+{
+    "name": "@say-when/moss",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "description": "Moss retrieval for NeuroLingo: the person's own memory first, then the current question's web passages, with options ordered by memory.",
+    "engines": {
+        "node": ">=22"
+    },
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "default": "./dist/index.js"
+        }
+    },
+    "dependencies": {
+        "@moss-js/moss": "1.21.0"
+    },
+    "devDependencies": {
+        "@types/node": "^24.19.2",
+        "tsx": "^4.23.15",
+        "typescript": "~6.0.3"
+    },
+    "scripts": {
+        "build": "tsc",
+        "typecheck": "tsc -p tsconfig.test.json",
+        "test": "tsx --test test/*.test.ts"
+    },
+    "license": "MIT"
+}

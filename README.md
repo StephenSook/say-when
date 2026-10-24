@@ -45,13 +45,13 @@ The hand commands are imagined movements read over the motor cortex, so they onl
 
 | Part | Folder | State |
 |---|---|---|
-| Form-errand Actor | `apify/form-errand/` | Built and published: [Confirm-Gated Form Errand on the Apify Store](https://apify.com/stephensookra/confirm-gated-form-errand). 40 tests in CI, preview and submit verified on the platform |
-| Apify client (search, places, errand) | `apify/client/` | Built, 125 tests in CI |
-| Cartesia (speech to text, voice, dictionary, call) | `cartesia/` | Built, 94 tests in CI; live API smoke test pending |
-| Moss retrieval | `moss/` | In progress |
+| Form-errand Actor | `apify/form-errand/` | Built and published: [Confirm-Gated Form Errand on the Apify Store](https://apify.com/stephensookra/confirm-gated-form-errand), build 0.1.3. 44 tests in CI. Preview and submit were verified on the platform with build 0.1.1; a re-check on 0.1.3 is pending |
+| Apify client (search, places, errand) | `apify/client/` | Built, 166 tests in CI |
+| Cartesia (speech to text, voice, dictionary, call) | `cartesia/` | Built, 117 tests in CI; live API smoke test pending |
+| Moss retrieval | `moss/` | Built, 75 tests in CI; first run against real Moss pending. Memory text stays private unless a memory is marked shareable |
 | SpacetimeDB module | `spacetime/` | In progress; design in [docs/spacetime.md](docs/spacetime.md) |
 | Dashboard and partner phone | `web/` | In progress; spec in [docs/ui.md](docs/ui.md), mockups in `docs/mockups/` |
-| Headset decoder | `switch/` | In progress (Shashank); brain test in [docs/brain-mode-test.md](docs/brain-mode-test.md) |
+| Headset decoder | `switch/` | Shashank; not in this repo yet. Brain test in [docs/brain-mode-test.md](docs/brain-mode-test.md) |
 
 ## How we use SpacetimeDB
 

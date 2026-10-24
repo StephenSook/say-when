@@ -130,3 +130,30 @@ jobs:
           pass=$(awk '/^# pass/ {print $3}' test.log)
           echo "passing tests: $pass"
           test "$pass" -ge 117
+
+  moss:
+    name: Moss (memory and web retrieval)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: moss
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: moss/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - name: Tests (fake SDK, no credentials)
+        run: |
+          status=0
+          npm test > test.log 2>&1 || status=$?
+          cat test.log
+          test "$status" -eq 0
+          grep -qE '^# fail 0$' test.log
+          pass=$(awk '/^# pass/ {print $3}' test.log)
+          echo "passing tests: $pass"
+          test "$pass" -ge 75

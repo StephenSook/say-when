@@ -1,0 +1,5 @@
+node_modules/
+dist/
+# The person's memory snapshot stays on this laptop. Point MOSS_SNAPSHOT_DIR here or anywhere outside the repo.
+.memory/
+.moss-device-id
