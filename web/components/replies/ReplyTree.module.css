@@ -7,7 +7,9 @@
  * and a word.
  */
 
-.flow {
+/* The canvas and the phone list share these. */
+.flow,
+.stack {
   --pick: #7be3a6; /* ours: the pick */
   --pick-soft: rgba(123, 227, 166, 0.14);
   --pick-glow: rgba(123, 227, 166, 0.22);
@@ -15,6 +17,9 @@
   --edge-done: rgba(255, 255, 255, 0.34);
   --edge-dim: rgba(255, 255, 255, 0.08);
   --card-line: rgba(255, 255, 255, 0.16);
+}
+
+.flow {
   --xy-background-color: var(--bg);
   width: 100%;
   height: 100%;
