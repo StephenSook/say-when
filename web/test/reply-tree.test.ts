@@ -303,6 +303,39 @@ describe('the Suggested replies tree on the live board', () => {
     assert.equal(tree.announcement, 'STOP: none of these. Nothing was said or sent.');
   });
 
+  test('results that arrive in two searches keep their slots: the first one never moves when more land', () => {
+    const shared = { config: [config({ shareTextOnBoard: true })], questions: [question({ textShared: true, text: 'Smoke test: where to eat?' })] };
+    const maps = [
+      event(60, 'k60', 'search', 'started', 'maps', 400, { actor: 'Agent' }),
+      event(61, 'k61', 'search', 'ok', 'maps', 900, { countsJson: '{"needsWeb":true,"searches":1,"rowCount":1}', actor: 'Agent' }),
+    ];
+    const web = [
+      event(62, 'k62', 'search', 'started', 'web', 1_000, { actor: 'Agent' }),
+      event(63, 'k63', 'search', 'ok', 'web', 1_800, { countsJson: '{"needsWeb":true,"searches":1,"rowCount":2}', actor: 'Agent' }),
+    ];
+    const payloads = [
+      { eventId: 61n, questionId: 21n, stage: 'search', payloadJson: '{"rows":[{"id":"m1","source":"maps","title":"Smoke cafe","fetchedAt":"2026-10-24T13:00:00Z"}]}' },
+      {
+        eventId: 63n,
+        questionId: 21n,
+        stage: 'search',
+        payloadJson:
+          '{"rows":[{"id":"w1","source":"web","title":"Smoke guide","url":"https://example.com/a","fetchedAt":"2026-10-24T13:00:00Z"},{"id":"w2","source":"web","title":"Smoke list","url":"https://example.org/b","fetchedAt":"2026-10-24T13:00:00Z"}]}',
+      },
+    ];
+    const first = deriveReplyTree(boardRows(midScan({ ...shared, payloads, pipelineEvents: [...maps] })));
+    const both = deriveReplyTree(boardRows(midScan({ ...shared, payloads, pipelineEvents: [...maps, ...web] })));
+    const c0 = node(first, 'web:c0');
+    assert.equal(c0?.kind === 'child' && c0.title, 'Smoke cafe');
+    assert.equal(node(first, 'web:c1'), undefined);
+    assert.deepEqual(node(both, 'web:c0')?.rect, c0?.rect, 'the first result stays in slot 0');
+    assert.deepEqual(
+      both.nodes.filter((n) => n.kind === 'child' && n.region === 'web').map((n) => (n.kind === 'child' ? `${n.title} (${n.meta})` : '')),
+      ['Smoke cafe (Google Maps)', 'Smoke guide (example.com)', 'Smoke list (example.org)'],
+    );
+    assert.equal((node(both, 'web:hub') as { meta: string }).meta, '3 results from 2 searches · 1.4 s');
+  });
+
   test('sources in words: notes, the web by site, both, or drafted', () => {
     const base = { id: 'o', questionId: 'q', version: 1, rank: 1, text: 'x', kind: 'reply' as const, tone: null };
     assert.equal(sourceLine({ ...base, sources: [{ source: 'memory', fetchedAt: '' }] }, true), "From the person's notes");
