@@ -1,0 +1,16 @@
+{
+    "serviceId": "ipx9051gbc",
+    "host": "ipx9051gbc.mz92ku10jd.tsdb.cloud.timescale.com",
+    "port": 32869,
+    "caFile": "tiger-ca.crt",
+    "caSubject": "O=Timescale Inc, CN=ca.timescale.com",
+    "caSha256": "06:5A:75:0D:0D:64:F6:2D:AC:DC:97:9E:3B:83:D2:11:95:40:71:EA:59:B8:F3:40:7C:4E:87:CA:68:34:64:57",
+    "caNotAfter": "2027-10-20T15:43:39Z",
+    "leafSubject": "C=USA, O=Timescale Inc, CN=ipx9051gbc.mz92ku10jd.tsdb.cloud.timescale.com",
+    "leafSha256": "9F:20:7A:FD:B8:1C:1E:CE:5F:A3:57:B4:EC:CC:D2:3B:77:0A:EE:23:E0:54:2D:C4:1F:5E:EA:57:43:76:D3:5F",
+    "leafNotBefore": "2026-10-24T07:53:06Z",
+    "leafNotAfter": "2029-07-20T07:53:06Z",
+    "fetchedAt": "2026-10-24T08:04:00Z",
+    "fetchedWith": "openssl s_client -starttls postgres -showcerts (OpenSSL 3.5.9)",
+    "corroboration": "The leaf's notBefore equals the service's created time reported by the Tiger API over CA-verified HTTPS (2026-10-24T07:53:06.430368Z), to the second."
+}

@@ -212,3 +212,34 @@ jobs:
           echo "passing tests: $pass"
           test "$pass" -ge 112
       - run: npm run build
+
+  telemetry:
+    name: Tiger Data telemetry (schema, writer, stats, pinned TLS)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            spacetime/package-lock.json
+            telemetry/package-lock.json
+      - name: Install (the generated SpacetimeDB bindings resolve spacetimedb from spacetime/)
+        run: |
+          npm ci --prefix spacetime
+          npm ci --prefix telemetry
+      - name: Typecheck
+        working-directory: telemetry
+        run: npm run typecheck
+      - name: Tests (no network; a local TLS server with throwaway certificates)
+        working-directory: telemetry
+        run: |
+          status=0
+          npm test > test.log 2>&1 || status=$?
+          cat test.log
+          test "$status" -eq 0
+          grep -qE '^# fail 0$' test.log
+          pass=$(awk '/^# pass/ {print $3}' test.log)
+          echo "passing tests: $pass"
+          test "$pass" -ge 134

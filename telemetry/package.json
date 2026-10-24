@@ -1,0 +1,40 @@
+{
+    "name": "@say-when/telemetry",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "description": "NeuroLingo telemetry: content-free switch events, scan steps, picks and errand and call outcomes from SpacetimeDB into Tiger Data hypertables, with real-time continuous aggregates behind the dashboard numbers.",
+    "engines": {
+        "node": ">=22"
+    },
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "default": "./dist/index.js"
+        }
+    },
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json",
+        "typecheck": "tsc --noEmit",
+        "test": "tsx --test test/*.test.ts",
+        "test:live": "TIGER_IT=1 tsx --test test/live/*.test.ts",
+        "migrate": "tsx src/cli/migrate.ts",
+        "verify": "tsx src/cli/verify.ts",
+        "stats": "tsx src/cli/stats.ts",
+        "writer": "tsx src/cli/writer.ts",
+        "check:source": "tsx src/cli/check-source.ts",
+        "cert:check": "tsx src/cli/cert.ts check",
+        "cert:refresh": "tsx src/cli/cert.ts refresh"
+    },
+    "dependencies": {
+        "pg": "8.23.1",
+        "spacetimedb": "2.13.0"
+    },
+    "devDependencies": {
+        "@types/node": "^24.19.2",
+        "@types/pg": "8.23.1",
+        "tsx": "^4.23.15",
+        "typescript": "~6.0.3"
+    },
+    "license": "MIT"
+}

@@ -37,7 +37,7 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⛔ blocked
 | 5.3 | Screen 2, Agents at work: form errand and phone call, step by step | `web/` | Stephen | 🟡 | 5.1, 4.1 | Stephen, since Oct 23 10:20pm PT. Claude building. Reads `errand`, `call_request` |
 | 5.4 | Screen 3, Live conversation: question, options, pick, spoken reply | `web/` | Stephen | 🟡 | 5.1 | Stephen, since Oct 23 10:20pm PT. Claude building. Reads `option`, command events |
 | 5.5 | Partner phone view | `web/` | Stephen | 🟡 | 5.1 | Stephen, since Oct 23 10:20pm PT. Claude building |
-| 6.1 | Telemetry to Tiger Data (switch timing, latency) | `telemetry/` | Stephen | 🟡 | 1.1 | Stephen, since Oct 24 12:55am PT (D14). Free Tiger service `neurolingo-telemetry` created (TimescaleDB, us-east-1); Claude building the writer, which reads switch events from SpacetimeDB, so the decoder needs no Tiger code. Telemetry only, no app state |
+| 6.1 | Telemetry to Tiger Data (switch timing, latency) | `telemetry/` | Stephen | ✅ | 1.1 | Built: free Tiger service `neurolingo-telemetry` (TimescaleDB, us-east-1), schema verified live, pinned TLS, 134 tests. The writer reads switch events from SpacetimeDB, so the decoder needs no Tiger code. Not yet run during a real session. Telemetry only, no app state |
 | 7.1 | User consult and consent per surface | - | Leon | ⬜ | - | |
 | 7.2 | Demo script and video | `docs/` | Leon | ⬜ | 4.2 | |
 | 7.3 | Devpost writeup | - | Stephen | ⬜ | 7.2 | |
