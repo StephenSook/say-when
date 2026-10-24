@@ -47,7 +47,7 @@ The hand commands are imagined movements read over the motor cortex, so they onl
 
 | Part | Folder | State |
 |---|---|---|
-| Form-errand Actor | `apify/form-errand/` | Built and published: [Confirm-Gated Form Errand on the Apify Store](https://apify.com/stephensookra/confirm-gated-form-errand), build 0.1.4. 46 tests in CI. Verified on the platform with build 0.1.4 (Oct 24): preview, submit with the confirmed digest, and a repeat submit refused as a duplicate |
+| Form-errand Actor | `apify/form-errand/` | Built and published: [Confirm-Gated Form Errand on the Apify Store](https://apify.com/stephensookra/confirm-gated-form-errand), build 0.1.5 (Oct 24: the same code, its README now under the Eleven name). 46 tests in CI. Verified on the platform with build 0.1.4 (Oct 24): preview, submit with the confirmed digest, and a repeat submit refused as a duplicate |
 | Apify client (search, places, errand) | `apify/client/` | Built, 191 tests in CI |
 | Cartesia (speech to text, voice, dictionary, call) | `cartesia/` | Built, 158 tests in CI. Calls fail safe: every number on a public copy is masked, and any refusal-like phrase holds the contact until a person clears it. Live API smoke test pending |
 | Moss retrieval | `moss/` | Built, 75 tests in CI; first run against real Moss pending. Memory text stays private unless a memory is marked shareable |
