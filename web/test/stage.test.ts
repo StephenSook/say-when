@@ -3,7 +3,7 @@
  * the side column's block, run over a loop of the sample replay. Pure, no React and no browser.
  */
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import { buildConversationView, focusQuestion } from '../components/conversation/model';
@@ -12,7 +12,7 @@ import { eventsForQuestion, spokenReply } from '../lib/data/derive';
 import { LOOP_MS, replayRowsAt } from '../lib/data/replay';
 import type { CommandEvent, DataRows, InputKind } from '../lib/data/types';
 import { buildDecoderView, decoderLine, EARLIER_COUNT, NO_COMMAND_COUNTED, NO_COMMAND_YET } from '../lib/stage/decoder';
-import { brainSlotKind, parseSize, SIDE_COMPACT, SIDE_WIDE, stageLayout } from '../lib/stage/layout';
+import { brainSlotKind, isLoopbackHost, parseSize, SIDE_COMPACT, SIDE_WIDE, stageLayout } from '../lib/stage/layout';
 import { deriveReplyTree } from '../lib/tree/model';
 
 const START = Date.UTC(2026, 9, 25, 17, 30, 0);
@@ -84,25 +84,38 @@ describe('stage frame', () => {
 
 describe('brain slot', () => {
   test('without the live brain on this build, the slot is the decoder panel whatever the address says', () => {
-    for (const search of [null, '', '?brain=1', '?replay=1', '?brain=0']) assert.equal(brainSlotKind(false, search), 'decoder', String(search));
+    for (const search of [null, '', '?brain=1', '?replay=1', '?brain=0']) {
+      for (const host of [null, 'localhost', 'eleven-calhacks.vercel.app']) assert.equal(brainSlotKind(false, search, host), 'decoder', `${search} ${host}`);
+    }
   });
 
-  test('with the live brain on this build, the slot shows it unless the address says brain=0', () => {
-    assert.equal(brainSlotKind(true, ''), 'live-brain');
-    assert.equal(brainSlotKind(true, '?replay=1'), 'live-brain');
-    assert.equal(brainSlotKind(true, '?brain=0'), 'decoder');
-    assert.equal(brainSlotKind(true, '?replay=1&brain=0'), 'decoder');
-    assert.equal(brainSlotKind(true, 'brain=0'), 'decoder');
+  test('with the live brain on this build, the deployed site keeps the decoder panel unless the address says brain=1', () => {
+    assert.equal(brainSlotKind(true, '', 'eleven-calhacks.vercel.app'), 'decoder');
+    assert.equal(brainSlotKind(true, '?replay=1', 'eleven-calhacks.vercel.app'), 'decoder');
+    assert.equal(brainSlotKind(true, '?brain=1', 'eleven-calhacks.vercel.app'), 'live-brain');
+    assert.equal(brainSlotKind(true, '?replay=1&brain=1', 'eleven-calhacks.vercel.app'), 'live-brain');
+    assert.equal(brainSlotKind(true, '', null), 'decoder');
   });
 
-  test('the switch is one line: the slot is off on this build, and the comment holds the line that turns it on', () => {
+  test('on the laptop itself (a loopback address) the live brain shows, unless the address says brain=0', () => {
+    for (const host of ['localhost', '127.0.0.1', '127.0.1.1', '[::1]', 'LOCALHOST']) assert.equal(brainSlotKind(true, '', host), 'live-brain', host);
+    assert.equal(brainSlotKind(true, '?brain=0', 'localhost'), 'decoder');
+    assert.equal(brainSlotKind(true, 'replay=1&brain=0', '127.0.0.1'), 'decoder');
+    for (const host of ['10.0.20.117', 'localhost.example.com', '127.0.0.1.example.com', '1270.0.0.1']) assert.equal(isLoopbackHost(host), false, host);
+  });
+
+  test('the switch is one line: the active line is off or on, and the comment holds the on line', () => {
     const source = readFileSync(join(process.cwd(), 'components', 'stage', 'live-brain.ts'), 'utf8');
+    const lines = source.split('\n');
     const off = 'export const LIVE_BRAIN: ComponentType | null = null;';
-    const on = " * export const LIVE_BRAIN: ComponentType | null = dynamic(() => import('@/components/brain/BrainScreen'), { ssr: false, loading: () => null });";
-    assert.equal(source.split('\n').filter((line) => line === off).length, 1, 'the active line is the off line, once');
-    assert.equal(source.split('\n').filter((line) => line === on).length, 1, 'the comment holds the on line, once');
+    const on = "export const LIVE_BRAIN: ComponentType | null = dynamic(() => import('@/components/brain/BrainScreen'), { ssr: false, loading: () => null });";
+    const active = lines.filter((line) => line.startsWith('export const LIVE_BRAIN'));
+    assert.equal(active.length, 1, 'one active line');
+    assert.ok(active[0] === off || active[0] === on, `the active line is the off or the on line: ${active[0]}`);
+    assert.equal(lines.filter((line) => line === ` * ${on}`).length, 1, 'the comment holds the on line, once');
     assert.match(source, /^import dynamic from 'next\/dynamic';$/m, 'dynamic is already imported for the on line');
-    assert.match(source, /^import type \{ ComponentType \} from 'react';$/m);
+    // Switched on, the slot imports Screen 1's own screen, so that file must be on this build.
+    if (active[0] === on) assert.ok(existsSync(join(process.cwd(), 'components', 'brain', 'BrainScreen.tsx')), 'Screen 1 is on this build');
   });
 });
 

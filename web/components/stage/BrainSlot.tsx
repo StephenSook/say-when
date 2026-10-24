@@ -14,13 +14,15 @@ const noSubscribe = () => () => {};
 
 /** What fills the slot on this page. The server render and the first client render say 'decoder'. */
 export function useBrainSlotKind(): BrainSlotKind {
-  const search = useSyncExternalStore(
+  const location = useSyncExternalStore(
     noSubscribe,
-    () => window.location.search,
+    () => `${window.location.hostname} ${window.location.search}`,
     () => null,
   );
   // Before the address is known, the slot waits on the decoder panel, so the server and the client agree.
-  return search === null ? 'decoder' : brainSlotKind(LIVE_BRAIN !== null, search);
+  if (location === null) return 'decoder';
+  const [hostname = '', search = ''] = location.split(' ');
+  return brainSlotKind(LIVE_BRAIN !== null, search, hostname);
 }
 
 export function BrainSlot({ kind }: { kind: BrainSlotKind }) {

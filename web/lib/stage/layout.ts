@@ -4,9 +4,9 @@
  *
  * - `stageLayout` picks the frame for the window: the tree beside a side column on a projector (1920 x 1080) or a laptop
  *   (1280 x 720), and one column with the tree as a list on anything narrower.
- * - `brainSlotKind` picks what fills the brain slot: the live brain (Screen 1) once it is on this build, else the
- *   decoder panel built from the rows that exist today. `?brain=0` keeps the decoder panel, for a stage laptop that
- *   does not run the EEG bridge.
+ * - `brainSlotKind` picks what fills the brain slot: the decoder panel built from the rows that exist today, or the
+ *   live brain (Screen 1) once it is on this build, and then only where its local stream can be: on a loopback
+ *   address, or with `?brain=1`. `?brain=0` always keeps the decoder panel.
  */
 
 export type StageLayoutKind = 'wide' | 'compact' | 'stacked';
@@ -51,13 +51,24 @@ export function parseSize(key: string | null): { width: number; height: number }
 
 export type BrainSlotKind = 'live-brain' | 'decoder';
 
+/** The page runs on the laptop itself (where the EEG bridge listens on 127.0.0.1), not on the deployed site. */
+export function isLoopbackHost(hostname: string | null): boolean {
+  if (!hostname) return false;
+  const host = hostname.toLowerCase();
+  return host === 'localhost' || host === '[::1]' || host === '::1' || /^127(\.\d{1,3}){3}$/.test(host);
+}
+
 /**
  * What fills the brain slot. The live brain only when Screen 1 is on this build (`liveBrainOnBuild`, from
- * components/stage/live-brain.ts) and the address does not say `brain=0`. Everything else gets the decoder panel,
- * which shows only rows that exist (the input, the last command and when). Nothing here draws brain activity.
+ * components/stage/live-brain.ts), and then only on a loopback address or with `?brain=1`: Screen 1 opens a socket to
+ * the local EEG bridge as it loads, which on the deployed site finds nothing and fails. `?brain=0` always keeps the
+ * decoder panel. The decoder panel shows only rows that exist (the input, the commands and when); nothing here draws
+ * brain activity.
  */
-export function brainSlotKind(liveBrainOnBuild: boolean, search: string | null): BrainSlotKind {
+export function brainSlotKind(liveBrainOnBuild: boolean, search: string | null, hostname: string | null): BrainSlotKind {
   if (!liveBrainOnBuild) return 'decoder';
   const param = search ? new URLSearchParams(search.startsWith('?') ? search.slice(1) : search).get('brain') : null;
-  return param === '0' ? 'decoder' : 'live-brain';
+  if (param === '0') return 'decoder';
+  if (param === '1') return 'live-brain';
+  return isLoopbackHost(hostname) ? 'live-brain' : 'decoder';
 }
