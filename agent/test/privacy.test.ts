@@ -175,6 +175,9 @@ const ALLOWED_LABELS: ReadonlySet<string> = (() => {
         'preview bad response',
         'preview error',
         'yes no stock',
+        'claude draft',
+        'draft kept',
+        'search stopped',
     ]);
     const space = (code: string) => code.replace(/_/g, ' ');
     for (const step of ['memory recall', 'web index', 'web search']) {
@@ -200,7 +203,7 @@ const COUNT_KEYS: ReadonlySet<string> = new Set([
     'hitCount', 'memoryAllowed', 'mossOpen', 'instant', 'mossMs', 'needsWeb', 'searches', 'rowCount', 'partial', 'rows',
     'chunks', 'indexMs', 'skippedRows', 'memoryHits', 'webHits', 'optionCount', 'final', 'yesNo', 'attempts', 'claudeMs',
     'inputTokens', 'outputTokens', 'cacheReadTokens', 'fallbackUsed', 'droppedCalls', 'problems', 'readBack', 'unmatched',
-    'missingRequired', 'previewMs', 'written', 'empty', 'added', 'updated', 'payloadTrimmed',
+    'missingRequired', 'previewMs', 'written', 'empty', 'added', 'updated', 'payloadTrimmed', 'draft',
 ]);
 
 /** Checks every public event of a run: no content, only known labels and count keys. */
@@ -253,6 +256,30 @@ describe('privacy', () => {
         const jobId = h.db.addOptionsJob({ questionText: SECRET.question });
         await waitFor(() => h.db.job(jobId)?.status === 'done', 3_000, 'fast path');
         assert.equal(h.db.publishes[0]?.options[0]?.provenance, 'stock', 'the run took the fast path');
+        checkPublicEvents(h);
+        assert.deepEqual(leaks(h.log.text()), [], 'content reached the log');
+    });
+
+    it('keeps content out of the public events and the log on the draft path', async () => {
+        const h = harness({ draftFirst: true });
+        open = h;
+        h.memory.recallResult = {
+            hits: [memoryHit(1, { text: `Q: Lunch?\nA: ${SECRET.privateMemory}`, reply: SECRET.privateMemory })],
+            instant: [SECRET.privateMemory],
+            mossMs: 2,
+            wallMs: 3,
+        };
+        h.search.rows = [webRow(1)];
+        const release = h.search.hold();
+        h.api.reply({ answer_mode: 'pick', options: [reply({ text: `${SECRET.option} draft`, tone: 'warm', sources: ['m1'] }), reply({ text: 'Not today.', tone: 'calm' })] });
+        h.api.reply({ answer_mode: 'pick', options: [reply({ text: `${SECRET.option} web`, tone: 'warm', sources: ['w1'] }), reply({ text: 'Not today.', tone: 'calm' })] });
+        h.orchestrator.start();
+        // Not a yes or no question, so it is searched and drafted.
+        const jobId = h.db.addOptionsJob({ questionText: `Want lunch near ${SECRET.contactName} on Zorbleton Street` });
+        await waitFor(() => h.db.publishes.length === 1, 3_000, 'draft');
+        release();
+        await waitFor(() => h.db.job(jobId)?.status === 'done', 3_000, 'final');
+        assert.ok(h.db.events.some((e) => e.detail === 'claude draft'), 'the run drafted');
         checkPublicEvents(h);
         assert.deepEqual(leaks(h.log.text()), [], 'content reached the log');
     });

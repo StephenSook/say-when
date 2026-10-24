@@ -44,6 +44,7 @@ const SEARCH_NOTES: Record<PlanInput['search'], string> = {
     not_needed: 'No web search was needed for this question.',
     not_allowed: 'Web search is turned off, so there are no outside facts. Do not guess them.',
     failed: 'The web search failed, so there are no outside facts. Do not guess them.',
+    pending: 'A web search is still running, so there are no outside facts yet. Do not guess them.',
     done: '',
     none: '',
 };

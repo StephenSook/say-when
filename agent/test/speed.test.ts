@@ -1,14 +1,16 @@
-// The speed changes: the yes or no fast path (src/fastpath.ts).
+// The speed changes: the yes or no fast path (src/fastpath.ts) and draft first (src/jobs.ts, AGENT_DRAFT_FIRST).
 
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 
+import { ApifyHttpError } from '@say-when/apify-client';
+
 import { readConfig } from '../src/config.js';
 import { classifyYesNo, stockYesNo } from '../src/fastpath.js';
 import { validatePlan } from '../src/planner/validate.js';
-import { fourOptions, harness, waitFor, yesNo, type Harness } from './helpers.js';
+import { fourOptions, harness, LEON, memoryHit, reply, settle, waitFor, yesNo, type Harness } from './helpers.js';
 
 let open: Harness | null = null;
 afterEach(async () => {
@@ -189,6 +191,183 @@ describe('the yes or no fast path', () => {
     });
 });
 
+/** Two pick replies; `sources` are the refs each one cites. */
+function picks(texts: [string, string], sources: [string[], string[]] = [[], []]) {
+    return {
+        answer_mode: 'pick' as const,
+        options: [reply({ text: texts[0], tone: 'warm', sources: sources[0] }), reply({ text: texts[1], tone: 'calm', sources: sources[1] })],
+    };
+}
+
+const eventDetails = (h: Harness) => h.db.events.map((e) => `${e.stage} ${e.status} ${e.detail}`);
+
+describe('draft first', () => {
+    const LUNCH = 'Want to grab lunch nearby?';
+
+    it('publishes Claude\'s options from memory while the search runs, then the options with web results', async () => {
+        const h = start(harness({ draftFirst: true }));
+        const release = h.search.hold();
+        h.api.reply(picks(['Sure, somewhere quiet.', 'Not today.'], [['m1'], []]));
+        h.api.reply(picks(['Yes, the cafe opens at 9.', 'Not today.'], [['w1'], []]));
+        const jobId = h.db.addOptionsJob({ questionText: LUNCH });
+        await waitFor(() => h.db.publishes.length === 1, 3_000, 'draft published');
+        // The search has not answered yet: the first options do not wait for it.
+        const first = h.db.publishes[0];
+        assert.equal(first?.final, false, 'the draft keeps the job open');
+        assert.equal(first?.answerMode, 'pick');
+        assert.equal(first?.version, 1);
+        assert.deepEqual(first?.options.map((o) => o.text), ['Sure, somewhere quiet.', 'Not today.']);
+        assert.deepEqual(first?.options[0]?.memoryRefs, [memoryHit(1).id]);
+        assert.ok(first?.options.every((o) => o.sources.length === 0), 'a draft cites no web source');
+        assert.equal(h.search.calls.length, 1, 'the search is under way');
+        assert.equal(h.web.indexed.size, 0, 'nothing from the web yet');
+        assert.match(h.api.userMessage(0), /A web search is still running, so there are no outside facts yet\. Do not guess them\./);
+        assert.match(h.api.userMessage(0), /Web results: none\./);
+        assert.match(h.api.userMessage(0), /m1 \(past reply/);
+        assert.equal(h.db.job(jobId)?.status, 'claimed');
+
+        release();
+        await waitFor(() => h.db.job(jobId)?.status === 'done', 3_000, 'job done');
+        assert.equal(h.db.publishes.length, 2);
+        const final = h.db.publishes[1];
+        assert.equal(final?.final, true);
+        assert.equal(final?.version, 2, 'a newer version, which the module switches in at the end of the pass');
+        assert.equal(final?.options[0]?.sources[0]?.url, 'https://example.com/page-1');
+        assert.match(h.api.userMessage(1), /w1 \(web page/);
+        const draftEvent = h.db.events.find((e) => e.detail === 'claude draft' && e.status === 'ok');
+        assert.equal(JSON.parse(draftEvent?.countsJson ?? '{}').draft, true);
+        assert.ok(h.trace.indexOf('claude.create') < h.trace.indexOf('web.index'), `order was ${h.trace.steps.join(', ')}`);
+        assert.equal(h.web.forgotten.length, 1, 'the web passages are still forgotten');
+    });
+
+    it('makes the draft the final options when the search brings nothing, with no second plan', async () => {
+        const h = start(harness({ draftFirst: true }));
+        const release = h.search.hold();
+        h.search.error = new ApifyHttpError({ service: 'web-search', endpoint: 'POST /search', kind: 'timeout', status: null, attempts: 1 });
+        h.api.reply(picks(['Sure, somewhere quiet.', 'Not today.']));
+        const jobId = h.db.addOptionsJob({ questionText: LUNCH });
+        await waitFor(() => h.db.publishes.length === 1, 3_000, 'draft published');
+        release();
+        await waitFor(() => h.db.job(jobId)?.status === 'done', 3_000, 'job done');
+        assert.equal(h.api.calls.length, 1, 'Claude is asked once');
+        assert.deepEqual(
+            h.db.publishes.map((p) => [p.version, p.final, p.options.map((o) => o.text).join(' | ')]),
+            [
+                [1, false, 'Sure, somewhere quiet. | Not today.'],
+                [2, true, 'Sure, somewhere quiet. | Not today.'],
+            ],
+        );
+        assert.ok(eventDetails(h).includes('plan ok draft kept'));
+    });
+
+    it('makes a yes or no draft final at once and stops the search', async () => {
+        const h = start(harness({ draftFirst: true }));
+        h.search.hold();
+        h.api.reply(yesNo());
+        const jobId = h.db.addOptionsJob({ questionText: 'Is the pharmacy on Bancroft still open?' });
+        await waitFor(() => h.db.job(jobId)?.status === 'done', 3_000, 'job done');
+        assert.equal(h.db.publishes.length, 1, 'one version only: a second would start the prompt over');
+        assert.equal(h.db.publishes[0]?.answerMode, 'yes_no');
+        assert.equal(h.db.publishes[0]?.final, true);
+        assert.equal(h.api.calls.length, 1);
+        assert.equal(h.web.indexed.size, 0);
+        const details = eventDetails(h);
+        assert.ok(details.includes('search ok search stopped'), details.join(', '));
+        assert.ok(details.indexOf('search ok search stopped') < details.length, 'the search step is closed');
+    });
+
+    it('does not draft when memory-first options were published', async () => {
+        const h = start(harness({ draftFirst: true }));
+        h.memory.recallResult = {
+            hits: [memoryHit(1, { reply: 'Sure, somewhere quiet.' }), memoryHit(2, { reply: 'Not today.' })],
+            instant: ['Sure, somewhere quiet.', 'Not today.'],
+            mossMs: 2,
+            wallMs: 3,
+        };
+        h.api.reply(fourOptions());
+        const jobId = h.db.addOptionsJob({ questionText: LUNCH });
+        await waitFor(() => h.db.job(jobId)?.status === 'done');
+        assert.equal(h.api.calls.length, 1, 'no draft plan');
+        assert.deepEqual(h.db.publishes.map((p) => [p.final, p.options[0]?.provenance]), [
+            [false, 'memory'],
+            [true, 'model'],
+        ]);
+    });
+
+    it('does not draft a question that is not searched', async () => {
+        const h = start(harness({ draftFirst: true }));
+        h.api.reply(yesNo());
+        const jobId = h.db.addOptionsJob({ questionText: 'Are you tired?' });
+        await waitFor(() => h.db.job(jobId)?.status === 'done');
+        assert.equal(h.api.calls.length, 1);
+        assert.equal(h.db.publishes.length, 1);
+        assert.ok(!eventDetails(h).some((d) => d.includes('draft')));
+    });
+
+    it('is off unless it is turned on (the control): nothing is published while the search runs', async () => {
+        const h = start(harness());
+        const release = h.search.hold();
+        h.api.reply(fourOptions());
+        const jobId = h.db.addOptionsJob({ questionText: LUNCH });
+        await waitFor(() => h.search.calls.length === 1, 3_000, 'search started');
+        await settle(50);
+        assert.equal(h.db.publishes.length, 0);
+        assert.equal(h.api.calls.length, 0);
+        release();
+        await waitFor(() => h.db.job(jobId)?.status === 'done');
+        assert.equal(h.db.publishes.length, 1);
+    });
+
+    it('does not publish a draft that used memory once memory consent is withdrawn, and the final options leave memory out', async () => {
+        const h = start(harness({ draftFirst: true }));
+        const release = h.search.hold();
+        h.api.replyWith(() => {
+            // Revoked while Claude writes the draft.
+            h.db.revokeConsent('memory');
+            return picks(['Sure, somewhere quiet.', 'Not today.'], [['m1'], []]);
+        });
+        h.api.reply(picks(['Yes, the cafe opens at 9.', 'Not today.'], [['w1'], []]));
+        const jobId = h.db.addOptionsJob({ questionText: LUNCH });
+        await waitFor(() => h.api.calls.length === 1, 3_000, 'draft asked');
+        await settle(30);
+        release();
+        await waitFor(() => h.db.job(jobId)?.status === 'done', 3_000, 'job done');
+        assert.equal(h.db.publishes.length, 1, 'the draft was not published');
+        assert.equal(h.db.publishes[0]?.final, true);
+        assert.ok(h.db.publishes[0]?.options.every((o) => o.memoryRefs.length === 0 && o.provenance !== 'memory'));
+        assert.match(h.api.userMessage(1), /Memory items: none\./);
+        assert.match(h.log.text(), /no draft options; the options come after the search .*why=ConsentWithdrawnError/);
+    });
+
+    it('offers no call in a draft', async () => {
+        const h = start(harness({ draftFirst: true, contacts: [LEON] }));
+        const release = h.search.hold();
+        h.api.reply(picks(['Sure.', 'Not today.']));
+        h.api.reply(picks(['Yes, the cafe opens at 9.', 'Not today.'], [['w1'], []]));
+        const jobId = h.db.addOptionsJob({ questionText: LUNCH, recentErrandTitle: 'Care team request', recentErrandSentAtMs: Date.now() - 30_000 });
+        await waitFor(() => h.db.publishes.length === 1, 3_000, 'draft published');
+        assert.match(h.api.userMessage(0), /Contacts for a call: none, so no call options\./);
+        release();
+        await waitFor(() => h.db.job(jobId)?.status === 'done');
+        assert.match(h.api.userMessage(1), /Contacts for a call:\n/);
+    });
+
+    it('still ends with the options when the draft\'s planner call fails', async () => {
+        const h = start(harness({ draftFirst: true }));
+        const release = h.search.hold();
+        h.api.reply({ answer_mode: 'pick', options: [] });
+        h.api.reply(fourOptions());
+        const jobId = h.db.addOptionsJob({ questionText: LUNCH });
+        await waitFor(() => h.api.calls.length === 1, 3_000, 'draft asked');
+        await settle(30);
+        release();
+        await waitFor(() => h.db.job(jobId)?.status === 'done', 3_000, 'job done');
+        assert.equal(h.db.publishes.length, 1);
+        assert.equal(h.db.publishes[0]?.final, true);
+        assert.ok(eventDetails(h).includes('plan error claude invalid reply'));
+    });
+});
+
 describe('the speed settings', () => {
     const base = { ANTHROPIC_API_KEY: 'k' };
     const tokenFile = join(tmpdir(), 'neurolingo-agent-test-speed-token');
@@ -198,5 +377,10 @@ describe('the speed settings', () => {
         assert.equal(readConfig({ ...base, AGENT_YES_NO_FAST: 'off' }, tokenFile).config.speed.yesNoFast, false);
         const bad = readConfig({ ...base, AGENT_YES_NO_FAST: 'maybe' }, tokenFile);
         assert.ok(bad.problems.includes('AGENT_YES_NO_FAST must be on or off.'));
+    });
+
+    it('turns draft first on by default, and off with AGENT_DRAFT_FIRST=off', () => {
+        assert.equal(readConfig(base, tokenFile).config.speed.draftFirst, true);
+        assert.equal(readConfig({ ...base, AGENT_DRAFT_FIRST: 'off' }, tokenFile).config.speed.draftFirst, false);
     });
 });

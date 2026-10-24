@@ -21,8 +21,8 @@ export interface AgentConfig {
     timeZone: string;
     maxJobs: number;
     maxOptions: number;
-    /** AGENT_YES_NO_FAST (default on). */
-    speed: { yesNoFast: boolean };
+    /** AGENT_YES_NO_FAST and AGENT_DRAFT_FIRST (both on by default). */
+    speed: { yesNoFast: boolean; draftFirst: boolean };
 }
 
 export interface EnvCheck {
@@ -200,6 +200,7 @@ export function readConfig(env: Env, tokenFileDefault: string, hasAnthropicProfi
     const maxOptions = integer(env, 'AGENT_MAX_OPTIONS', DEFAULTS.maxOptions, 2, 4, checks, problems, 'options per question');
     // Speed (src/fastpath.ts). On by default: neither changes what leaves the room or how a pick is read.
     const yesNoFast = flag(env, 'AGENT_YES_NO_FAST', true, checks, problems, 'stock Yes and No at once for a clear yes or no question');
+    const draftFirst = flag(env, 'AGENT_DRAFT_FIRST', true, checks, problems, 'options from memory while the web search runs');
 
     return {
         config: {
@@ -214,7 +215,7 @@ export function readConfig(env: Env, tokenFileDefault: string, hasAnthropicProfi
             timeZone,
             maxJobs,
             maxOptions,
-            speed: { yesNoFast },
+            speed: { yesNoFast, draftFirst },
         },
         checks,
         problems,

@@ -132,7 +132,8 @@ export function placeQuery(question: string): string {
  * Steps 2 and 3. A question that needs no outside facts writes one `search ok skipped` event (when web search is
  * allowed at all) and returns at once. Without consent for web search there is no search and no search event:
  * the module refuses search events for such a job. `allowed` reads that consent as the module shows it now, and is
- * checked again right before the question goes out.
+ * checked again right before the question goes out. `stop` ends a search whose result can no longer be used; it
+ * closes its step with `search stopped` and returns no rows.
  */
 export async function searchStep(
     deps: RetrievalDeps,
@@ -141,6 +142,7 @@ export async function searchStep(
     check: QuestionClass,
     signal: AbortSignal,
     allowed: () => boolean = () => true,
+    stop?: AbortSignal,
 ): Promise<SearchOutcome> {
     if (!check.needsWeb) {
         if (row.webSearchAllowed && allowed()) {
@@ -164,8 +166,9 @@ export async function searchStep(
         return { status: 'not_allowed', rows: [], kind: null };
     }
     const deadline = AbortSignal.timeout(deps.searchTimeoutMs);
-    const combined = AbortSignal.any([signal, deadline]);
+    const combined = AbortSignal.any(stop ? [signal, deadline, stop] : [signal, deadline]);
     try {
+        if (stop?.aborted) throw new DOMException('stopped', 'AbortError');
         const result =
             kind === 'maps'
                 ? await deps.search.places(placeQuery(row.questionText), { signal: combined, near: deps.placesNear ?? undefined })
@@ -178,6 +181,11 @@ export async function searchStep(
         return { status: 'done', rows: result.rows, kind };
     } catch (error) {
         if (signal.aborted) throw new JobAbortedError();
+        if (stop?.aborted) {
+            // Stopped on purpose: its result could no longer be used (a yes or no draft went final).
+            await step.ok('search stopped', { counts: { needsWeb: true, searches: 1, rowCount: 0 } });
+            return { status: 'none', rows: [], kind };
+        }
         await step.error(searchErrorLabel(kind, error, deadline.aborted), { counts: { needsWeb: true, searches: 1, rowCount: 0 } });
         deps.log.warn('search failed; planning without outside facts', { job: row.jobId, search: kind, deadline: deadline.aborted });
         return { status: 'failed', rows: [], kind };

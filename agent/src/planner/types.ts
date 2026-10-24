@@ -47,8 +47,11 @@ export interface PlanInput {
     contacts: readonly CallContact[];
     /** The newest errand sent in the last 10 minutes, which is all a call may report. */
     recentErrand: { title: string; sentAtMs: number } | null;
-    /** What the search step did, so the planner knows whether outside facts are in the context. */
-    search: 'not_needed' | 'not_allowed' | 'done' | 'failed' | 'none';
+    /**
+     * What the search step did, so the planner knows whether outside facts are in the context. `pending`: a draft
+     * written while the search still runs (AGENT_DRAFT_FIRST), so there are no outside facts yet.
+     */
+    search: 'not_needed' | 'not_allowed' | 'done' | 'failed' | 'none' | 'pending';
     maxOptions: number;
     nowMs: number;
     timeZone: string;
