@@ -364,8 +364,9 @@ export async function runOptionsJob(row: AgentQueueRow, attempt: number, deps: J
         const searchStatus = consent.webSearchAllowed || search.status === 'not_needed' || search.status === 'none' ? search.status : 'not_allowed';
 
         // A draft is being read and the search brought nothing to add: the draft's options become the final
-        // version as they are, instead of a second plan that could only reword them.
-        if (draft && web.length === 0 && draft.stillAllowed()) {
+        // version as they are, instead of a second plan that could only reword them. Not when a recent errand is on
+        // the row: the draft never saw it or the contacts, so only the normal plan can offer a call about it.
+        if (draft && web.length === 0 && !recent && draft.stillAllowed()) {
             try {
                 await events.instant('plan', 'ok', 'draft kept', 0, { counts: { optionCount: draft.options.length, final: true } });
                 await publish(deps.db, job, draft.plan.answerMode, draft.options, true, draft.stillAllowed);

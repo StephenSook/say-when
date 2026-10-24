@@ -387,6 +387,43 @@ describe('draft first', () => {
         assert.match(h.api.userMessage(1), /Contacts for a call:\n/);
     });
 
+    it('plans again instead of keeping the draft when a call is possible, even if the search brought nothing', async () => {
+        // Review round 1 (Codex): the draft never sees contacts or the recent errand, so keeping it lost the call option.
+        const h = start(harness({ draftFirst: true, contacts: [CARE_TEAM] }));
+        h.search.rows = [];
+        const release = h.search.hold();
+        h.api.reply(picks(['Not sure yet.', 'Not now.']));
+        h.api.reply({
+            answer_mode: 'pick',
+            options: [
+                reply({ text: 'Not now.', tone: 'calm' }),
+                { text: 'Call the care team about it.', kind: 'call', tone: 'warm', laugh: false, sources: [], errand: null, call: { contact_id: 'care_team' } },
+            ],
+        });
+        const jobId = h.db.addOptionsJob({ questionText: 'Who can you call about the pharmacy request?', recentErrandTitle: 'Care team request', recentErrandSentAtMs: Date.now() - 30_000 });
+        await waitFor(() => h.db.publishes.length === 1, 3_000, 'draft published');
+        release();
+        await waitFor(() => h.db.job(jobId)?.status === 'done', 3_000, 'job done');
+        assert.equal(h.api.calls.length, 2, 'the normal plan ran');
+        const final = h.db.publishes.at(-1);
+        assert.equal(final?.final, true);
+        assert.deepEqual(final?.options.map((o) => o.kind), ['reply', 'call']);
+        assert.ok(!eventDetails(h).includes('plan ok draft kept'));
+    });
+
+    it('still keeps the draft when the search brought nothing and no call is possible (the control)', async () => {
+        const h = start(harness({ draftFirst: true, contacts: [CARE_TEAM] }));
+        h.search.rows = [];
+        const release = h.search.hold();
+        h.api.reply(picks(['Not sure yet.', 'Not now.']));
+        const jobId = h.db.addOptionsJob({ questionText: 'Who can you call about the pharmacy request?' });
+        await waitFor(() => h.db.publishes.length === 1, 3_000, 'draft published');
+        release();
+        await waitFor(() => h.db.job(jobId)?.status === 'done', 3_000, 'job done');
+        assert.equal(h.api.calls.length, 1);
+        assert.ok(eventDetails(h).includes('plan ok draft kept'));
+    });
+
     it('still ends with the options when the draft\'s planner call fails', async () => {
         const h = start(harness({ draftFirst: true }));
         const release = h.search.hold();
