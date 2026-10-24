@@ -114,7 +114,7 @@ Consent and timing:
 ```bash
 spacetime call --no-config --server maincloud say-when-dev grant_consent errand care_team_request owner_cli "demo form"
 spacetime call --no-config --server maincloud say-when-dev grant_consent board_text "" owner_cli ""
-spacetime call --no-config --server maincloud say-when-dev set_timing '{"response_window_ms":4000}'
+spacetime call --no-config --server maincloud say-when-dev set_timing '"{\"response_window_ms\":4000}"'
 ```
 
 The commands above name `say-when-dev`; for the demo, the same commands name `say-when-demo`.
