@@ -6,6 +6,9 @@
  * phone view (/partner) gets only the replay banner; it draws its own top row. The station and the
  * speaker (/station, /speaker) get a bare frame: they draw their own top row from their own role
  * connection, and the board source never starts there (lib/routes.ts, docs/station.md 1.6).
+ * The judge page (/judge, PLAN 5.8) keeps the dashboard header but is a reading page: no connection
+ * gate, no dimming, no safety banner or connection line, so it shows even when the live data cannot
+ * connect. A quiet "For judges" link sits at the end of the tabs row on every dashboard.
  *
  * Every frame renders the page's <main id="main">, so a screen must not render another <main>.
  */
@@ -14,10 +17,11 @@ import { useEffect, type ReactNode } from 'react';
 import { cx } from '@/lib/cx';
 import { useConnection, useReplayParam } from '@/lib/data/provider';
 import { withReplayParam } from '@/lib/data/source-mode';
-import { isPhoneRoute, isRolePageRoute } from '@/lib/routes';
+import { isJudgeRoute, isPhoneRoute, isRolePageRoute } from '@/lib/routes';
 import { ConnectionChip } from './ConnectionChip';
 import { ConnectionGate, ConnectionLine } from './ConnectionLine';
 import { HeadsetChip } from './HeadsetChip';
+import { JudgeLink } from './JudgeLink';
 import { ReplayBanner } from './ReplayBanner';
 import { SafetyBanner } from './SafetyBanner';
 import { TABS, Tabs } from './Tabs';
@@ -46,8 +50,11 @@ function BareFrame({ children }: { children: ReactNode }) {
 }
 
 function DashboardFrame({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
   const conn = useConnection();
   useScreenKeys();
+  // The judge page reads the same with or without a connection, so it is never gated or dimmed.
+  const readingPage = isJudgeRoute(pathname);
   return (
     <>
       <a className={styles.skip} href="#main">
@@ -55,17 +62,20 @@ function DashboardFrame({ children }: { children: ReactNode }) {
       </a>
       <ReplayBanner />
       <header className={styles.header}>
-        <span className={styles.brand}>NeuroLingo</span>
-        <Tabs className={styles.tabs} />
+        <span className={styles.brand}>Eleven</span>
+        <div className={styles.nav}>
+          <Tabs className={styles.tabs} />
+          <JudgeLink className={styles.judgeLink} />
+        </div>
         <div className={styles.chips}>
           <ConnectionChip />
           <HeadsetChip />
         </div>
       </header>
-      <SafetyBanner />
-      <ConnectionLine />
-      <main id="main" tabIndex={-1} className={cx(styles.main, conn.dimmed && styles.dimmed)}>
-        <ConnectionGate>{children}</ConnectionGate>
+      {readingPage ? null : <SafetyBanner />}
+      {readingPage ? null : <ConnectionLine />}
+      <main id="main" tabIndex={-1} className={cx(styles.main, !readingPage && conn.dimmed && styles.dimmed)}>
+        {readingPage ? children : <ConnectionGate>{children}</ConnectionGate>}
       </main>
     </>
   );

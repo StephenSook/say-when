@@ -1,4 +1,4 @@
-# NeuroLingo station, speaker and partner asking: the design
+# Eleven station, speaker and partner asking: the design
 
 For PLAN rows 5.6 (station page), 5.7 (speaker page) and 5.5 (the partner phone's asking flow). Design only: nothing in this doc has been built, installed or run. A build team starts from it.
 
@@ -160,7 +160,7 @@ One focus: what is in the earpiece now. Tokens and words from `docs/ui.md`.
 
 ```
 +--------------------------------------------------------------------------------------------+
-| NeuroLingo station    (o Live)  (Decoder healthy)  (Earpiece on)  (Voice ready)            |
+| Eleven station    (o Live)  (Decoder healthy)  (Earpiece on)  (Voice ready)            |
 +--------------------------------------------------------------------------------------------+
 | Keyboard test input. These are key presses, not headset signals.     (keyboard mode only)  |
 +--------------------------------------------------------------------------------------------+
@@ -349,7 +349,7 @@ What each command does in each state is the module's decision table (`docs/space
 - The Free plan allows 2 TTS contexts at once per account (`cartesia/README.md`, from Cartesia's docs, not run). The station uses 1 and the speaker uses 1, so that is the whole budget. Never open a second station or speaker tab. Whether Managed Agent calls count against it is **UNVERIFIED**.
 - `voiceProfile()` defaults: Skylar (assistant voice) for prompts and read-backs at the person's pace, Tessa (reply voice) for options and replies. The station's setup screen keeps two speeds in `localStorage` (`assistantSpeed` 0.6 to 1.5, `optionSpeed` 0.6 to 1.5 or unset); changing one empties the phrase cache, because speed is part of its key (**checked**: `PhraseCache.key`).
 - **Tones:** each option is `utterance({ kind: 'option', text, tone, laugh }, profile)`. The planner gives each option its own tone from `neutral`, `calm`, `warm`, `sad`, `firm` (four options, four different tones; **checked**: `agent/README.md` strict checks), mapped to Sonic emotions (`warm` to `content`, `firm` to `angry`; **checked**). An unknown tone sends no emotion. Emotion is Beta and has had no listening test (**UNVERIFIED**).
-- **Pronunciation dictionary:** pass `NEXT_PUBLIC_CARTESIA_DICT_ID` when set (an id, not a secret: `cartesia/README.md`). No dictionary exists yet (`dict:sync` has not run), so leave it unset until one does. Without it, names may be said wrong; nobody has heard Sonic say "NeuroLingo" (PLAN row 3.5).
+- **Pronunciation dictionary:** pass `NEXT_PUBLIC_CARTESIA_DICT_ID` when set (an id, not a secret: `cartesia/README.md`). No dictionary exists yet (`dict:sync` has not run), so leave it unset until one does. Without it, names may be said wrong; nobody has heard Sonic say "Eleven" (PLAN row 3.5).
 - **Word timestamps:** every clip carries `words` (**checked**: `add_timestamps: true`). While an option or read-back plays, the station screen marks `wordAt(clip.words, out.positionMs())` on each animation frame, only while sharing is on. The same timings, as numbers only, go to the module for the board (`report_word_timings`, below). Whether later timestamps count from the clip start is **UNVERIFIED** (`cartesia/README.md` item 9).
 
 **Two outputs and the chimes** (**design**): `optionsOut = new AudioOut(ctx)` for options and read-backs; `promptOut = new AudioOut(ctx)` for stock phrases; chimes and command ticks are short `OscillatorNode` beeps straight into `ctx.destination`, so they mix over speech instead of cutting it. `AudioOut.play()` stops whatever that output was playing (**checked**), which is why options and prompts use different outputs.
@@ -512,7 +512,7 @@ STOP during a signal pause turns it into a deliberate Stop pause, which needs YE
 
 **What it does:** says the newest released reply aloud in the room, once, then records it with `reply_spoken`. It never sees options (**checked**: `my_session` gives a Speaker only `reply = { question_id, text, tone, laugh, released_at }` for the newest Released question).
 
-**Start:** pairing (1.2), the voice check with `tts`, then a Start room voice button (the click starts the `AudioContext`, 5.3). A Test voice link plays "This is the NeuroLingo room voice." aloud so the operator can set the volume.
+**Start:** pairing (1.2), the voice check with `tts`, then a Start room voice button (the click starts the `AudioContext`, 5.3). A Test voice link plays "This is the Eleven room voice." aloud so the operator can set the volume.
 
 **Saying a reply** (**design**):
 
@@ -528,7 +528,7 @@ STOP during a signal pause turns it into a deliberate Stop pause, which needs YE
 
 ```
 +----------------------------------+
-| NeuroLingo room voice   (o Live) |
+| Eleven room voice   (o Live) |
 |                                  |
 | Said out loud                    |
 | "<reply words: sharing on only>" |   --text-lead, current word marked
@@ -583,7 +583,7 @@ listen({
 | `ok: false`, `error` (token, socket, Ink-2) | "Speech to text is not working. Type your question." Show the error code in a tooltip only |
 | `ok: true`, reason `timeout` | send what was heard; also end the hold on screen (pass `disabled` while sending, which ends the hold, **checked** `HoldToAsk`) |
 
-- **Keyterms:** `buildKeyterms(['NeuroLingo', 'Cal Hacks', 'care team'])`. Household names belong in keyterms (`cartesia/README.md`), but they live in a private lexicon file, and a list in the page would ship names in a public bundle. No household names in v1 (**design**; open question O7).
+- **Keyterms:** `buildKeyterms(['Eleven', 'Cal Hacks', 'care team'])`. Household names belong in keyterms (`cartesia/README.md`), but they live in a private lexicon file, and a list in the page would ship names in a public bundle. No household names in v1 (**design**; open question O7).
 - **The token:** minted per hold by the module, never stored. The session is at most 30 s, so it ends long before its 60 s token would (whether Cartesia cuts an open socket at expiry is **UNVERIFIED** and does not matter here).
 - **Two microphone users:** the existing level meter opens the mic itself (**checked**: `micMeter.ts`) and `listen` opens it again through `MicCapture`. Two streams on one phone are **UNTESTED** (5.4). If they clash, stop the meter while listening and show a static "Listening".
 - **iOS risk:** `MicCapture` creates its `AudioContext` after awaiting `getUserMedia`, outside the press (**checked**: `cartesia/src/stt.ts`). Safari may keep that context suspended (**UNTESTED**, 5.4). The fix, if the test fails: pass `audio:` (an `AudioSource`, **checked** in `ListenOptions`) built from an `AudioContext` created inside the press, with cartesia's own `Downsampler`, `PcmChunker` and `floatToPcm16`.
@@ -836,7 +836,7 @@ Three tracks run in parallel after a short shared start. All files are in `web/`
 12. Every row of the session in `gesture_log` has `source = key`. `curl -s https://maincloud.spacetimedb.com/v1/database/say-when-dev/route/stats` shows the picks. If module v2 is published and the run was voiced: one `word_timing` row per read, `spacetime sql --no-config --server maincloud say-when-dev "SELECT step_seq, option_id FROM word_timing WHERE session_id = <N>"`.
 13. End session. Revoke the test devices afterwards if they will not be reused.
 
-**L1 result, Oct 24 about 8:00 to 8:16 AM PDT** (session 13, `keyboard-test`, silent mode because the module has no Cartesia key; station and phone in a browser on `localhost`; stand-in agent from `spacetime/scripts/watch-scan.ts`; made-up content): steps 1 to 7 and 9 to 13 pass (**measured**). The grace pick (step 6) landed 52 ms after option 3 began and took option 2 (`late_by_ms` 52). All 9 `gesture_log` rows have `source = key`. Step 10 was simulated by overriding `document.visibilityState`, because the browser tool keeps pages visible; the module paused with `headset_off` 43 ms after the hide and resumed 3.53 s after the page was visible again. Step 11: the reload paused with `headset_off` 65 ms later (the unload sends an unhealthy beat first) and the silent checkbox had to be ticked again before Continue. Step 8 **fails in silent mode by design**: there is no read-back voice, so the module stopped the errand with `readback_not_finished` after 30 s and a C press gave `ignored:readback_not_done`. Rerun step 8, the speaker in step 5 and the `word_timing` check in step 12 once the key is set. The run found one bug, fixed with tests: a failed read-back stayed in the station's status line after the module had stopped its errand. Still open from the run: W1 (the board labels key presses as headset commands), the status words "Waiting for confirm" and "Not started" shown during an idle session, the veto headline for a yes or no NO, and the session label missing after a reload.
+**L1 result, Oct 24 about 8:00 to 8:16 AM PDT** (session 13, `keyboard-test`, silent mode because the module has no Cartesia key; station and phone in a browser on `localhost`; stand-in agent from `spacetime/scripts/watch-scan.ts`; made-up content): 11 of 13 steps pass (**measured**): 1 to 4, 6, 7 and 9 to 13; step 5 passes except its speaker check, which was not run (no voice); step 8 fails (below). The grace pick (step 6) landed 52 ms after option 3 began and took option 2 (`late_by_ms` 52). All 9 `gesture_log` rows have `source = key`. Step 10 was simulated by overriding `document.visibilityState`, because the browser tool keeps pages visible; the module paused with `headset_off` 43 ms after the hide and resumed 3.53 s after the page was visible again. Step 11: the reload paused with `headset_off` 65 ms later (the unload sends an unhealthy beat first) and the silent checkbox had to be ticked again before Continue. Step 8 **fails in silent mode by design**: there is no read-back voice, so the module stopped the errand with `readback_not_finished` after 30 s and a C press gave `ignored:readback_not_done`. Rerun step 8, the speaker in step 5 and the `word_timing` check in step 12 once the key is set. The run found one bug, fixed with tests: a failed read-back stayed in the station's status line after the module had stopped its errand. Fixed since, the same morning: W1 (the board labelled key presses as headset commands), the status words "Waiting for confirm" and "Not started" during an idle session, and the veto headline for a yes or no NO ("Answered no"). Still open: the session label missing after a reload.
 
 **L2, speaker:** with the key set, one reply is said once; a second Speaker tab shows the two-speaker warning; a speaker reloaded within 20 s of a release says it; after 20 s it shows Missed.
 
@@ -855,7 +855,7 @@ Three tracks run in parallel after a short shared start. All files are in `web/`
 - Imagined fist squeezes as commands unless the wearer passed `docs/brain-mode-test.md` today. Never "thought commands", "mind control" or "it reads what they want" (the wording rule in that file).
 - Any latency: command to pick, pick to the reply in the room, earpiece start lag, speech to text time. Measure on venue Ethernet with the wearer, then quote the measured number with how it was measured.
 - That the module mints the voice tokens, until the key is set and one real mint has worked (`docs/spacetime.md` 8).
-- That Sonic says "NeuroLingo" or the household's names right, that the pronunciation dictionary is on, or that the tones sound like their names: none has been heard.
+- That Sonic says "Eleven" or the household's names right, that the pronunciation dictionary is on, or that the tones sound like their names: none has been heard.
 - That Ink-2 understood the partner, before L3 on the real phone.
 - That the earpiece is private, before 5.5.
 - That the station survives a 30-minute session or a hidden window, before 5.2 and L5.
@@ -872,7 +872,7 @@ Three tracks run in parallel after a short shared start. All files are in `web/`
 | # | Question | Blocks | Who |
 |---|---|---|---|
 | O1 | Port 8765 confirmed (Shashank, Oct 24 8:45 AM PDT, after the contract messages and the 250 ms health rule were sent to him). Still open: a first run of his decoder against the station (L4). `switch/` is empty (**checked**) | the headset path (not keyboard tests) | Shashank |
-| O2 | Publish `say-when-dev` with `CARTESIA_API_KEY` (`spacetime/README.md`, "Adding the Cartesia key") and check one real mint | every voice: earpiece, speaker, Ink-2. Without it only silent keyboard tests run | Stephen |
+| O2 | Key set Oct 24 about 9:05 AM PDT: `say-when-dev` and `say-when-demo` were both published with `CARTESIA_API_KEY` from the Keychain (length checked, value never printed). Still open: one real mint and a voiced run | every voice: earpiece, speaker, Ink-2. Without it only silent keyboard tests run | Stephen |
 | O3 | Result of Chrome test 5.1 on the EEG laptop | where the station is served (deployed https or `http://localhost:3000`) | first person with the laptop |
 | O4 | Approve the input labeling: session labels `<mode>-<purpose>` and W1 on the dashboards, and whether R1 lands before the Sat 8 PM schema freeze | showing any keyboard or switch session to judges | Stephen |
 | O5 | Closed Oct 24: Vercel project `neurolingo-web`, root `web/`, production alias `neurolingo-web.vercel.app`, reading `say-when-demo` | the deployed station, speaker and partner asking | Stephen |
@@ -936,7 +936,7 @@ All stock phrases use the assistant voice at the person's pace and are cached at
 | `tooLong` | That request is too long to read back. Nothing will be sent. |
 | menu items (reply voice, no tone) | I need something. / Send a request. / Call. / Say something else. (module text; `utterance` adds the full stop) |
 
-Speaker only: `testVoice`: This is the NeuroLingo room voice.
+Speaker only: `testVoice`: This is the Eleven room voice.
 
 **Chimes and ticks** (**design**; short sine beeps at low gain straight to `ctx.destination`, never through `AudioOut`):
 

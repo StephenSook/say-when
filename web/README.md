@@ -1,6 +1,6 @@
-# NeuroLingo web
+# Eleven web
 
-The live dashboard (Live data, Agents, Conversation) and the partner phone view for NeuroLingo, a screenless reply and errand assistant for a person who cannot speak or use their hands. A partner asks a question out loud; the system searches (Apify), recalls (Moss), drafts up to four options (Claude) and reads them into an earpiece (Cartesia); the person answers with a headset.
+The live dashboard (Live data, Agents, Conversation) and the partner phone view for Eleven, a screenless reply and errand assistant for a person who cannot speak or use their hands. A partner asks a question out loud; the system searches (Apify), recalls (Moss), drafts up to four options (Claude) and reads them into an earpiece (Cartesia); the person answers with a headset.
 
 Next.js 16 App Router, React 19, TypeScript and plain CSS Modules, with the design tokens from `docs/ui.md` in `app/globals.css`. The npm package keeps the name `@say-when/web` until the repo is renamed.
 
@@ -139,6 +139,7 @@ These pages pair as a role and call reducers, unlike the anonymous dashboards (`
 | `lib/station/`, `components/station/` | the station: the engine, the heard log, commands and resends, the decoder bridge, keys and the switch pattern, the heartbeat, the earpiece, read-backs, cues, staleness and the screen's words |
 | `lib/speaker/`, `components/speaker/` | the room voice: says each released reply once, then `reply_spoken` |
 | `lib/partner/`, `components/partner/AskArea.tsx`, `PairPhone.tsx` | asking from the phone: Hold to ask with Ink-2 and the typed box, one sender with a request id |
+| `app/judge/`, `components/judge/` | `/judge`, for judges: a three-minute route through the screens, each database's public stats route read live, and what is measured and what is not; every line comes from `components/judge/model.ts` and cites the doc it comes from |
 
 No token is ever put in a page address, a link, a log line, an error message or the screen.
 
@@ -152,7 +153,7 @@ The decoder runs on `ws://127.0.0.1:8765`. From an https page, Chrome 156 holds 
 
 For the live data: `test/board-map.test.ts` maps rows built with the generated binding types (`test/board-fixtures.ts`) and runs the screen models over them; `test/board-v2.test.ts` does the same for the module v2 rows (a speak step per read, word timings, picks only as select steps, option ids on errands and calls, a call's read-back, confirm window, stop command and hold, the pick through a pause); `test/board-recorded.test.ts` does the same over rows recorded from `say-when-dev` during a smoke session before module v2 (`test/fixtures/board-recorded.json`: made-up smoke content, identities zeroed), so older rows keep reading right; `test/spacetime.test.ts` checks the real bindings file subscribes to the ten tables and views and watches and reads each one; `test/module-bindings.test.ts` checks the bindings copy.
 
-For the paired pages: `test/role-storage.test.ts`, `role-calls`, `role-connection`, `role-pairing` and `role-device` (against fakes of the SDK builder and connection, `test/role-fakes.ts`), `test/voice-token.test.ts`, `voice-audio`, `device-model`, and `test/cartesia-copy.test.ts`, which fails while `lib/cartesia` differs from `cartesia/src`; `test/station-*.test.ts`, `speaker-engine`, `speaker-page`, `partner-ask` and `routes`.
+For the paired pages: `test/role-storage.test.ts`, `role-calls`, `role-connection`, `role-pairing` and `role-device` (against fakes of the SDK builder and connection, `test/role-fakes.ts`), `test/voice-token.test.ts`, `voice-audio`, `device-model`, and `test/cartesia-copy.test.ts`, which fails while `lib/cartesia` differs from `cartesia/src`; `test/station-*.test.ts`, `speaker-engine`, `speaker-page`, `partner-ask` and `routes`. `test/judge-page.test.ts` reads each cited doc and fails when a line's quote, date or numbers are not in the section it cites.
 
 ## Limits
 

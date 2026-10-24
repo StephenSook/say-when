@@ -30,8 +30,21 @@
   white-space: nowrap;
 }
 
+/* The tabs, then the quiet "For judges" link at the far end of the same row. */
+.nav {
+  display: flex;
+  align-items: center;
+  gap: var(--s6);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .tabs {
   min-width: 0;
+}
+
+.judgeLink {
+  margin-left: auto;
 }
 
 .chips {
@@ -89,11 +102,15 @@
     padding: var(--s1) 0;
   }
 
-  .tabs {
+  .nav {
     order: 3;
     width: 100%;
     gap: var(--s4);
     overflow-x: auto;
+  }
+
+  .tabs {
+    gap: var(--s4);
   }
 
   .main {

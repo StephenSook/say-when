@@ -1,0 +1,24 @@
+/* A quiet text link at meta size, 44 px tall to hit on a phone (docs/ui.md "Text link"). */
+.link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--fg-muted);
+  font-size: var(--text-meta);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: color var(--dur-fast) ease;
+}
+
+.link:hover {
+  color: var(--fg);
+}
+
+/* On the judge page itself: fg, weight 500 and the tabs' 2 px underline. */
+.current {
+  color: var(--fg);
+  font-weight: var(--weight-strong);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 8px;
+}
