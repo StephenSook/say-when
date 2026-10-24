@@ -210,7 +210,7 @@ jobs:
           grep -qE '^# fail 0$' test.log
           pass=$(awk '/^# pass/ {print $3}' test.log)
           echo "passing tests: $pass"
-          test "$pass" -ge 501
+          test "$pass" -ge 504
       - run: npm run build
 
   telemetry:

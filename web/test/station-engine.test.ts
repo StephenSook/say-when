@@ -250,6 +250,80 @@ describe('the station engine', () => {
     engine.stop();
   });
 
+  /** A silent keyboard session 5 that this station started and runs. */
+  async function runningSession() {
+    const paired = await pairedEngine();
+    paired.engine.chooseMode('keyboard');
+    paired.engine.setSilent(true);
+    paired.engine.startSession();
+    await flush();
+    paired.conn.db.mySession.set([sessionRow()]);
+    await flush();
+    assert.equal(paired.engine.getState().session.id, 5n);
+    assert.equal(paired.engine.getState().session.ownership, 'mine');
+    return paired;
+  }
+
+  test('a failed End session stops showing once the owner has ended that session (live run, Oct 24)', async () => {
+    const { engine, conn } = await runningSession();
+    conn.answer = async (name) => {
+      if (name === 'endSession') throw new Error('connection lost');
+    };
+    engine.endSession();
+    await flush();
+    await flush();
+    assert.match(engine.getState().session.error ?? '', /^Could not end the session/, 'shown while its session is still active');
+
+    // The owner ends it from the CLI: my_session empties.
+    conn.db.mySession.set([]);
+    await flush();
+    const s = engine.getState();
+    assert.equal(s.session.id, null);
+    assert.equal(s.session.error, null, 'the error belonged to a session that is no longer active');
+    const big = bigStatus(s, Date.now());
+    assert.equal(big.title, 'No session running');
+    assert.doesNotMatch(big.sentence ?? '', /Could not end/);
+    assert.equal(big.alert, false);
+    engine.stop();
+  });
+
+  test('an End session that fails after the owner already ended the session leaves no error and no ownership', async () => {
+    const { engine, conn } = await runningSession();
+    let fail: (error: unknown) => void = () => {};
+    conn.answer = (name) => (name === 'endSession' ? new Promise<void>((_resolve, reject) => (fail = reject)) : Promise.resolve());
+    engine.endSession();
+    // The owner's end_session lands first; the station's own call then comes back refused.
+    conn.db.mySession.set([]);
+    await flush();
+    fail(new SenderError('no active session'));
+    await flush();
+    await flush();
+    const s = engine.getState();
+    assert.equal(s.session.id, null);
+    assert.equal(s.session.error, null);
+    assert.equal(s.session.ownership, 'none');
+    assert.equal(bigStatus(s, Date.now()).title, 'No session running');
+    engine.stop();
+  });
+
+  test('a failed End session still shows while its session is the active one', async () => {
+    const { engine, conn } = await runningSession();
+    conn.answer = async (name) => {
+      if (name === 'endSession') throw new Error('connection lost');
+    };
+    engine.endSession();
+    await flush();
+    await flush();
+    // Another update of the same session row does not clear it.
+    conn.db.mySession.set([sessionRow({ lastGestureId: 'g1', lastGestureOutcome: 'ignored:idle' })]);
+    await flush();
+    const s = engine.getState();
+    assert.equal(s.session.id, 5n);
+    assert.equal(s.session.ownership, 'mine');
+    assert.match(s.session.error ?? '', /^Could not end the session: connection lost/);
+    engine.stop();
+  });
+
   test('the switch key is learned, and its presses are relayed as switch input', async () => {
     const { engine, conn, internals } = await pairedEngine();
     engine.chooseMode('switch');

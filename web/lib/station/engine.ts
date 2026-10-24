@@ -135,6 +135,8 @@ export class StationEngine {
   private ownership: Ownership = 'none';
   private startedLabel: string | null = null;
   private sessionError: string | null = null;
+  /** The session a "Could not end the session" error is about; null for a start error, which belongs to no session. */
+  private sessionErrorFor: bigint | null = null;
   private configRow: ConfigRow | null = null;
   private sessionRow: SessionRow | null = null;
   private scanView: ScanView | null = null;
@@ -475,6 +477,7 @@ export class StationEngine {
         this.ownership = 'none';
         this.device?.noteCallError(error);
         this.sessionError = `Could not start the session: ${callErrorText(error)}`;
+        this.sessionErrorFor = null;
         this.changed();
       },
     );
@@ -502,6 +505,7 @@ export class StationEngine {
     const conn = this.conn();
     if (!conn || this.sessionId === null) return;
     const was = this.ownership;
+    const ending = this.sessionId;
     this.ownership = 'ending';
     this.changed();
     conn.reducers.endSession({}).then(
@@ -509,9 +513,15 @@ export class StationEngine {
         this.sessionEnded();
       },
       (error: unknown) => {
-        this.ownership = was;
         this.device?.noteCallError(error);
+        // The session ended meanwhile (the owner ended it): nothing is left to end, and nothing to report.
+        if (this.sessionId !== ending) {
+          this.changed();
+          return;
+        }
+        this.ownership = was;
         this.sessionError = `Could not end the session: ${callErrorText(error)}`;
+        this.sessionErrorFor = ending;
         this.changed();
       },
     );
@@ -953,6 +963,11 @@ export class StationEngine {
     this.startedLabel = null;
     this.stale = false;
     if (!replaced) this.sessionId = null;
+    // A "Could not end the session" error is stale once its session is no longer the active one.
+    if (this.sessionErrorFor !== null && this.sessionErrorFor !== this.sessionId) {
+      this.sessionError = null;
+      this.sessionErrorFor = null;
+    }
     this.changed();
   }
 
