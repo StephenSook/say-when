@@ -119,7 +119,7 @@ export const dot = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 /* ---------- Words: few and short (docs/ui.md rule zero); the long version lives in the info dialog ---------- */
 
 export const LABELS = {
-  title: 'Live brain',
+  title: 'Brain',
   subtitle: 'Template brain, not a scan. Glow = 8-12 Hz rhythm quieting vs rest.',
   legendC3: 'C3 right-fist imagery (YES)',
   legendC4: 'C4 left-fist imagery (NO)',
@@ -130,8 +130,30 @@ export const LABELS = {
   muscle: 'Muscle detected. Brain readings paused.',
   headsetOff: 'Headset off. Nothing will be sent.',
   testFailed: 'Brain test failed. YES is a jaw clench today.',
-  sceneFailed: '3D view unavailable. Readings below are live.',
+  notConnected: "Decoder not connected. This view reads the EEG laptop's local decoder.",
+  synthetic: 'Synthetic test signal, not a measurement',
 } as const;
+
+/** The 3D view failed: say where the readings below come from, never "live" for a test signal or a replay. */
+export function sceneFailedText(source: VizMeta['source'] | null): string {
+  if (source === 'live') return '3D view unavailable. Readings below are from the headset.';
+  if (source === 'replay') return '3D view unavailable. Readings below are from a recording.';
+  if (source === 'synthetic') return '3D view unavailable. Readings below are a synthetic test signal.';
+  return '3D view unavailable.';
+}
+
+/**
+ * The page connects to the local decoder by itself only where a decoder can be: on the EEG laptop's own server
+ * (localhost, 127.0.0.1, ::1) or when asked with ?bridge=1 (or /stage's ?brain=1, which mounts this view on purpose).
+ * On the public site it waits for a click, so a judge's laptop never retries a missing decoder or meets Chrome's
+ * local-network prompt unasked.
+ */
+export function shouldAutoConnect(hostname: string, search: string): boolean {
+  const host = hostname.toLowerCase();
+  if (host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1' || host.endsWith('.localhost')) return true;
+  const params = new URLSearchParams(search);
+  return params.get('bridge') === '1' || params.get('brain') === '1';
+}
 
 export function caption(wearer: string | null): string {
   return wearer ? `Template brain, not ${wearer}'s brain or a scan.` : 'Template brain, not a scan.';
@@ -222,7 +244,7 @@ export function eventPillText(marker: VizMarker): string {
 
 /* ---------- The screen state ---------- */
 
-export type ScreenState = 'waiting' | 'no_signal' | 'headset_off' | 'baseline' | 'muscle' | 'measuring';
+export type ScreenState = 'idle' | 'waiting' | 'no_signal' | 'headset_off' | 'baseline' | 'muscle' | 'measuring';
 
 /** The one line on the stage, shown only when something needs attention. `status` picks the shared StatusMark. */
 export interface StateLine {
@@ -246,6 +268,8 @@ export interface BrainView {
   stateLine: StateLine | null;
   /** True when there is no rest baseline: the stage offers "Record". */
   needsBaseline: boolean;
+  /** True before the page has tried the local decoder: the stage offers "Connect". */
+  canConnect: boolean;
   c3: PatchView;
   c4: PatchView;
   /** For the info dialog. */
@@ -265,6 +289,8 @@ export interface BrainInput {
   contact?: Record<string, Contact> | null;
   /** The decoder said HEADSET_OFF (headsetOffNow). */
   headsetOff?: boolean;
+  /** The page has not tried the local decoder yet (the public site, before Connect). */
+  idle?: boolean;
 }
 
 const NO_READING: PatchView = { intensity: 0, value: null, valueText: 'no reading' };
@@ -291,6 +317,7 @@ export function headsetOffNow(markers: readonly VizMarker[], markerAt: readonly 
 export function classify(input: BrainInput): { state: ScreenState; scale: number; ageMs: number | null } {
   const { meta, mi, miAt, now } = input;
   const ageMs = miAt === null ? null : now - miAt;
+  if (input.idle) return { state: 'idle', scale: 0, ageMs };
   if (!input.connected || !meta) return { state: 'waiting', scale: 0, ageMs };
   if (!mi || ageMs === null || ageMs > STALE_MS) return { state: 'no_signal', scale: 0, ageMs };
   if (input.headsetOff) return { state: 'headset_off', scale: 0, ageMs };
@@ -326,11 +353,18 @@ export function buildBrainView(input: BrainInput): BrainView {
     laterality: state === 'measuring' && mi ? `Left vs right difference ${mi.laterality >= 0 ? '+' : '−'}${Math.abs(mi.laterality).toFixed(1)}` : null,
     frameAge: lastAt === null ? 'No frames yet' : `Frame age ${Math.round(Math.max(0, now - lastAt))} ms`,
   };
-  const base = { state, mode: modeBadge(connectedMeta), needsBaseline: !!connectedMeta && connectedMeta.baseline.state === 'none', details };
+  const base = {
+    state,
+    mode: modeBadge(connectedMeta),
+    needsBaseline: !!connectedMeta && connectedMeta.baseline.state === 'none',
+    canConnect: state === 'idle',
+    details,
+  };
 
   if (state !== 'measuring' || !mi) {
     let stateLine: StateLine;
-    if (state === 'waiting') stateLine = { status: 'working', text: 'Waiting for the headset' };
+    if (state === 'idle') stateLine = { status: 'stopped', text: LABELS.notConnected };
+    else if (state === 'waiting') stateLine = { status: 'working', text: 'Waiting for the headset' };
     else if (state === 'no_signal') stateLine = { status: 'failed', text: 'No signal', detail: ageMs === null ? 'No data yet' : `No data for ${Math.round(ageMs)} ms` };
     else if (state === 'headset_off') stateLine = { status: 'failed', text: LABELS.headsetOff };
     else if (state === 'baseline')

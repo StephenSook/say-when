@@ -91,10 +91,42 @@
   font-size: var(--text-title);
 }
 
+.state {
+  display: grid;
+  justify-items: start;
+  gap: var(--s2);
+}
+
 .stateLine {
   display: inline-flex;
   align-items: center;
   gap: var(--s3);
+}
+
+.connect {
+  min-height: 40px;
+  padding: 0 var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--control-bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text);
+  cursor: pointer;
+}
+
+.connect:hover {
+  background: var(--hover);
+}
+
+.connect:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.synthetic {
+  color: var(--fg-muted);
+  font-size: var(--text);
 }
 
 /* The decoder's guess, top right, for 4 s: 2 px border in the hand's color, a soft fill. Top center is the nose. */
@@ -153,7 +185,15 @@
   right: var(--s6);
   color: var(--fg-muted);
   font-size: var(--text-meta);
-  pointer-events: none;
+}
+
+.credit a,
+.details a {
+  color: inherit;
+}
+
+.details a {
+  color: var(--fg);
 }
 
 .strip {

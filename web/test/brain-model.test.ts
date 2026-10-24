@@ -20,6 +20,8 @@ import {
   patchIntensity,
   patchTargets,
   pctText,
+  sceneFailedText,
+  shouldAutoConnect,
   type BrainInput,
 } from '../lib/brain/model';
 import type { VizMarker, VizMeta, VizMi } from '../lib/brain/protocol';
@@ -223,5 +225,34 @@ describe('headset and contact', () => {
     assert.equal(view.c3.intensity, 0);
     assert.equal(view.c4.value, -2);
     assert.equal(patchTargets(input({ contact: { C3: 'off', C4: 'good' } })).c3, 0);
+  });
+});
+
+describe('connecting and labels by source', () => {
+  test('the page connects by itself only on the EEG laptop or with ?bridge=1', () => {
+    for (const host of ['localhost', '127.0.0.1', '[::1]', 'eeg.localhost', 'LOCALHOST']) assert.equal(shouldAutoConnect(host, ''), true, host);
+    for (const host of ['eleven-calhacks.vercel.app', 'neurolingo-web.vercel.app', '192.168.1.5', 'example.com']) assert.equal(shouldAutoConnect(host, ''), false, host);
+    assert.equal(shouldAutoConnect('eleven-calhacks.vercel.app', '?bridge=1'), true);
+    assert.equal(shouldAutoConnect('eleven-calhacks.vercel.app', '?bridge=0'), false);
+    assert.equal(shouldAutoConnect('eleven-calhacks.vercel.app', '?brain=1'), true, "/stage's opt-in");
+  });
+
+  test('before Connect the stage says the decoder is not connected and offers Connect, with nothing glowing', () => {
+    const view = buildBrainView(input({ idle: true, connected: false, meta: null, mi: null, miAt: null, lastAt: null }));
+    assert.equal(view.state, 'idle');
+    assert.equal(view.canConnect, true);
+    assert.deepEqual(view.stateLine, { status: 'stopped', text: "Decoder not connected. This view reads the EEG laptop's local decoder." });
+    assert.deepEqual(patchTargets(input({ idle: true })), { c3: 0, c4: 0 });
+    assert.equal(buildBrainView(input()).canConnect, false);
+  });
+
+  test('the title never says live, and the 3D fallback says where the readings come from', () => {
+    assert.equal(LABELS.title, 'Brain');
+    assert.equal(sceneFailedText('synthetic'), '3D view unavailable. Readings below are a synthetic test signal.');
+    assert.equal(sceneFailedText('replay'), '3D view unavailable. Readings below are from a recording.');
+    assert.equal(sceneFailedText('live'), '3D view unavailable. Readings below are from the headset.');
+    assert.equal(sceneFailedText(null), '3D view unavailable.');
+    assert.equal(LABELS.synthetic, 'Synthetic test signal, not a measurement');
+    for (const text of [LABELS.title, sceneFailedText('synthetic'), sceneFailedText('replay'), sceneFailedText(null)]) assert.doesNotMatch(text, /live/i);
   });
 });

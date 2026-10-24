@@ -31,6 +31,6 @@ describe('route rule', () => {
     const shell = readFileSync(join(process.cwd(), 'components', 'shell', 'Shell.tsx'), 'utf8');
     const provider = readFileSync(join(process.cwd(), 'lib', 'data', 'provider.tsx'), 'utf8');
     assert.match(shell, /if \(isRolePageRoute\(pathname\)\) return <BareFrame>/);
-    assert.match(provider, /if \(isRolePageRoute\(window\.location\.pathname\)\) return;/);
+    assert.match(provider, /if \(isRolePageRoute\(window\.location\.pathname\) \|\| isBrainRoute\(window\.location\.pathname\)\) return;/);
   });
 });

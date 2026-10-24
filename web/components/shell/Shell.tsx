@@ -98,7 +98,7 @@ function PhoneFrame({ children }: { children: ReactNode }) {
   );
 }
 
-/** Keys 1 to 4 switch screens, unless the person is typing or a dialog is open. */
+/** Keys 1 to 5 switch screens, unless the person is typing or a dialog is open. */
 function useScreenKeys() {
   const router = useRouter();
   const replayParam = useReplayParam();

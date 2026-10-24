@@ -12,7 +12,7 @@
  * ships in its own chunk and the browser fetches it only when the replay is on.
  */
 import { createContext, useContext, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
-import { isRolePageRoute } from '../routes';
+import { isBrainRoute, isRolePageRoute } from '../routes';
 import { describeConnection, type ConnectionInfo } from './connection';
 import { eventsForQuestion, latestOptions, latestQuestion, spokenReply, type SpokenReply } from './derive';
 import { createNoneSource, createPendingSource, type DataSource } from './source';
@@ -65,9 +65,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const choice = choiceFor(window.location.search);
     setReplayParam(choice.replayParam);
-    // The station and the speaker open their own role connection and never show board rows: start no source there
-    // and keep the pending one (docs/station.md 1.6; the EEG laptop has 8 GB).
-    if (isRolePageRoute(window.location.pathname)) return;
+    // The station and the speaker open their own role connection and never show board rows, and the brain (/brain)
+    // reads only the local decoder: start no source there and keep the pending one (docs/station.md 1.6; the EEG
+    // laptop has 8 GB).
+    if (isRolePageRoute(window.location.pathname) || isBrainRoute(window.location.pathname)) return;
     let cancelled = false;
     let started: DataSource | null = null;
     const use = (next: DataSource) => {

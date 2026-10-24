@@ -10,10 +10,10 @@
  * It reads only the local bridge on ws://127.0.0.1:8766. It never opens the station's channel and never touches
  * SpacetimeDB, so no EEG leaves this laptop.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Chip, CrossIcon, Dialog, ReplayIcon, StatusMark, TextLink } from '@/components/ui';
 import { cx } from '@/lib/cx';
-import { GUESS_SHOW_MS, LABELS, buildBrainView, caption, guessText, isJawCommand, sourceText } from '@/lib/brain/model';
+import { GUESS_SHOW_MS, LABELS, buildBrainView, caption, guessText, isJawCommand, sceneFailedText, shouldAutoConnect, sourceText } from '@/lib/brain/model';
 import { brainInputOf } from '@/lib/brain/stream';
 import { useVizStream } from '@/lib/brain/useVizStream';
 import { BandStrip } from './BandStrip';
@@ -21,9 +21,13 @@ import BrainScene from './BrainScene';
 import styles from './BrainScreen.module.css';
 
 /** Short credit on the stage; the full line is in the info dialog (tools/brain-asset/README.md). */
-export const MODEL_CREDIT_SHORT = 'Brain model: Human Reference Atlas (HuBMAP), CC BY 4.0';
-export const MODEL_CREDIT =
-  'Brain model: "3D Reference Organ for Brain, Male" v1.3 by Kristen Browne and Heidi Schlehlein, Human Reference Atlas (HuBMAP), via NIH 3D (NIAID). CC BY 4.0. Modified.';
+export const MODEL_CREDIT_SHORT = 'Brain model: Human Reference Atlas (HuBMAP),';
+export const MODEL_TITLE = '3D Reference Organ for Brain, Male';
+export const MODEL_DOI = 'https://doi.org/10.48539/HBM929.XKCL.339';
+export const LICENSE_URL = 'https://creativecommons.org/licenses/by/4.0/';
+
+/** One empty list for every render without meta, so the scene's raycasts and material are not rebuilt each time. */
+const NO_CHANNELS: string[] = [];
 
 function useReducedMotion(): boolean {
   const [reduced, setReduced] = useState(false);
@@ -37,27 +41,44 @@ function useReducedMotion(): boolean {
   return reduced;
 }
 
-/** ?wearer=Name personalizes the caption in the info dialog; ?bloom=0 turns the glow pass off on a slow laptop. */
-function usePageOptions(): { wearer: string | null; bloom: boolean } {
-  const [options, setOptions] = useState<{ wearer: string | null; bloom: boolean }>({ wearer: null, bloom: true });
+interface PageOptions {
+  wearer: string | null;
+  bloom: boolean;
+  /** Open the local decoder without a click: on the EEG laptop's own server, or with ?bridge=1. */
+  autoConnect: boolean;
+}
+
+/**
+ * ?wearer=Name personalizes the caption in the info dialog; ?bloom=0 turns the glow pass off on a slow laptop;
+ * ?bridge=1 connects to the local decoder on a non-local host.
+ */
+function usePageOptions(): PageOptions {
+  const [options, setOptions] = useState<PageOptions>({ wearer: null, bloom: true, autoConnect: false });
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    setOptions({ wearer: params.get('wearer')?.trim().slice(0, 40) || null, bloom: params.get('bloom') !== '0' });
+    setOptions({
+      wearer: params.get('wearer')?.trim().slice(0, 40) || null,
+      bloom: params.get('bloom') !== '0',
+      autoConnect: shouldAutoConnect(window.location.hostname, window.location.search),
+    });
   }, []);
   return options;
 }
 
 export default function BrainScreen() {
-  const { stream, now } = useVizStream();
+  const { wearer, bloom, autoConnect } = usePageOptions();
+  const { stream, now, started, connect } = useVizStream(autoConnect);
   const reducedMotion = useReducedMotion();
-  const { wearer, bloom } = usePageOptions();
   const [infoOpen, setInfoOpen] = useState(false);
   const [turned, setTurned] = useState(false);
   const resetRef = useRef<(() => void) | null>(null);
   const onTurned = useCallback(() => setTurned(true), []);
 
   const s = stream.state;
-  const view = buildBrainView(brainInputOf(s, now));
+  const view = buildBrainView(brainInputOf(s, now, !started));
+  const channelsKey = (s.meta?.channels ?? NO_CHANNELS).join(',');
+  const channels = useMemo(() => (channelsKey ? channelsKey.split(',') : NO_CHANNELS), [channelsKey]);
+  const source = s.meta?.source ?? null;
 
   const last = s.markers.length - 1;
   const marker = last >= 0 && now - s.markerAt[last] < GUESS_SHOW_MS && !isJawCommand(s.markers[last].command) && s.markers[last].command !== 'HEADSET_OFF' ? s.markers[last] : null;
@@ -101,13 +122,14 @@ export default function BrainScreen() {
       <section className={styles.stage} aria-label="Template brain with the C3 and C4 patches">
         <BrainScene
           stream={stream}
-          channels={s.meta?.channels ?? []}
+          channels={channels}
           c3Text={view.c3.valueText}
           c4Text={view.c4.valueText}
           reducedMotion={reducedMotion}
           bloom={bloom}
           onTurned={onTurned}
           resetRef={resetRef}
+          failedText={sceneFailedText(source)}
         />
         <div className={styles.state} role="status" aria-live="polite">
           {view.stateLine ? (
@@ -116,6 +138,12 @@ export default function BrainScreen() {
               {view.needsBaseline ? <TextLink onClick={() => stream.recordBaseline()}>Record</TextLink> : null}
             </span>
           ) : null}
+          {view.canConnect ? (
+            <button type="button" className={styles.connect} onClick={connect}>
+              Connect
+            </button>
+          ) : null}
+          {source === 'synthetic' ? <p className={styles.synthetic}>{LABELS.synthetic}</p> : null}
         </div>
         {marker ? (
           <p className={cx(styles.guess, guessSide === 'c3' && styles.guessC3, guessSide === 'c4' && styles.guessC4)} key={marker.id}>
@@ -127,7 +155,12 @@ export default function BrainScreen() {
             <TextLink onClick={() => resetRef.current?.()}>Reset view</TextLink>
           </span>
         ) : null}
-        <p className={styles.credit}>{MODEL_CREDIT_SHORT}</p>
+        <p className={styles.credit}>
+          {MODEL_CREDIT_SHORT}{' '}
+          <a href={LICENSE_URL} target="_blank" rel="noreferrer">
+            CC BY 4.0
+          </a>
+        </p>
       </section>
 
       <section className={styles.strip} aria-label="Change from rest by frequency band, decoder guesses and jaw muscle">
@@ -172,8 +205,24 @@ export default function BrainScreen() {
               </dd>
             </>
           ) : null}
+          {s.meta?.note ? (
+            <>
+              <dt>Bridge note</dt>
+              <dd>{s.meta.note}</dd>
+            </>
+          ) : null}
           <dt>Credit</dt>
-          <dd>{MODEL_CREDIT}</dd>
+          <dd>
+            Brain model:{' '}
+            <a href={MODEL_DOI} target="_blank" rel="noreferrer">
+              &quot;{MODEL_TITLE}&quot;
+            </a>{' '}
+            v1.3 by Kristen Browne and Heidi Schlehlein, Human Reference Atlas (HuBMAP), via NIH 3D (NIAID).{' '}
+            <a href={LICENSE_URL} target="_blank" rel="noreferrer">
+              CC BY 4.0
+            </a>
+            . Modified.
+          </dd>
         </dl>
       </Dialog>
     </div>
