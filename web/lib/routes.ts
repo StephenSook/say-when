@@ -21,9 +21,12 @@ export function isPhoneRoute(pathname: string | null): boolean {
   return isRoute(pathname, '/partner');
 }
 
-/** /station and /speaker: the bare frame, and no board source. */
+/**
+ * /station, /speaker and /try: the bare frame, and no board source. The try page (PLAN 5.11) opens its own station and
+ * board connections to the try database, never the demo's.
+ */
 export function isRolePageRoute(pathname: string | null): boolean {
-  return isRoute(pathname, '/station') || isRoute(pathname, '/speaker');
+  return isRoute(pathname, '/station') || isRoute(pathname, '/speaker') || isRoute(pathname, '/try');
 }
 
 /** /judge: the dashboard header, no connection gate, no safety banner (PLAN 5.8). */

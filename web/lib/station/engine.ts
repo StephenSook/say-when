@@ -36,7 +36,7 @@ import {
   type StorageLike,
 } from '../role/storage';
 import { contextLatencyMs, createAudioUnlock, type AudioUnlock, type ChimeName } from '../voice/audio';
-import { CommandSender, confirmDigest, type CommandInput } from './commands';
+import { CommandSender, confirmDigest, type CommandInput, type StationCommand } from './commands';
 import { CueSpeaker, cueAction, type CueLite } from './cues';
 import { DecoderBridge } from './decoder';
 import { Channel, Earpiece, type OptionRowLite, type ScanLite, type SynthJob } from './earpiece';
@@ -90,6 +90,8 @@ export interface StationEngineOptions {
   storage?: StorageLike | null;
   /** NEXT_PUBLIC_CARTESIA_DICT_ID, an id and not a secret; unset until a dictionary exists. */
   pronunciationDictId?: string;
+  /** More subscriptions on this connection, for a page that reads more than the station does (the try page). */
+  extraQueries?: RoleDeviceOptions<DbConnection>['queries'];
   /** For tests: the connection builder, the voice mint and the heartbeat tick. */
   builder?: RoleDeviceOptions<DbConnection>['builder'];
   mint?: RoleDeviceOptions<DbConnection>['mint'];
@@ -133,6 +135,8 @@ export class StationEngine {
 
   private sessionId: bigint | null = null;
   private ownership: Ownership = 'none';
+  /** Set while this station's own start_session is out; the next new session id is ours. */
+  private expectNewSession = false;
   private startedLabel: string | null = null;
   private sessionError: string | null = null;
   /** The session a "Could not end the session" error is about; null for a start error, which belongs to no session. */
@@ -293,7 +297,7 @@ export class StationEngine {
           role: 'station',
           settings: options_.settings,
           storage: this.storage,
-          queries: [tables.config, tables.scanState, tables.deviceStatus, tables.cueEvent, tables.mySession, tables.myOptions],
+          queries: [tables.config, tables.scanState, tables.deviceStatus, tables.cueEvent, tables.mySession, tables.myOptions, ...(options_.extraQueries ?? [])],
           attach: (conn) => this.attach(conn),
           onApplied: (conn) => this.readAll(conn),
           ...(options_.builder ? { builder: options_.builder } : {}),
@@ -456,13 +460,20 @@ export class StationEngine {
     this.warmPhrases(true);
   }
 
-  startSession(): void {
+  /**
+   * Start a session. The try page (PLAN 5.11) passes its own label and `replaceActive`: in the module's try sandbox a
+   * try whose station went quiet or ran past its time gives way, and the module (not this page) decides.
+   */
+  startSession(options: { label?: string; replaceActive?: boolean } = {}): void {
     const conn = this.conn();
-    if (!conn || !this.mode || this.sessionRuns() || this.sessionId !== null) return;
-    const label = sessionLabel(this.mode, this.purpose);
+    if (!conn || !this.mode || this.sessionRuns()) return;
+    if (this.sessionId !== null && !options.replaceActive) return;
+    const label = options.label ?? sessionLabel(this.mode, this.purpose);
     if (!SESSION_LABEL_RE.test(label)) return;
     this.ownership = 'starting';
     this.sessionError = null;
+    // The session id this start makes is ours, also when it replaces another one (readSession).
+    this.expectNewSession = true;
     this.changed();
     conn.reducers.startSession({ label }).then(
       () => {
@@ -475,6 +486,7 @@ export class StationEngine {
       },
       (error: unknown) => {
         this.ownership = 'none';
+        this.expectNewSession = false;
         this.device?.noteCallError(error);
         this.sessionError = `Could not start the session: ${callErrorText(error)}`;
         this.sessionErrorFor = null;
@@ -525,6 +537,15 @@ export class StationEngine {
         this.changed();
       },
     );
+  }
+
+  /**
+   * An on-screen button on the judge try page (PLAN 5.11): the same path as a key press in keyboard mode, recorded with
+   * source `button`, so nobody can mistake it for a headset signal. Ignored in any other mode.
+   */
+  press(command: StationCommand, onsetLocal: number = perfNow()): void {
+    if (this.mode !== 'keyboard') return;
+    this.relay({ command, gestureId: null, source: 'button', confidence: 1, onsetLocal, via: 'button' });
   }
 
   /** The word being read in the options channel now, for the screen's mark (sharing on only). */
@@ -616,7 +637,9 @@ export class StationEngine {
     if (id !== this.sessionId) {
       const had = this.sessionId !== null;
       this.sessionId = id;
-      if (had) this.sessionEnded(id !== null);
+      // The first new id after this station's own start is that session, not one that replaced ours.
+      if (this.expectNewSession && id !== null) this.expectNewSession = false;
+      else if (had) this.sessionEnded(id !== null);
     }
     if (row) {
       this.sender.noteOutcome(row.lastGestureId, row.lastGestureOutcome);

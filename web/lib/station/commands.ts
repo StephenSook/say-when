@@ -62,13 +62,13 @@ export interface CommandInput {
   command: StationCommand;
   /** The decoder's id when it passed the check; null for keys, the switch, or a replaced decoder id. */
   gestureId: string | null;
-  /** `key`, `switch`, or the decoder's own source (`imagery`, `jaw`, ...). */
+  /** `key`, `switch`, `button` (the try page's on-screen buttons), or the decoder's own source (`imagery`, `jaw`, ...). */
   source: string;
   /** 0 to 1. Keys and the switch send 1. */
   confidence: number;
   /** The onset on the station's clock (performance.now): the keydown, or the decoder's receive time minus its age. */
   onsetLocal: number;
-  via: 'decoder' | 'key' | 'switch';
+  via: 'decoder' | 'key' | 'switch' | 'button';
   /** The decoder sent an id the module would refuse, so a new one was used. */
   idReplaced?: boolean;
 }
