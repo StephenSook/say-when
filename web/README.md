@@ -17,7 +17,7 @@ npm run bindings    # after every spacetime generate: copies spacetime/bindings/
 npm run cartesia    # after any change in cartesia/src: copies the browser code into lib/cartesia
 ```
 
-Routes: `/live`, `/agents`, `/conversation` (also `/`), `/brain` (Screen 1, the live brain), `/replies` (Suggested replies, the tree of saved notes, web and drafting that grows from the pipeline rows), and `/partner` for the phone. Keys 1 to 5 switch the dashboard screens.
+Routes: `/live`, `/agents`, `/conversation` (also `/`), `/brain` (Screen 1, the live brain), `/replies` (Suggested replies, the tree of saved notes, web and drafting that grows from the pipeline rows), `/partner` for the phone, and `/try`, the judge try sandbox (below). Keys 1 to 5 switch the dashboard screens.
 
 ### Against the live database
 
@@ -169,6 +169,17 @@ A template brain in the standard EEG top view (nose up, C3 left, C4 right) with 
 - Options: `?wearer=Name` puts the wearer's name in the caption; `?bloom=0` turns the glow pass off on a slow laptop.
 - Code: rules and words in `lib/brain/model.ts`, message checks in `lib/brain/protocol.ts`, the client in `lib/brain/stream.ts`, the scene in `components/brain/`. Tests: `test/brain-*.test.ts`, including the left and right check.
 - The brain model is the Human Reference Atlas "Brain, Male" v1.3, licensed CC BY 4.0, credited on screen; how it was prepared is in `tools/brain-asset/README.md`.
+
+## The judge try sandbox (`/try`, PLAN 5.11)
+
+A judge runs Eleven from their own phone or laptop, with no headset and no setup: Start, type a question, watch the steps (heard, saved notes from Moss, the web search from Apify, drafting by Claude), see and hear the spoken options, and pick with on-screen YES, NO, CONFIRM and STOP. The page says so in its first line: "On-screen buttons stand in for the headset's YES, NO, CONFIRM and STOP." Keys Y, N, C and S work too on a laptop.
+
+- **Its own database.** `say-when-try` by default (`NEXT_PUBLIC_TRY_SPACETIMEDB_DB` overrides it, for example `say-when-try-dev` for a keyless test), never the demo's. The module's try sandbox there pairs the page's Station without the owner and ties the try to it, caps it (5 questions, 6 minutes, a few tries an hour) and lets a closed tab's try give way to the next judge (docs/spacetime.md 15).
+- **One identity.** The page is a Station: it starts the try with the label `try`, asks the question, relays each button with source `button` (never as a headset signal), and says the picked reply through the room voice engine from `/speaker`, reporting `reply_spoken` through its own station. No key reaches the page: the module mints 60 s voice tokens.
+- **Honest states.** With no voice key on the database the scan runs silently and the reply shows as "Picked. Voice is off, so it was not said out loud", never as said. With no agent online it says so. A cap shows its own "Try limit: ..." sentence; a busy database says someone else is trying.
+- **Shared on purpose.** The database's sharing toggle is on (the judge typed the question), and the page says so: "What you type shows on this sandbox's public board." The saved notes are made up and each reads "Sample note: ...".
+- Code: `app/try/`, `components/try/` (the wiring in `useTry.ts`), the view rules in `lib/try/model.ts`; `/try` is a bare role page in `lib/routes.ts`, so the demo board source never starts there. Tests: `test/try.test.ts`.
+- Checked live on `say-when-try-dev` with the stand-in agent and no keys (docs/spacetime.md 15.3). The keyed run (Claude, Apify, Moss, Cartesia) waits for the sidecar's keys on Render (`agent/README.md`, The try sandbox).
 
 ## Checks
 

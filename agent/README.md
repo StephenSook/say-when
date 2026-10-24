@@ -130,8 +130,23 @@ Names only; `.env.example` lists them all. Never commit real values.
 | `AGENT_MAX_OPTIONS` | options per question | 4 |
 | `AGENT_YES_NO_FAST` | the yes or no fast path | on; `off` sends every question to the planner |
 | `AGENT_DRAFT_FIRST` | draft options while the web search runs | off: the first options wait for the search and its plan; `on` drafts first (see the limit under Draft first) |
+| `AGENT_TRY` | the judge try sandbox (below) | off; it must be on for `say-when-try` and may be on only there (or `say-when-try-dev`) |
+| `AGENT_TRY_DAILY_CENTS`, `AGENT_TRY_QUESTIONS_PER_HOUR`, `AGENT_TRY_PARTNERS_PER_HOUR` | the sandbox's caps | 500 (5 USD a day by the estimates), 10 questions per judge page per hour, 12 judge pages per hour |
+| `AGENT_TOKEN` | the sidecar's identity, from the environment | not set: the token file is used. Set: nothing is read from or written to disk (a host with no lasting disk) |
+| `PORT` | `GET /healthz` | not set: no endpoint. Set: numbers and yes or no only (connected, paired, the sandbox's spending and counts) |
 
 Each errand form also needs an Errand consent row in the module for its `formKey`, and each call contact a Call consent row for its id; the module refuses the pick otherwise.
+
+## The try sandbox (PLAN 5.11)
+
+Judges run Eleven from `/try` on the `say-when-try` database (docs/spacetime.md 15). This sidecar serves it with `AGENT_TRY=on`, hosted on Render as the web service `eleven-try-agent` (workspace Stephen Projects, starter plan, auto deploy off, https://dashboard.render.com/web/srv-dbeil5brjlhs73fqo9v0). What try mode adds (`src/sandbox.ts`):
+
+- **It runs only where it should.** It refuses any database but `say-when-try` and `say-when-try-dev`, refuses calls, and refuses the demo's Moss memory (`MOSS_SESSION_NAME` must be set and not `say-when`). A try database refuses to run without try mode.
+- **Spending caps in front of every job**, checked after the claim and before any Claude call or search: a daily ceiling counted with fixed, conservative estimates (0.02 USD per plan, per search, per errand; 5 USD a day by default), questions per judge page per hour and judge pages per hour, for every options job whatever its origin. A job past a cap is failed with the code `try_limit`, which the module shows on the board and the try page puts in words. The counters live in this process (a restart resets them); the module's own caps live in the database and still hold.
+- **No saved replies.** Every Remember job is refused (the module does not make them in the sandbox either), so the sandbox's memory holds only five made-up sample notes, each starting "Sample note:", added at start and after every reopen, and shown on the try page as written.
+- `AGENT_TOKEN` and `PORT` as in Settings. Measured locally against `say-when-try-dev` with no Moss: the process starts in about a second, `/healthz` answers, and it holds about 160 MB.
+
+Render settings: build `cd apify/client && npm ci && npm run build && cd ../../moss && npm ci && npm run build && cd ../cartesia && npm ci && npm run build && cd ../spacetime && npm ci && cd ../agent && npm ci --include=dev`; start `mkdir -p /tmp/moss-try && cd agent && exec ./node_modules/.bin/tsx src/main.ts run`; plain settings already on the service: `NODE_VERSION=22`, `SPACETIMEDB_URI`, `SPACETIMEDB_DB=say-when-try`, `AGENT_TRY=on`, `AGENT_TRY_DAILY_CENTS=500`, `AGENT_CALLS=off`, `AGENT_ENV_FILES=off`, `AGENT_PLANNER_MODEL=claude-haiku-5-5`, `FORM_ERRAND_URL`, `AGENT_FORMS_FILE=forms.example.json`, `MOSS_SESSION_NAME=say-when-try`, `MOSS_SNAPSHOT_DIR=/tmp/moss-try`, `AGENT_MOSS_REOPEN=on`. The owner pastes the secrets on the service's Environment page: `ANTHROPIC_API_KEY`, `APIFY_TOKEN`, `MOSS_PROJECT_ID`, `MOSS_PROJECT_KEY`, and `AGENT_TOKEN` (the say-when-try Agent identity, paired Oct 24, kept in `~/.config/say-when/agent_token_say-when-try`). The voice key belongs to the module, not this service.
 
 ## What it writes where
 
