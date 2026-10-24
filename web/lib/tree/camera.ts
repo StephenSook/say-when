@@ -6,7 +6,7 @@
  *
  * No card is ever cut by the screen's edge: `cameraFraming` frames the target whole at the largest zoom where every
  * card is either fully on screen or fully off it, so the edge of the picture always falls in a gap between cards. A
- * card on the far side of a gap simply is not shown. When no zoom down to the floor allows that, it frames the
+ * card on the far side of a gap is left out whole. When no zoom down to the floor allows that, it frames the
  * target's tighter rectangle the same way, and only then falls back to centering it.
  */
 import type { Rect } from './layout';
