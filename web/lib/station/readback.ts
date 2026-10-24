@@ -189,6 +189,7 @@ export class Readback<Clip extends ClipLike = ClipLike> {
     }
 
     if (this.active) return;
+    this.clearSettled(errand, call);
     const next = readbackCandidate(errand, call);
     if (!next || this.finished.has(this.finishKey(next))) return;
     this.begin(next);
@@ -212,6 +213,19 @@ export class Readback<Clip extends ClipLike = ClipLike> {
     this.finished.clear();
     this.seenAt.clear();
     this.announced.clear();
+  }
+
+  /**
+   * A failed, too long or late read-back stays on screen while its errand or call still waits in Previewed or
+   * Prepared, and clears once the module has moved it on (it stops it with `readback_not_finished`), so the scan's
+   * own status shows again instead of the old failure for the rest of the session.
+   */
+  private clearSettled(errand: WorkLite | null, call: WorkLite | null): void {
+    const { phase, kind, id } = this.state;
+    if (phase !== 'failed' && phase !== 'too_long' && phase !== 'late') return;
+    const now = kind === 'errand' ? errand : kind === 'call' ? call : null;
+    if (now && now.id === id && now.status === readbackStatus(now.kind)) return;
+    this.set({ phase: 'idle', kind: null, id: null, windowStartedAt: null, message: null });
   }
 
   private finishKey(work: WorkLite): string {

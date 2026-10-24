@@ -56,7 +56,7 @@ class FakeOut {
   }
 }
 
-function harness(options: { report?: (attempt: number) => Promise<void>; clipMs?: number } = {}) {
+function harness(options: { report?: (attempt: number) => Promise<void>; clipMs?: number; synthThrows?: boolean } = {}) {
   const clock = fakeTimers(100_000);
   const out = new FakeOut();
   const channel = new Channel<ClipLike & { name?: string }>(out);
@@ -72,6 +72,7 @@ function harness(options: { report?: (attempt: number) => Promise<void>; clipMs?
     now: clock.now,
     synth: (text) => {
       texts.push(text);
+      if (options.synthThrows) throw new Error('The voice is not ready.');
       const done = new Promise<ClipLike & { name: string }>((resolve, reject) => {
         pending.push(resolve);
         cancels.push('');
@@ -237,6 +238,50 @@ describe('the read-back', () => {
     assert.deepEqual(h.out.plays, []);
     assert.equal(h.tooLong(), 1);
     assert.equal(h.rb.getState().phase, 'too_long');
+  });
+
+  test('a read-back that could not be voiced stays on screen while its errand waits, then clears once it moved on', async () => {
+    // L1 live run, Oct 24: with no voice the station said "Could not voice the read-back" for the rest of the
+    // session, hiding the scan's own status, after the module had already stopped the errand.
+    const h = harness({ synthThrows: true });
+    h.rb.update(errand(), null, 100_000);
+    assert.equal(h.rb.getState().phase, 'failed');
+    h.rb.update(errand(), null, 101_000);
+    assert.equal(h.rb.getState().phase, 'failed', 'still shown while the errand waits for its read-back');
+    assert.equal(h.texts.length, 1, 'not tried again');
+    h.rb.update(errand({ status: 'Stopped', reasonCode: 'readback_not_finished' }), null, 130_000);
+    assert.equal(h.rb.getState().phase, 'idle');
+    assert.equal(h.rb.getState().message, null);
+    assert.equal(h.rb.getState().id, null);
+    h.rb.update(null, null, 140_000);
+    assert.equal(h.rb.getState().phase, 'idle');
+  });
+
+  test('a too long or late read-back clears once its errand left Previewed', async () => {
+    const long = harness({ clipMs: 25_000 });
+    long.rb.update(errand(), null, 100_000);
+    long.clock.advance(10_000);
+    await long.synthesized();
+    assert.equal(long.rb.getState().phase, 'too_long');
+    long.rb.update(errand({ status: 'Stopped', reasonCode: 'readback_not_finished' }), null, 130_000);
+    assert.equal(long.rb.getState().phase, 'idle');
+
+    const late = harness({ report: () => Promise.reject(new SenderError('read-back deadline passed')) });
+    late.rb.update(errand(), null, 100_000);
+    await late.synthesized();
+    late.out.end();
+    await flush();
+    assert.equal(late.rb.getState().phase, 'late');
+    late.rb.update(null, null, 131_000);
+    assert.equal(late.rb.getState().phase, 'idle');
+  });
+
+  test('after a failed read-back, the next errand is read back as usual', async () => {
+    const h = harness({ synthThrows: true });
+    h.rb.update(errand(), null, 100_000);
+    assert.equal(h.rb.getState().phase, 'failed');
+    h.rb.update(errand({ id: 8n }), null, 101_000);
+    assert.equal(h.texts.length, 2, 'the new errand is tried');
   });
 
   test('a call is read back when no errand waits; an interrupted errand is said once', async () => {
