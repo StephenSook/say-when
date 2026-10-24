@@ -3,21 +3,43 @@ import './no-network.js';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
+import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import {
+    appendHoldRecord,
     CallConfigError,
+    clearHoldInFile,
     deleteCallData,
     Dialer,
     insideCallingHours,
     isUsableTimeZone,
+    loadCallLists,
     parseConsentList,
     parseDoNotCall,
+    parseHolds,
+    readHoldFile,
     REFUSALS,
     type CallLists,
     type CallSnapshot,
     type DialerConfig,
+    type HoldEntry,
+    type HoldRecord,
 } from '../src/call.js';
-import { checkAgentScript, heardOptOut, loadAgentScript, OPT_OUT_REPLY, OPT_OUT_REQUESTS, plainSpeech, PRODUCT_NAME, renderTemplate } from '../src/call-script.js';
+import {
+    checkAgentScript,
+    heardOptOut,
+    HOLD_TRIGGERS,
+    loadAgentScript,
+    OPT_OUT_REPLY,
+    PRODUCT_NAME,
+    REFUSAL_RULE,
+    renderTemplate,
+    speechWords,
+} from '../src/call-script.js';
 import { redact, type PipelineEvent } from '../src/events.js';
+import { dialerFromEnv } from '../src/server.js';
 import { isEmergencyNumber, spokenNumber, toUsE164 } from '../src/phone.js';
 import { fakeFetch, type FakeAnswer, type FetchCall } from './fakes.js';
 
@@ -72,20 +94,69 @@ interface Hooks {
     onNow?: () => void;
     onEvent?: (event: PipelineEvent) => void;
     onUpdate?: (snapshot: CallSnapshot) => void;
+    /** Runs before a hold record reaches the journal. */
+    onSaveHold?: (record: HoldRecord) => void;
+    /** Runs before the journal is read. */
+    onReadHolds?: () => void;
 }
 
-function harness(options: { now?: number; scenario?: Scenario; dnc?: string[]; consent?: string; config?: Partial<DialerConfig>; hooks?: Hooks } = {}) {
+/** A hold file kept in memory: the records in order, replayed with the same parseHolds the real file uses. */
+class Journal {
+    readonly records: HoldRecord[] = [];
+    holds(): Map<string, HoldEntry> {
+        return parseHolds(this.records.map((record) => JSON.stringify(record)).join('\n'));
+    }
+    actions(): string[] {
+        return this.records.map((record) => record.action);
+    }
+    /** What npm run call:clear-hold does, from outside the dialer. */
+    clearAll(contact: string): void {
+        for (const [number, entry] of this.holds()) {
+            if (entry.contact !== contact) continue;
+            this.records.push({ action: 'clear', id: `cli-${this.records.length}`, target: entry.id, contact, number, at: 'x', reason: 'cleared outside' });
+        }
+    }
+}
+
+interface HarnessOptions {
+    now?: number;
+    scenario?: Scenario;
+    dnc?: string[];
+    /** Numbers already on hold, each with its contact id. */
+    holds?: [string, string][];
+    consent?: string;
+    config?: Partial<DialerConfig>;
+    hooks?: Hooks;
+    /** Replaces the harness's hold saver, for example one that throws. */
+    saveHold?: (record: HoldRecord, journal: Journal) => void;
+    /** A journal shared with another dialer, as two processes share one hold file. */
+    journal?: Journal;
+    /** Leave out readHolds, as a Dialer built without a hold file would. */
+    noRead?: boolean;
+}
+
+function harness(options: HarnessOptions = {}) {
     const clock = { t: options.now ?? MORNING };
     const events: PipelineEvent[] = [];
     const updates: CallSnapshot[] = [];
     const optOuts: string[] = [];
+    const holdsSaved: HoldRecord[] = [];
+    const holdsCleared: HoldRecord[] = [];
     const sleeps: number[] = [];
     const scenario = options.scenario ?? {};
     const statuses = [
         ...(scenario.statuses ?? [{ status: 'created' }, { status: 'started' }, { status: 'completed', end_reason: 'agent_hangup', summary: 'Leon got it.' }]),
     ];
     let last: Record<string, unknown> = { status: 'created' };
-    const lists: CallLists = { consent: parseConsentList(options.consent ?? consentFor(), clock.t), doNotCall: new Set(options.dnc ?? []) };
+    const journal = options.journal ?? new Journal();
+    (options.holds ?? []).forEach(([number, contact], i) => {
+        journal.records.push({ action: 'hold', id: `seed-${i}`, contact, number, at: 'x', reason: 'seeded' });
+    });
+    const lists: CallLists = {
+        consent: parseConsentList(options.consent ?? consentFor(), clock.t),
+        doNotCall: new Set(options.dnc ?? []),
+        holds: journal.holds(),
+    };
     const fetch = fakeFetch(async (call) => {
         const url = new URL(call.url);
         if (call.method === 'GET' && url.pathname === '/v1/agents/agent_test') {
@@ -139,9 +210,22 @@ function harness(options: { now?: number; scenario?: Scenario; dnc?: string[]; c
                 options.hooks?.onUpdate?.(snapshot);
             },
             onDoNotCall: (number) => optOuts.push(number),
+            saveHold: (record) => {
+                options.hooks?.onSaveHold?.(record);
+                if (options.saveHold) options.saveHold(record, journal);
+                else journal.records.push(record);
+                if (record.action === 'hold') holdsSaved.push(record);
+                if (record.action === 'clear') holdsCleared.push(record);
+            },
+            readHolds: options.noRead
+                ? undefined
+                : () => {
+                      options.hooks?.onReadHolds?.();
+                      return journal.holds();
+                  },
         },
     );
-    return { dialer, fetch, clock, events, updates, optOuts, sleeps, lists };
+    return { dialer, fetch, clock, events, updates, optOuts, holdsSaved, holdsCleared, sleeps, lists, journal };
 }
 
 const request = (clock: { t: number }, extra: Record<string, unknown> = {}) => ({
@@ -347,6 +431,11 @@ describe('Dialer calls', () => {
         );
         assert.deepEqual(h.sleeps, [1500, 1500, 1500]);
         assert.deepEqual(h.updates.map((u) => u.phase).filter((p, i, all) => p !== all[i - 1]), ['dialing', 'ringing', 'connected', 'ended']);
+        // On hold from just before the dial until the call ended with nothing heard, then released.
+        assert.equal(outcome.held, false);
+        assert.deepEqual(h.journal.actions(), ['pending', 'release']);
+        assert.equal(h.journal.records[1]?.target, h.journal.records[0]?.id);
+        assert.equal(h.journal.holds().size, 0);
     });
 
     it('checks the published agent first and refuses a different script', async () => {
@@ -406,8 +495,13 @@ describe('Dialer calls', () => {
         const outcome = await prepareAndPlace(h).handle.done;
         assert.equal(outcome.result, 'unknown');
         assert.equal(outcome.dialed, 'unknown');
-        assert.equal(outcome.spoken, 'I could not tell if the call went out. Check before trying again.');
+        assert.equal(outcome.held, true);
+        assert.equal(outcome.spoken, 'I could not tell if the call went out. Check before trying again. Calls to Leon are on hold until someone checks.');
         assert.equal(dials(h.fetch.calls), 1);
+        // The pending hold is never released, so the contact stays on hold, here and after a restart.
+        assert.deepEqual(h.journal.actions(), ['pending']);
+        const next = h.dialer.prepare(request(h.clock, { requestId: 'call_2', errand: { title: 'Lunch order', sentAt: h.clock.t } }));
+        assert.ok(!next.ok && next.refusal.code === 'opt_out_hold');
     });
 
     it('reports a per-destination dial error as failed, without polling', async () => {
@@ -415,6 +509,7 @@ describe('Dialer calls', () => {
         const outcome = await prepareAndPlace(h).handle.done;
         assert.equal(outcome.result, 'failed');
         assert.equal(outcome.dialed, false);
+        assert.equal(outcome.held, false);
         assert.equal(count(h.fetch.calls, 'GET', '/agents/calls/ac_test'), 0);
     });
 
@@ -458,12 +553,14 @@ describe('Dialer calls', () => {
         const outcome = await prepareAndPlace(h).handle.done;
         assert.equal(outcome.result, 'unknown');
         assert.equal(outcome.dialed, true);
+        assert.equal(outcome.held, true);
+        assert.deepEqual(h.journal.actions(), ['pending']);
         assert.equal(dials(h.fetch.calls), 1);
         assert.equal(count(h.fetch.calls, 'POST', '/cancel'), 1);
         assert.ok(h.sleeps.length > 100);
     });
 
-    it('adds an opt-out heard on the call to the do-not-call list', async () => {
+    it('puts the contact on hold when a refusal may have been heard, and saves the hold', async () => {
         const transcript = [
             { role: 'assistant', text: 'Did you get it?', start_timestamp: 1, end_timestamp: 2 },
             { role: 'user', text: 'Yes. Please don\u2019t call me again.', start_timestamp: 3, end_timestamp: 4 },
@@ -471,16 +568,33 @@ describe('Dialer calls', () => {
         const h = harness({ scenario: { statuses: [{ status: 'started' }, { status: 'completed', end_reason: 'agent_hangup', transcript }] } });
         const outcome = await prepareAndPlace(h).handle.done;
         assert.equal(outcome.optedOut, true);
-        assert.equal(outcome.spoken, 'Leon asked not to be called again. I will not call them.');
-        assert.deepEqual(h.optOuts, [LEON]);
+        assert.equal(outcome.held, true);
+        assert.equal(outcome.spoken, 'Leon may not want more calls. Calls to Leon are on hold until someone checks.');
+        assert.deepEqual(h.journal.actions(), ['pending', 'hold']);
+        assert.equal(h.holdsSaved.length, 1);
+        assert.equal(h.holdsSaved[0]?.action, 'hold');
+        assert.equal(h.holdsSaved[0]?.contact, 'leon');
+        assert.equal(h.holdsSaved[0]?.number, LEON);
+        assert.deepEqual(h.optOuts, []);
+        assert.ok(h.events.some((event) => event.detail === 'opt-out hold'));
         const next = h.dialer.prepare(request(h.clock, { requestId: 'call_2', errand: { title: 'Lunch order', sentAt: h.clock.t } }));
-        assert.ok(!next.ok && next.refusal.code === 'do_not_call');
+        assert.ok(!next.ok && next.refusal.code === 'opt_out_hold');
+        assert.equal(next.ok ? '' : next.refusal.reason, REFUSALS.opt_out_hold);
     });
 
     it('checks the setup without placing a call', async () => {
         const h = harness();
         const report = await h.dialer.preflight();
-        assert.deepEqual(report, { ok: true, consentCount: 1, doNotCallCount: 0, scriptProblems: [], agent: { ok: true }, insideHoursNow: true });
+        assert.deepEqual(report, {
+            ok: true,
+            consentCount: 1,
+            doNotCallCount: 0,
+            holdCount: 0,
+            holdsReadable: true,
+            scriptProblems: [],
+            agent: { ok: true },
+            insideHoursNow: true,
+        });
         assert.equal(dials(h.fetch.calls), 0);
     });
 
@@ -553,15 +667,17 @@ describe('Dialer review fixes', () => {
         assert.equal(report.agent.what, `instructions: first difference at character ${script.instructions.length}`);
     });
 
-    it('keeps an opt-out heard before polling runs out', async () => {
+    it('keeps a hold placed before polling runs out', async () => {
         const h = harness({ scenario: { statuses: [{ status: 'started', transcript: [{ role: 'user', text: 'Please stop calling me.' }] }], cancelStatus: 400 } });
         const outcome = await prepareAndPlace(h).handle.done;
         assert.equal(outcome.result, 'unknown');
         assert.equal(outcome.optedOut, true);
-        assert.deepEqual(h.optOuts, [LEON]);
-        assert.match(outcome.spoken, /asked not to be called again/);
+        assert.equal(outcome.held, true);
+        assert.equal(h.holdsSaved.length, 1);
+        assert.deepEqual(h.journal.actions(), ['pending', 'hold']);
+        assert.match(outcome.spoken, /on hold until someone checks/);
         const next = h.dialer.prepare(request(h.clock, { requestId: 'call_2', errand: { title: 'Lunch order', sentAt: h.clock.t } }));
-        assert.ok(!next.ok && next.refusal.code === 'do_not_call');
+        assert.ok(!next.ok && next.refusal.code === 'opt_out_hold');
     });
 
     it('treats a 5xx or an unreadable success as unknown, and a 4xx as not dialed', async () => {
@@ -575,6 +691,9 @@ describe('Dialer review fixes', () => {
             const outcome = await prepareAndPlace(h).handle.done;
             assert.equal(outcome.result, result, JSON.stringify(answer));
             assert.equal(outcome.dialed, dialed, JSON.stringify(answer));
+            // Not knowing whether it dialed keeps the contact on hold; a clear refusal releases it.
+            assert.equal(outcome.held, result === 'unknown', JSON.stringify(answer));
+            assert.equal(h.journal.holds().size, result === 'unknown' ? 1 : 0, JSON.stringify(answer));
             assert.equal(dials(h.fetch.calls), 1);
         }
     });
@@ -591,8 +710,8 @@ describe('Dialer review fixes', () => {
         const outcome = await prepareAndPlace(h).handle.done;
         const updates = JSON.stringify(h.updates);
         assert.equal(updates.includes('415-555-0188'), false);
-        assert.ok(updates.includes('Call me back at [number] please'));
-        assert.equal(outcome.summary, 'Leon said to call [number].');
+        assert.ok(updates.includes('Call me back at ###-###-#### please'));
+        assert.equal(outcome.summary, 'Leon said to call ###-###-####.');
     });
 });
 
@@ -629,11 +748,18 @@ describe('Dialer round 2 fixes', () => {
         assert.equal(dials(removed.fetch.calls), 0);
     });
 
-    it('a cancel from the last application callback before the dial request still stops it', async () => {
-        // A normal call first, recording every application callback in order up to the dial request.
+    it('a cancel from any application callback before the dial request still stops it', async () => {
+        // A normal call first, recording every application callback in order up to the dial request, including the
+        // hold file reads and writes.
         const order: string[] = [];
         const probe = harness({
-            hooks: { onNow: () => order.push('now'), onEvent: (event) => order.push(`event ${event.detail}`), onUpdate: (snapshot) => order.push(`update ${snapshot.phase}`) },
+            hooks: {
+                onNow: () => order.push('now'),
+                onEvent: (event) => order.push(`event ${event.detail}`),
+                onUpdate: (snapshot) => order.push(`update ${snapshot.phase}`),
+                onSaveHold: (record) => order.push(`save ${record.action}`),
+                onReadHolds: () => order.push('read holds'),
+            },
             scenario: {
                 dial: () => {
                     order.push('dial');
@@ -642,23 +768,32 @@ describe('Dialer round 2 fixes', () => {
             },
         });
         await prepareAndPlace(probe).handle.done;
+        const first = order.indexOf('event dialing');
         const last = order.indexOf('dial') - 1;
-        assert.ok(last >= 0);
-        // Then the same call again, cancelled from inside exactly that callback.
-        let seen = -1;
-        let dialer: Dialer | undefined;
-        const tick = () => {
-            if (++seen === last) dialer?.cancelActive('headset_off');
-        };
-        const h = harness({ hooks: { onNow: tick, onEvent: tick, onUpdate: tick } });
-        dialer = h.dialer;
-        const outcome = await prepareAndPlace(h).handle.done;
-        assert.equal(outcome.cancelReason, 'headset_off', order[last]);
-        assert.equal(outcome.dialed, false, order[last]);
-        assert.equal(dials(h.fetch.calls), 0, order[last]);
+        assert.ok(first >= 0 && last > first);
+        assert.deepEqual(
+            order.slice(first, last + 1).filter((step) => step !== 'now'),
+            ['event dialing', 'update dialing', 'read holds', 'save pending', 'read holds'],
+        );
+        // Then the same call again, cancelled from inside each of those callbacks in turn.
+        for (let k = first; k <= last; k++) {
+            let seen = -1;
+            let dialer: Dialer | undefined;
+            const tick = () => {
+                if (++seen === k) dialer?.cancelActive('headset_off');
+            };
+            const h = harness({ hooks: { onNow: tick, onEvent: tick, onUpdate: tick, onSaveHold: tick, onReadHolds: tick } });
+            dialer = h.dialer;
+            const outcome = await prepareAndPlace(h).handle.done;
+            assert.equal(outcome.cancelReason, 'headset_off', order[k]);
+            assert.equal(outcome.dialed, false, order[k]);
+            assert.equal(dials(h.fetch.calls), 0, order[k]);
+            // Nothing was dialed, so nothing stays on hold.
+            assert.equal(h.journal.holds().size, 0, order[k]);
+        }
     });
 
-    it('records the refusals the script promises to honor', async () => {
+    it('holds on every refusal the script promises to honor, and refuses the next call', async () => {
         for (const said of [
             'I do not want these calls.',
             'Please never call me again.',
@@ -677,46 +812,39 @@ describe('Dialer round 2 fixes', () => {
             const h = heard([{ role: 'user', text: said }]);
             const outcome = await prepareAndPlace(h).handle.done;
             assert.equal(outcome.optedOut, true, said);
-            assert.deepEqual(h.optOuts, [LEON], said);
+            assert.equal(h.holdsSaved.length, 1, said);
+            const next = h.dialer.prepare(request(h.clock, { requestId: 'call_2', errand: { title: 'Lunch order', sentAt: h.clock.t } }));
+            assert.ok(!next.ok && next.refusal.code === 'opt_out_hold', said);
         }
     });
 
-    it('does not count a passing "stop" or other everyday words as an opt-out', async () => {
-        const said = [
-            'I\u{2019}ll stop by later.',
-            'Wait, stop. Say that again.',
-            'I\u{2019}ll stop. Calling my mom now.',
-            'Thanks for calling.',
-            'Sure, call me any time.',
-            'I do not mind these calls.',
-            'I don\u{2019}t want this call to end.',
-            'You never call me.',
-            'Take me home.',
-            'I don\u{2019}t want this call to take too long.',
-            'Why don\u{2019}t you call me back later?',
-            'Don\u{2019}t stop calling!',
-        ];
-        const h = heard(said.map((text) => ({ role: 'user', text })));
-        const outcome = await prepareAndPlace(h).handle.done;
+    it('also holds on harmless uses of the trigger words, by design, but not on plain replies', async () => {
+        for (const text of ['I\u{2019}ll stop by later.', 'Wait, stop. Say that again.', 'You never call me.', 'Why don\u{2019}t you call me back later?', 'Don\u{2019}t stop calling!']) {
+            assert.equal(heardOptOut([{ role: 'user', text }]), true, text);
+        }
+        const plain = heard(['Yes, I got it.', 'Thanks for calling.', 'Sure, call me any time.', 'Okay, I will tell them.'].map((text) => ({ role: 'user', text })));
+        const outcome = await prepareAndPlace(plain).handle.done;
         assert.equal(outcome.optedOut, false);
-        assert.deepEqual(h.optOuts, []);
+        assert.deepEqual(plain.holdsSaved, []);
     });
 
-    it('counts the agent saying it will not call again, but not a log line or the recipient saying it', async () => {
+    it('holds when the agent gives its reply to a refusal, and never on a log line', async () => {
         const agreed = heard([
-            { role: 'user', text: 'Leave me alone.' },
+            { role: 'user', text: 'Hmm.' },
             { role: 'assistant', text: 'I am sorry. I will not call again. Goodbye.' },
         ]);
         assert.equal((await prepareAndPlace(agreed).handle.done).optedOut, true);
-        assert.deepEqual(agreed.optOuts, [LEON]);
-        const other = heard([
-            { role: 'system', text: 'log_event: will not call again' },
-            { role: 'user', text: 'Got it. I will not call again today, I will text.' },
+        assert.equal(agreed.holdsSaved.length, 1);
+        const logged = heard([
+            { role: 'system', text: 'log_event: stop, remove, will not call again, recording' },
+            { role: 'user', text: 'Got it.' },
         ]);
-        assert.equal((await prepareAndPlace(other).handle.done).optedOut, false);
+        assert.equal((await prepareAndPlace(logged).handle.done).optedOut, false);
+        // The agent's own welcome says the call is recorded: only the person's words go through the word list.
+        assert.equal(heardOptOut([{ role: 'assistant', text: script.welcome }]), false);
     });
 
-    it('masks numbers written with Unicode dashes and spaces in updates and in the summary', async () => {
+    it('shows no digit in dashboard updates or the summary, whatever the separators', async () => {
         const h = harness({
             scenario: {
                 statuses: [
@@ -726,48 +854,404 @@ describe('Dialer round 2 fixes', () => {
             },
         });
         const outcome = await prepareAndPlace(h).handle.done;
-        const updates = JSON.stringify(h.updates);
-        assert.equal(/555|0188/.test(updates), false);
-        assert.ok(updates.includes('Call me back at [number] please'));
-        assert.equal(outcome.summary, 'Leon said to call [number].');
+        const shown = [...h.updates.flatMap((update) => update.transcript.map((turn) => turn.text)), outcome.summary ?? ''];
+        assert.ok(shown.length > 1);
+        for (const text of shown) assert.equal(/\p{N}/u.test(text), false, text);
+        assert.ok(shown[0]?.startsWith('Call me back at ###'));
+        assert.equal(outcome.summary, 'Leon said to call ### ###\u{2013}####.');
     });
 
-    it('masks a number one speaker splits across turns, even with the agent talking in between', async () => {
-        const transcript = [
+    it('masks each transcript line on its own, so a number split across turns never shows', async () => {
+        const h = heard([
             { role: 'user', text: 'My number is 415 555' },
             { role: 'assistant', text: 'Go on.' },
             { role: 'user', text: '0188, thanks.' },
-        ];
-        const h = heard(transcript);
+        ]);
         await prepareAndPlace(h).handle.done;
-        const last = h.updates.at(-1);
         assert.deepEqual(
-            last?.transcript.map((turn) => turn.text),
-            ['My number is [number]', 'Go on.', '[number], thanks.'],
+            h.updates.at(-1)?.transcript.map((turn) => turn.text),
+            ['My number is ### ###', 'Go on.', '####, thanks.'],
         );
-        assert.equal(/555|0188/.test(JSON.stringify(h.updates)), false);
-    });
-
-    it('masks a fragment shown before the rest of the number arrives', async () => {
-        const h = harness({
-            scenario: {
-                statuses: [
-                    { status: 'started', transcript: [{ role: 'user', text: 'My number is 415 555' }] },
-                    { status: 'completed', end_reason: 'agent_hangup', transcript: [{ role: 'user', text: 'My number is 415 555' }, { role: 'user', text: '0188.' }] },
-                ],
-            },
-        });
-        await prepareAndPlace(h).handle.done;
         const first = h.updates.find((update) => update.transcript.length > 0);
-        assert.deepEqual(first?.transcript.map((turn) => turn.text), ['My number is [number]']);
-        assert.equal(/555|0188/.test(JSON.stringify(h.updates)), false);
+        assert.equal(first?.transcript[0]?.text, 'My number is ### ###');
     });
 
-    it('masks every group of a number dictated in parts in the summary, and keeps its dates', async () => {
-        const summary = 'On 10/24/2026 Leon said call me at area code 415, then 555, then 0188.';
+    it('masks numbers dictated in parts in the summary, and dates and times too', async () => {
+        const summary = 'On 10/24/2026 at 9:30 Leon said call me at area code 415, then five five five, then 0188.';
         const h = harness({ scenario: { statuses: [{ status: 'started' }, { status: 'completed', end_reason: 'agent_hangup', summary }] } });
         const outcome = await prepareAndPlace(h).handle.done;
-        assert.equal(outcome.summary, 'On 10/24/2026 Leon said call me at area code [number], then [number], then [number].');
+        assert.equal(outcome.summary, 'On ##/##/#### at #:## Leon said call me at area code ###, then # # #, then ####.');
+    });
+});
+
+const MAYA = '+14155550177';
+const withMaya = () =>
+    JSON.stringify([
+        ...(JSON.parse(consentFor()) as unknown[]),
+        { id: 'maya', name: 'Maya', phone: MAYA, timeZone: 'America/Los_Angeles', consentText: 'I agree to AI-voice calls from the NeuroLingo demo.', consentedAt: '2026-10-23T16:00:00Z' },
+    ]);
+const refusedThen = (...texts: string[]) => ({ statuses: [...texts.map((text) => ({ status: 'started', transcript: [{ role: 'user', text }] })), ANSWERED] });
+const record = (action: HoldRecord['action'], id: string, extra: Partial<HoldRecord> = {}) =>
+    JSON.stringify({ action, id, contact: 'leon', number: LEON, at: 'x', reason: 'y', ...extra });
+
+describe('holds', () => {
+    const later = (h: ReturnType<typeof harness>, contactId = 'leon', requestId = 'call_9') =>
+        h.dialer.prepare(request(h.clock, { requestId, contactId, errand: { title: 'Lunch order', sentAt: h.clock.t } }));
+
+    it('refuses a held contact until a person clears the hold with a reason', () => {
+        const h = harness({ holds: [[LEON, 'leon']] });
+        const held = later(h);
+        assert.ok(!held.ok && held.refusal.code === 'opt_out_hold');
+        assert.equal(held.ok ? '' : held.refusal.reason, REFUSALS.opt_out_hold);
+        for (const reason of ['', '  ', 'ok', '1234', 'x'.repeat(201)]) assert.throws(() => h.dialer.clearHold('leon', reason), CallConfigError, reason);
+        assert.equal(h.lists.holds.size, 1);
+        assert.equal(h.dialer.clearHold('leon', 'Talked with Leon; he still wants these calls.'), true);
+        assert.equal(h.holdsCleared.length, 1);
+        assert.equal(h.holdsCleared[0]?.action, 'clear');
+        assert.equal(h.holdsCleared[0]?.target, 'seed-0');
+        assert.equal(h.holdsCleared[0]?.reason, 'Talked with Leon; he still wants these calls.');
+        assert.ok(h.events.some((event) => event.detail === 'hold cleared'));
+        assert.ok(later(h).ok);
+        assert.equal(h.dialer.clearHold('leon', 'Nothing to clear now.'), false);
+    });
+
+    it('keeps the hold when the clear cannot be saved', () => {
+        const h = harness({
+            holds: [[LEON, 'leon']],
+            saveHold: () => {
+                throw new Error('disk full');
+            },
+        });
+        assert.throws(() => h.dialer.clearHold('leon', 'Talked with Leon today.'), /hold stays/);
+        assert.equal(h.lists.holds.has(LEON), true);
+        assert.equal(h.journal.holds().has(LEON), true);
+    });
+
+    it('places no call when the pending hold cannot be saved', async () => {
+        const h = harness({
+            saveHold: () => {
+                throw new Error('disk full');
+            },
+        });
+        const outcome = await prepareAndPlace(h).handle.done;
+        assert.equal(outcome.refusal?.code, 'hold_file_error');
+        assert.equal(outcome.held, false);
+        assert.equal(dials(h.fetch.calls), 0);
+    });
+
+    it('keeps the contact on hold when the release after a call cannot be saved', async () => {
+        const h = harness({
+            saveHold: (rec, journal) => {
+                if (rec.action === 'release') throw new Error('disk full');
+                journal.records.push(rec);
+            },
+        });
+        const outcome = await prepareAndPlace(h).handle.done;
+        assert.equal(outcome.result, 'answered');
+        assert.equal(outcome.optedOut, false);
+        assert.equal(outcome.held, true);
+        assert.equal(outcome.spoken, 'Leon picked up. The call has ended. Calls to Leon are on hold until someone checks.');
+        assert.ok(h.events.some((event) => event.detail === 'held: release not saved'));
+        assert.deepEqual(h.journal.actions(), ['pending']);
+        const next = later(h);
+        assert.ok(!next.ok && next.refusal.code === 'opt_out_hold');
+    });
+
+    it('places no call when the hold file cannot be read at the prepare, the confirm or right before the dial', async () => {
+        for (const failAt of [1, 2, 3, 4]) {
+            let reads = 0;
+            const h = harness({
+                hooks: {
+                    onReadHolds: () => {
+                        if (++reads === failAt) throw new Error('EIO');
+                    },
+                },
+            });
+            const prepared = h.dialer.prepare(request(h.clock));
+            if (failAt === 1) {
+                assert.ok(!prepared.ok && prepared.refusal.code === 'hold_file_error');
+                continue;
+            }
+            assert.ok(prepared.ok);
+            const placed = h.dialer.place(prepared.call.requestId, prepared.call.digest);
+            if (failAt === 2) {
+                assert.ok(!placed.ok && placed.refusal.code === 'hold_file_error');
+                continue;
+            }
+            assert.ok(placed.ok);
+            const outcome = await placed.handle.done;
+            assert.equal(outcome.refusal?.code, 'hold_file_error', String(failAt));
+            assert.equal(dials(h.fetch.calls), 0, String(failAt));
+            assert.equal(h.journal.holds().size, 0, String(failAt));
+        }
+        const unreadable = harness({
+            hooks: {
+                onReadHolds: () => {
+                    throw new Error('EIO');
+                },
+            },
+        });
+        const report = await unreadable.dialer.preflight();
+        assert.equal(report.ok, false);
+        assert.equal(report.holdsReadable, false);
+    });
+
+    it('refuses every call, to anyone, when a refusal hold cannot be saved, and a restart still holds the contact', async () => {
+        const h = harness({
+            consent: withMaya(),
+            saveHold: (rec, journal) => {
+                if (rec.action === 'hold') throw new Error('disk full');
+                journal.records.push(rec);
+            },
+            scenario: refusedThen('Stop calling me.'),
+        });
+        const outcome = await prepareAndPlace(h).handle.done;
+        assert.equal(outcome.optedOut, true);
+        assert.equal(outcome.held, true);
+        assert.ok(h.events.some((event) => event.detail === 'hold not saved: refusing all calls'));
+        const next = later(h);
+        assert.ok(!next.ok && next.refusal.code === 'opt_out_hold');
+        const other = later(h, 'maya', 'call_10');
+        assert.ok(!other.ok && other.refusal.code === 'opt_out_hold');
+        // A new dialer on the same file, as after a restart: the pending hold was never released.
+        assert.deepEqual(h.journal.actions(), ['pending']);
+        const restarted = harness({ consent: withMaya(), journal: h.journal });
+        const again = later(restarted);
+        assert.ok(!again.ok && again.refusal.code === 'opt_out_hold');
+        assert.ok(later(restarted, 'maya', 'call_11').ok);
+    });
+
+    it('will not clear a hold during a call, and a refusal heard after an outside clear still holds', async () => {
+        const journal = new Journal();
+        let dialer: Dialer | undefined;
+        const mid: { done?: boolean; error?: unknown } = {};
+        const h = harness({
+            journal,
+            hooks: {
+                onUpdate: (snapshot) => {
+                    if (snapshot.phase !== 'connected' || mid.done) return;
+                    mid.done = true;
+                    try {
+                        dialer?.clearHold('leon', 'Cleared during the call.');
+                    } catch (error) {
+                        mid.error = error;
+                    }
+                    // npm run call:clear-hold from another process, which cannot see this call.
+                    journal.clearAll('leon');
+                },
+            },
+            scenario: refusedThen('Stop calling.', 'Never call again.'),
+        });
+        dialer = h.dialer;
+        const outcome = await prepareAndPlace(h).handle.done;
+        assert.ok(mid.error instanceof CallConfigError && /in progress/.test(mid.error.message));
+        assert.equal(outcome.held, true);
+        assert.deepEqual(journal.actions(), ['pending', 'clear', 'hold']);
+        assert.equal(journal.holds().get(LEON)?.kind, 'hold');
+        const next = later(h);
+        assert.ok(!next.ok && next.refusal.code === 'opt_out_hold');
+        // After the call, a person can clear it.
+        assert.equal(h.dialer.clearHold('leon', 'Checked with Leon after the call.'), true);
+        assert.ok(later(h, 'leon', 'call_12').ok);
+    });
+
+    it('counts a hold saved by another dialer that shares the hold file', async () => {
+        const journal = new Journal();
+        const first = harness({ journal, scenario: refusedThen('Stop calling me.') });
+        const second = harness({ journal });
+        // The second dialer started before the refusal, and its read-back was ready before the first call.
+        const ready = second.dialer.prepare(request(second.clock, { requestId: 'call_b' }));
+        assert.ok(ready.ok);
+        assert.equal((await prepareAndPlace(first).handle.done).held, true);
+        const placed = second.dialer.place(ready.call.requestId, ready.call.digest);
+        assert.ok(!placed.ok && placed.refusal.code === 'opt_out_hold');
+        const fresh = later(second, 'leon', 'call_b2');
+        assert.ok(!fresh.ok && fresh.refusal.code === 'opt_out_hold');
+        assert.equal(dials(second.fetch.calls), 0);
+    });
+
+    it('refuses while another dialer has a call to the same number in progress', async () => {
+        const journal = new Journal();
+        const mid: { during?: ReturnType<Dialer['prepare']> } = {};
+        const second = harness({ journal });
+        const first = harness({
+            journal,
+            hooks: {
+                onUpdate: (snapshot) => {
+                    if (snapshot.phase === 'ringing' && !mid.during) mid.during = second.dialer.prepare(request(second.clock, { requestId: 'call_b' }));
+                },
+            },
+        });
+        const outcome = await prepareAndPlace(first).handle.done;
+        assert.equal(outcome.result, 'answered');
+        const during = mid.during;
+        assert.ok(during && !during.ok && during.refusal.code === 'opt_out_hold');
+        // Once that call ended with nothing heard, the number is free again.
+        assert.ok(second.dialer.prepare(request(second.clock, { requestId: 'call_b2' })).ok);
+    });
+
+    it('lets only the first of two racing dialers dial', async () => {
+        // Another dialer's pending hold reaches the file just before ours: we refuse and dial nothing.
+        const lost = new Journal();
+        const loser = harness({
+            journal: lost,
+            hooks: {
+                onSaveHold: (rec) => {
+                    if (rec.action === 'pending') lost.records.push({ action: 'pending', id: 'other-dialer', contact: 'leon', number: LEON, at: 'x', reason: 'call about to be placed' });
+                },
+            },
+        });
+        const refused = await prepareAndPlace(loser).handle.done;
+        assert.equal(refused.refusal?.code, 'line_busy');
+        assert.equal(dials(loser.fetch.calls), 0);
+        assert.equal(lost.holds().get(LEON)?.id, 'other-dialer');
+        // Ours reaches the file first: we dial, and the other dialer, reading the file, finds ours in the slot.
+        const won = new Journal();
+        const seen: { reads: number; slot?: string } = { reads: 0 };
+        const winner = harness({
+            journal: won,
+            hooks: {
+                onReadHolds: () => {
+                    if (++seen.reads !== 4) return;
+                    won.records.push({ action: 'pending', id: 'other-dialer', contact: 'leon', number: LEON, at: 'x', reason: 'call about to be placed' });
+                    seen.slot = won.holds().get(LEON)?.id;
+                },
+            },
+        });
+        const answered = await prepareAndPlace(winner).handle.done;
+        assert.equal(answered.result, 'answered');
+        assert.equal(dials(winner.fetch.calls), 1);
+        assert.equal(won.records[0]?.action, 'pending');
+        assert.equal(seen.slot, won.records[0]?.id);
+        assert.notEqual(seen.slot, 'other-dialer');
+    });
+
+    it('ends only the hold a clear or release names, so a stale clear never ends a newer hold', () => {
+        const replay = (...lines: string[]) => parseHolds(lines.join('\n'));
+        // A clear for Leon, read before Maya's hold was added, ends Leon's hold and not Maya's.
+        assert.deepEqual([...replay(record('hold', 'h1'), record('hold', 'h2', { contact: 'maya', number: MAYA }), record('clear', 'c1', { target: 'h1' })).keys()], [MAYA]);
+        // A newer hold on the same number outlives a clear of the older one.
+        assert.equal(replay(record('hold', 'h1'), record('hold', 'h2'), record('clear', 'c1', { target: 'h1' })).get(LEON)?.id, 'h2');
+        // A release ends only a pending hold, never a refusal hold.
+        assert.equal(replay(record('pending', 'p1'), record('hold', 'h1'), record('release', 'r1', { target: 'p1' })).get(LEON)?.kind, 'hold');
+        assert.equal(replay(record('hold', 'h1'), record('release', 'r1', { target: 'h1' })).size, 1);
+        // A pending hold never replaces a refusal hold, and the first of two pending holds keeps the slot.
+        assert.equal(replay(record('hold', 'h1'), record('pending', 'p1')).get(LEON)?.id, 'h1');
+        assert.equal(replay(record('pending', 'p1'), record('pending', 'p2')).get(LEON)?.id, 'p1');
+        assert.equal(replay(record('pending', 'p1'), record('pending', 'p2'), record('release', 'r2', { target: 'p2' })).get(LEON)?.id, 'p1');
+        // A person can clear a pending hold left by a call whose end was unknown.
+        assert.equal(replay(record('pending', 'p1'), record('clear', 'c1', { target: 'p1' })).size, 0);
+        assert.equal(replay(record('pending', 'p1'), record('release', 'r1', { target: 'p1' })).size, 0);
+    });
+
+    it('clears only the holds it read, even when a new hold lands between its read and its write', () => {
+        const dir = mkdtempSync(join(tmpdir(), 'cartesia-holds-'));
+        try {
+            const file = join(dir, 'holds.jsonl');
+            appendHoldRecord(file, { action: 'hold', id: 'h1', contact: 'leon', number: LEON, at: 'x', reason: 'heard on a call' });
+            const read = (path: string) => {
+                const text = readFileSync(path, 'utf8');
+                appendHoldRecord(file, { action: 'hold', id: 'h2', contact: 'maya', number: MAYA, at: 'x', reason: 'heard on a call' });
+                appendHoldRecord(file, { action: 'hold', id: 'h3', contact: 'leon', number: LEON, at: 'x', reason: 'heard on a call' });
+                return text;
+            };
+            assert.equal(clearHoldInFile({ file, contactId: 'leon', reason: 'Checked with Leon by text.', read }), 1);
+            assert.deepEqual(
+                [...readHoldFile(file)],
+                [
+                    [LEON, { contact: 'leon', id: 'h3', kind: 'hold' }],
+                    [MAYA, { contact: 'maya', id: 'h2', kind: 'hold' }],
+                ],
+            );
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it('survives a restart through the hold file, and the file logs every clear', () => {
+        const dir = mkdtempSync(join(tmpdir(), 'cartesia-holds-'));
+        try {
+            const file = join(dir, 'holds.jsonl');
+            const env = { CALL_CONSENT: consentFor(), CALL_HOLD_FILE: file };
+            assert.equal(loadCallLists(env).holds.size, 0);
+            appendHoldRecord(file, { action: 'hold', id: 'h1', contact: 'leon', number: LEON, at: '2026-10-24T18:00:00.000Z', reason: 'heard on a call' });
+            assert.deepEqual([...loadCallLists(env).holds], [[LEON, { contact: 'leon', id: 'h1', kind: 'hold' }]]);
+            assert.throws(() => clearHoldInFile({ file, contactId: 'leon', reason: '' }), CallConfigError);
+            assert.equal(clearHoldInFile({ file, contactId: 'leon', reason: 'Checked with Leon by text.' }), 1);
+            assert.equal(loadCallLists(env).holds.size, 0);
+            assert.equal(clearHoldInFile({ file, contactId: 'leon', reason: 'Checked with Leon by text.' }), 0);
+            const log = readFileSync(file, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as HoldRecord);
+            assert.deepEqual(log.map((rec) => [rec.action, rec.target ?? null, rec.reason]), [
+                ['hold', null, 'heard on a call'],
+                ['clear', 'h1', 'Checked with Leon by text.'],
+            ]);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it('reads and writes one hold file when CALL_HOLD_FILE has spaces around it, created owner-only', () => {
+        const dir = mkdtempSync(join(tmpdir(), 'cartesia-holds-'));
+        try {
+            const env = (file: string) => ({
+                CARTESIA_API_KEY: KEY,
+                CARTESIA_AGENT_ID: 'agent_test',
+                CARTESIA_FROM_NUMBER_ID: 'ap_test',
+                CALL_CALLBACK_NUMBER: CALLBACK,
+                CALL_PERSON_NAME: 'Shashank',
+                CALL_CONSENT: consentFor(),
+                CALL_HOLD_FILE: `  ${file}\n`,
+            });
+            const file = join(dir, 'holds.jsonl');
+            appendHoldRecord(file, { action: 'hold', id: 'h1', contact: 'leon', number: LEON, at: 'x', reason: 'heard on a call' });
+            assert.equal(loadCallLists(env(file)).holds.size, 1);
+            const dialer = dialerFromEnv(env(file), { now: () => MORNING });
+            const held = dialer.prepare(request({ t: MORNING }));
+            assert.ok(!held.ok && held.refusal.code === 'opt_out_hold');
+            assert.equal(dialer.clearHold('leon', 'Checked with Leon by text.'), true);
+            assert.equal(readHoldFile(file).size, 0);
+            assert.ok(dialer.prepare(request({ t: MORNING })).ok);
+            const created = join(dir, 'new-holds.jsonl');
+            dialerFromEnv(env(created));
+            assert.equal(statSync(created).mode & 0o777, 0o600);
+            assert.throws(() => dialerFromEnv(env(join(dir, 'missing-dir', 'holds.jsonl'))), /cannot be written/);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it('stops on a hold file line it cannot read, naming only the line', () => {
+        const good = record('hold', 'h1');
+        assert.deepEqual([...parseHolds(`${good}\n`)], [[LEON, { contact: 'leon', id: 'h1', kind: 'hold' }]]);
+        for (const bad of [
+            'not json',
+            record('hold', 'h2', { number: '911' }),
+            record('maybe' as HoldRecord['action'], 'h3'),
+            record('hold', ''),
+            record('clear', 'c1'),
+            record('release', 'r1', { target: 'bad target' }),
+            record('hold', 'h4', { contact: '4155550123' }),
+        ]) {
+            assert.throws(
+                () => parseHolds(`${good}\n${bad}`),
+                (error: unknown) => error instanceof CallConfigError && /line 2/.test(error.message) && !error.message.includes('leon'),
+                bad,
+            );
+        }
+    });
+
+    it('never repeats a contact id it was given, valid or not', () => {
+        for (const contactId of ['+14155550123', 'sk_car_REVIEW_ONLY_42', '4155550123', 'Leon', 'leon 555 0123']) {
+            assert.throws(
+                () => clearHoldInFile({ file: join(tmpdir(), 'cartesia-no-such-dir', 'holds.jsonl'), contactId, reason: 'Checked with them by text.' }),
+                (error: unknown) => error instanceof CallConfigError && !error.message.includes(contactId) && !/\d{3}/.test(error.message),
+                contactId,
+            );
+        }
+    });
+
+    it('needs a hold file before it will place calls', () => {
+        assert.throws(() => dialerFromEnv({ CARTESIA_API_KEY: KEY }), /CALL_HOLD_FILE/);
     });
 });
 
@@ -826,33 +1310,35 @@ describe('the reviewed script', () => {
     });
 });
 
-describe('the opt-out promise and the detector', () => {
-    it('uses one list for what the instructions promise and what the dialer listens for', () => {
-        assert.ok(OPT_OUT_REQUESTS.length >= 2);
-        for (const request of OPT_OUT_REQUESTS) {
-            assert.ok(script.instructions.includes(request.promise), request.promise);
-            const dropped = { welcome: script.welcome, instructions: script.instructions.replace(request.promise, 'asks you anything') };
-            assert.ok(checkAgentScript(dropped).some((problem) => problem.includes(request.promise)), request.promise);
-            // The promise's own words, said by the recipient, are heard by that promise's own patterns.
-            const core = request.promise.replace(/^(?:asks you to|says they) /, '');
-            assert.ok(request.heard.some((pattern) => pattern.test(plainSpeech(core))), core);
-            assert.equal(heardOptOut([{ role: 'user', text: `Please, ${core}.` }]), true, core);
-        }
+describe('the hold triggers and the agent script', () => {
+    it('tells the agent to end the call on any refusal, and the check enforces it', () => {
+        assert.ok(script.instructions.includes(REFUSAL_RULE));
         assert.ok(script.instructions.includes(`say you ${OPT_OUT_REPLY}`));
-        const noReply = { welcome: script.welcome, instructions: script.instructions.replace(OPT_OUT_REPLY, 'will call later') };
-        assert.ok(checkAgentScript(noReply).some((problem) => problem.includes(OPT_OUT_REPLY)));
+        for (const phrase of [REFUSAL_RULE, OPT_OUT_REPLY]) {
+            const dropped = { welcome: script.welcome, instructions: script.instructions.replace(phrase, 'carry on') };
+            assert.ok(checkAgentScript(dropped).some((problem) => problem.includes(phrase)), phrase);
+        }
     });
 
-    it('reads one sentence at a time with look-alike characters folded', () => {
-        assert.equal(plainSpeech('Stop. Calling\u{2014}my MOM, now!'), 'stop\ncalling my mom now');
-        assert.equal(plainSpeech('Don\u{2019}t\u{00A0}call'), "don't call");
+    it('holds on every word in the shared list, on a negated calling word, and on the agent reply', () => {
+        for (const word of HOLD_TRIGGERS.words) assert.equal(heardOptOut([{ role: 'user', text: `Well, ${word} it.` }]), true, word);
+        for (const negation of HOLD_TRIGGERS.negations) {
+            for (const calling of HOLD_TRIGGERS.callingWords) {
+                assert.equal(heardOptOut([{ role: 'user', text: `I ${negation} want any more ${calling}s.` }]), true, `${negation} ${calling}`);
+            }
+        }
+        for (const reply of HOLD_TRIGGERS.agentReplies) assert.equal(heardOptOut([{ role: 'assistant', text: `Sorry, I ${reply} you again.` }]), true, reply);
         assert.equal(heardOptOut([{ role: 'assistant', text: 'Thanks. Goodbye.' }]), false);
-        assert.equal(heardOptOut([{ role: 'assistant', text: 'Understood, we won\u{2019}t be calling you again.' }]), true);
-        assert.equal(heardOptOut([{ role: 'user', text: 'Can you take me off speaker?' }]), false);
-        assert.equal(heardOptOut([{ role: 'User', text: 'Stop calling.' }]), true);
     });
 
-    it('hears other wordings of a refusal, and nothing that means the opposite', () => {
+    it('reads look-alike text, invisible characters and split turns as one', () => {
+        assert.equal(speechWords('Don\u{2019}t\u{00A0}CALL\u{200B}me!'), ' dont callme ');
+        assert.equal(heardOptOut([{ role: 'User', text: '\u{FF33}\u{FF34}\u{FF2F}\u{FF30}' }]), true);
+        assert.equal(heardOptOut([{ role: 'user', text: 'st\u{200B}op' }]), true);
+        assert.equal(heardOptOut([{ role: 'user', text: 'Please do not' }, { role: 'assistant', text: 'Sorry?' }, { role: 'user', text: 'call me again.' }]), true);
+    });
+
+    it('holds on every refusal wording found in earlier reviews', () => {
         const refusals = [
             'Don\u{2019}t bother calling again.',
             'No more of these calls.',
@@ -909,58 +1395,44 @@ describe('the opt-out promise and the detector', () => {
             'I don\u{2019}t want you to call my phone again.',
         ];
         for (const text of refusals) assert.equal(heardOptOut([{ role: 'user', text }]), true, text);
-        const notRefusals = [
-            'Why don\u{2019}t you call me back later?',
-            'Don\u{2019}t stop calling!',
-            'Please don\u{2019}t remove me from the list.',
-            'Don\u{2019}t take me off the list.',
-            'I don\u{2019}t want to miss your calls.',
-            'I don\u{2019}t want you to call my mom.',
-            'I don\u{2019}t want these calls to stop.',
-            'I don\u{2019}t want this call to take too long.',
-            'I don\u{2019}t want calls to take too long.',
-            'Is this call being recorded?',
-            'Please do not stop recording.',
-            'I don\u{2019}t agree with that plan.',
-            'You never call me.',
-            'Don\u{2019}t turn off the recording.',
-            'I don\u{2019}t want you to stop recording.',
-            'Please don\u{2019}t stop the recording.',
-            'I don\u{2019}t want you to stop calling.',
-            'I don\u{2019}t want calls to keep dropping.',
-            'I don\u{2019}t want these calls to go on mute.',
-            'I don\u{2019}t want the recording to stop.',
-            'I don\u{2019}t want to be removed from your list.',
-            'I don\u{2019}t object to the recording.',
-            'I do not object to being recorded.',
-            'No, recording is fine.',
-            'I\u{2019}m not asking you to stop calling.',
-            'There is no need to stop calling.',
-            'Please don\u{2019}t ever remove me.',
-            'Why don\u{2019}t you record it?',
-            'Please don\u{2019}t leave me alone.',
-            'I don\u{2019}t want to opt out.',
-            'I don\u{2019}t want you to ever stop calling.',
-            'If you don\u{2019}t call me back, I\u{2019}ll be upset.',
-            'There is no need to lose my number.',
-        ];
-        for (const text of notRefusals) assert.equal(heardOptOut([{ role: 'user', text }]), false, text);
-        // Accepted on purpose: a name correction reads as a refusal. Honoring too much only costs a new consent.
-        for (const text of ['Don\u{2019}t call me Lee.', 'I don\u{2019}t want to be called Bob.']) assert.equal(heardOptOut([{ role: 'user', text }]), true, text);
     });
 
-    it('stays fast on long near-miss input', () => {
+    it('holds on every input from the last review', () => {
+        for (const text of [
+            'I do not want any more calls to my number.',
+            'Please do not ever record this call.',
+            'Never record me.',
+            'Please remove my phone number.',
+            'Please take my phone number off your list.',
+            'I am not asking you to please stop calling.',
+            'I do not want you to call my home health aide.',
+            'Please do not call my mom; call me instead.',
+        ]) {
+            assert.equal(heardOptOut([{ role: 'user', text }]), true, text);
+        }
+        assert.equal(heardOptOut([{ role: 'user', text: 'Please stop' }, { role: 'user', text: 'calling me.' }]), true);
+    });
+
+    it('holds on every input from the review of the hold design, and refuses the next call', async () => {
+        const said = ['Quit calling me.', 'Please cease calling.', 'End these calls.', 'No calls please.', 'Cease and desist.', 'Knock it off with the calls.', 'Delete my number.'];
+        for (const text of said) assert.equal(heardOptOut([{ role: 'user', text }]), true, text);
+        // The person hangs up before the agent can give its reply: the hold still lands.
+        for (const text of said.slice(0, 4)) {
+            const h = harness({ scenario: { statuses: [{ status: 'started', transcript: [{ role: 'user', text }] }, { status: 'completed', end_reason: 'client_hangup' }] } });
+            const outcome = await prepareAndPlace(h).handle.done;
+            assert.equal(outcome.held, true, text);
+            const next = h.dialer.prepare(request(h.clock, { requestId: 'call_2', errand: { title: 'Lunch order', sentAt: h.clock.t } }));
+            assert.ok(!next.ok && next.refusal.code === 'opt_out_hold', text);
+            assert.equal(dials(h.fetch.calls), 1, text);
+        }
+    });
+
+    it('stays fast on long input', () => {
         const started = performance.now();
-        // 26 is where the old overlapping pattern took seconds: enough to fail this test, not enough to hang the run.
-        const near = [
-            `I don't want ${'any more '.repeat(26)}information.`,
-            `I don't want ${'these '.repeat(500)}people.`,
-            `I don't want you to call ${'my '.repeat(500)}mom.`,
-            `Please ${'stop '.repeat(500)}by.`,
-        ];
-        for (const text of near) assert.equal(heardOptOut([{ role: 'user', text }]), false);
-        // Sizes where a quadratic pattern would take seconds and a linear one takes milliseconds.
-        for (const text of [`${'1 '.repeat(30000)}x`, `444${'-'.repeat(60000)}`, '1/'.repeat(30000), `${'one '.repeat(30000)}x`, 'a'.repeat(100000), '1/1 '.repeat(25000), `1/1${' '.repeat(60000)}2`, `415 ${'5/5 '.repeat(25000)}`]) redact(text);
+        for (const text of [`${'thanks '.repeat(20000)}bye`, `${'not '.repeat(20000)}today`, `${'dont want '.repeat(10000)}x`]) {
+            assert.equal(heardOptOut([{ role: 'user', text }]), false);
+        }
+        for (const text of [`${'1 '.repeat(30000)}x`, `${'one '.repeat(30000)}x`, 'a'.repeat(100000), 'sk_car_'.repeat(5000), 'aaaaaaaaa.'.repeat(10000)]) redact(text);
         const ms = performance.now() - started;
         assert.ok(ms < 1000, `${Math.round(ms)} ms`);
     });

@@ -28,6 +28,7 @@
         "voices": "tsx src/cli/voices.ts",
         "dict:sync": "tsx src/cli/sync-dictionary.ts",
         "call:check": "tsx src/cli/check-call.ts",
+        "call:clear-hold": "tsx src/cli/clear-hold.ts",
         "call:delete": "tsx src/cli/delete-calls.ts"
     },
     "devDependencies": {

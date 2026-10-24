@@ -3,11 +3,11 @@
 // the idle auto-pause cancel or hang up. The model never dials. Numbers come only from a private consent list and
 // never reach events, errors or logs.
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { appendFileSync, readFileSync } from 'node:fs';
 
 import { checkAgentScript, firstDifference, heardOptOut, loadAgentScript, renderTemplate, type AgentScript } from './call-script.js';
-import { emit, redactAll, type OnEvent } from './events.js';
+import { emit, redact, type OnEvent } from './events.js';
 import { buildRequest, send, type FetchLike, type HttpResponse } from './http.js';
 import { isEmergencyNumber, spokenNumber, toUsE164 } from './phone.js';
 import { checkLibraryVoices } from './voices.js';
@@ -38,6 +38,19 @@ export interface CallLists {
     consent: ConsentEntry[];
     /** E.164 numbers that asked not to be called. Checked before every prepare, every confirm and every dial. */
     doNotCall: Set<string>;
+    /**
+     * E.164 numbers on hold. A 'pending' hold is written before every dial and released only after a call that was
+     * fully observed with nothing heard; a 'hold' marks something said that may be a refusal. Both block calls, like
+     * the do-not-call list, until released or cleared by a person with a reason.
+     */
+    holds: Map<string, HoldEntry>;
+}
+
+/** The hold on one number: the contact it was placed for, the record that placed it, and its kind. */
+export interface HoldEntry {
+    contact: string;
+    id: string;
+    kind: 'pending' | 'hold';
 }
 
 function text(value: unknown): string {
@@ -123,20 +136,148 @@ export function parseDoNotCall(source: string): Set<string> {
     return numbers;
 }
 
-/** Reads CALL_CONSENT_FILE or CALL_CONSENT, and CALL_DO_NOT_CALL_FILE plus CALL_DO_NOT_CALL. No list means no calls. */
+/**
+ * One line of the private hold file (JSON lines). 'pending' is written before every dial and 'release' ends it after
+ * a call fully observed with nothing heard; 'hold' marks something said that may be a refusal; 'clear' is a person
+ * ending a hold with a reason. A release or clear names the record it ends in target, so a stale one can never end a
+ * newer hold.
+ */
+export interface HoldRecord {
+    action: 'pending' | 'release' | 'hold' | 'clear';
+    /** Unique per record. */
+    id: string;
+    /** For a release or clear: the id of the pending or hold record it ends. */
+    target?: string;
+    contact: string;
+    number: string;
+    at: string;
+    /** What wrote it. For a clear, the person's own short reason. */
+    reason: string;
+}
+
+const RECORD_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** A fresh id for a hold record. */
+export function holdRecordId(): string {
+    return randomUUID();
+}
+
+/**
+ * Replays the hold file into the holds now in place. A refusal hold replaces whatever is there; a pending hold only
+ * fills an empty slot, so when two dialers race for one number only the first pending in the file may dial; a release
+ * ends only the pending hold it names; a clear ends only the hold it names. An unreadable line stops startup rather
+ * than being skipped; errors name the line only.
+ */
+export function parseHolds(source: string): Map<string, HoldEntry> {
+    const holds = new Map<string, HoldEntry>();
+    source.split('\n').forEach((line, index) => {
+        if (!line.trim()) return;
+        let record: unknown;
+        try {
+            record = JSON.parse(line);
+        } catch {
+            record = null;
+        }
+        const r = record && typeof record === 'object' ? (record as Record<string, unknown>) : {};
+        const number = toUsE164(text(r.number));
+        const contact = text(r.contact);
+        const id = text(r.id);
+        const target = text(r.target);
+        const action = r.action;
+        const places = action === 'pending' || action === 'hold';
+        const ends = action === 'release' || action === 'clear';
+        if (!number || !CONTACT_ID.test(contact) || !RECORD_ID.test(id) || !(places || ends) || (ends && !RECORD_ID.test(target))) {
+            throw new CallConfigError(`Hold file line ${index + 1} is not readable.`);
+        }
+        const current = holds.get(number);
+        if (action === 'hold') holds.set(number, { contact, id, kind: 'hold' });
+        else if (action === 'pending') {
+            if (!current) holds.set(number, { contact, id, kind: 'pending' });
+        } else if (current?.id === target && (action === 'clear' || current.kind === 'pending')) {
+            holds.delete(number);
+        }
+    });
+    return holds;
+}
+
+/** A file that does not exist yet reads as empty; any other read error is thrown. */
+function readOptional(read: (path: string) => string, path: string): string {
+    try {
+        return read(path);
+    } catch (error) {
+        if ((error as { code?: unknown }).code === 'ENOENT') return '';
+        throw error;
+    }
+}
+
+const readText = (path: string): string => readFileSync(path, 'utf8');
+
+/** The holds now in place, read from a hold file. */
+export function readHoldFile(path: string, read: (path: string) => string = readText): Map<string, HoldEntry> {
+    return parseHolds(readOptional(read, path));
+}
+
+/**
+ * Reads CALL_CONSENT_FILE or CALL_CONSENT, CALL_DO_NOT_CALL_FILE plus CALL_DO_NOT_CALL, and CALL_HOLD_FILE (trimmed,
+ * the same path dialerFromEnv writes to). No consent list means no calls.
+ */
 export function loadCallLists(
     env: Readonly<Record<string, string | undefined>>,
-    read: (path: string) => string = (path) => readFileSync(path, 'utf8'),
+    read: (path: string) => string = readText,
     now: number = Date.now(),
 ): CallLists {
     const consentJson = env.CALL_CONSENT_FILE ? read(env.CALL_CONSENT_FILE) : (env.CALL_CONSENT ?? '[]');
     const doNotCall = [env.CALL_DO_NOT_CALL_FILE ? read(env.CALL_DO_NOT_CALL_FILE) : '', env.CALL_DO_NOT_CALL ?? ''].join('\n');
-    return { consent: parseConsentList(consentJson, now), doNotCall: parseDoNotCall(doNotCall) };
+    const holdFile = env.CALL_HOLD_FILE?.trim();
+    const holds = holdFile ? readHoldFile(holdFile, read) : new Map<string, HoldEntry>();
+    return { consent: parseConsentList(consentJson, now), doNotCall: parseDoNotCall(doNotCall), holds };
 }
 
-/** Records an opt-out in the private do-not-call file. */
+/** Records a number in the private do-not-call file. */
 export function appendToDoNotCallFile(path: string, e164: string): void {
     appendFileSync(path, `${e164}\n`, 'utf8');
+}
+
+/** Adds one record to the private hold file, readable by its owner only. */
+export function appendHoldRecord(path: string, record: HoldRecord): void {
+    appendFileSync(path, `${JSON.stringify(record)}\n`, { encoding: 'utf8', mode: 0o600 });
+}
+
+/** A clear needs a short reason in words, so every cleared hold says why. */
+export function holdClearReason(reason: unknown): string {
+    const clean = text(reason).replace(/\s+/g, ' ');
+    if (clean.length < 3 || clean.length > 200 || !/\p{L}/u.test(clean)) {
+        throw new CallConfigError('Clearing a hold needs a short reason in words, 3 to 200 characters.');
+    }
+    return clean;
+}
+
+/** A contact id from outside, checked the way the consent list checks it. Errors never repeat what was given. */
+function checkedContactId(value: unknown): string {
+    const contact = text(value);
+    if (!CONTACT_ID.test(contact) || /\d{3}/.test(contact)) {
+        throw new CallConfigError('A contact id starts with a letter and uses lowercase letters, digits, - or _.');
+    }
+    return contact;
+}
+
+/**
+ * Clears every hold now in place for a contact in the hold file, with a reason, for npm run call:clear-hold. Each
+ * clear is a new line naming the exact hold it ends, so a hold placed after this read is never cleared by it, and the
+ * file is also the log. Returns how many holds were cleared; 0 means there was none.
+ */
+export function clearHoldInFile(options: { file: string; contactId: string; reason: string; now?: number; read?: (path: string) => string }): number {
+    const reason = holdClearReason(options.reason);
+    const contact = checkedContactId(options.contactId);
+    const holds = readHoldFile(options.file, options.read);
+    const at = new Date(options.now ?? Date.now()).toISOString();
+    let cleared = 0;
+    for (const [number, entry] of holds) {
+        if (entry.contact !== contact) continue;
+        appendHoldRecord(options.file, { action: 'clear', id: holdRecordId(), target: entry.id, contact, number, at, reason });
+        cleared++;
+    }
+    return cleared;
 }
 
 /** Calls only go out between 9 AM and 9 PM. */
@@ -190,6 +331,8 @@ export type RefusalCode =
     | 'not_consented'
     | 'consent_expired'
     | 'do_not_call'
+    | 'opt_out_hold'
+    | 'hold_file_error'
     | 'emergency_number'
     | 'bad_number'
     | 'errand_stale'
@@ -208,6 +351,8 @@ export const REFUSALS: Readonly<Record<RefusalCode, string>> = {
     not_consented: 'That person has not agreed to calls, so I did not call.',
     consent_expired: 'Their agreement to calls has expired, so I did not call.',
     do_not_call: 'That person asked not to be called, so I did not call.',
+    opt_out_hold: 'Calls to that person are on hold until someone checks, so I did not call.',
+    hold_file_error: 'I could not read or write the hold file, so I did not call.',
     emergency_number: 'I never call emergency numbers. This is not an emergency tool.',
     bad_number: 'That is not a number I can call.',
     errand_stale: 'There is no request sent in the last ten minutes to call about.',
@@ -269,7 +414,13 @@ export interface CallOutcome {
     endReason: string | null;
     cancelReason: CancelReason | null;
     refusal: CallRefusal | null;
+    /** True when something said on the call may have been a refusal (heardOptOut). */
     optedOut: boolean;
+    /**
+     * True when the contact is on hold after this call: a possible refusal was heard, how the call ended is unknown,
+     * or the hold file could not be updated. Only a person can clear it.
+     */
+    held: boolean;
     /** One sentence for the earpiece, without numbers. */
     spoken: string;
     /** Cartesia's own call summary with phone numbers masked. Still content: keep it out of public rows unless agreed. */
@@ -316,8 +467,16 @@ export interface DialerDeps {
     sleep?: (ms: number) => Promise<void>;
     onEvent?: OnEvent;
     onUpdate?: (snapshot: CallSnapshot) => void;
-    /** Persists an opt-out, for example appendToDoNotCallFile. */
+    /** Persists a number added with optOut(), for example appendToDoNotCallFile. */
     onDoNotCall?: (e164: string) => void;
+    /**
+     * Saves a hold record, for example appendHoldRecord. If a pending record cannot be saved the call is not placed;
+     * if a refusal hold cannot be saved every call is refused; if a release cannot be saved the contact stays on hold;
+     * if a clear cannot be saved the hold stays.
+     */
+    saveHold?: (record: HoldRecord) => void;
+    /** Reads the holds now in place, for example from the hold file, before every prepare, confirm, dial and clear. */
+    readHolds?: () => Map<string, HoldEntry>;
 }
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
@@ -352,24 +511,9 @@ function readTranscript(raw: unknown): { role: string; text: string }[] | null {
     });
 }
 
-/**
- * Each speaker's turns are masked together, so a number split across one speaker's turns is masked in all of them,
- * and any run of 3 or more digits is masked, so a fragment shown before the rest of a number arrives is masked too.
- */
+/** The dashboard copy of the transcript: every line through redact(), so no digit or number word is shown. */
 function maskedTranscript(turns: readonly { role: string; text: string }[]): { role: string; text: string }[] {
-    const out = turns.map((turn) => ({ role: turn.role, text: '' }));
-    for (const role of new Set(turns.map((turn) => turn.role))) {
-        const indexes = turns.flatMap((turn, i) => (turn.role === role ? [i] : []));
-        const masked = redactAll(
-            indexes.map((i) => turns[i]?.text ?? ''),
-            3,
-        );
-        indexes.forEach((i, k) => {
-            const slot = out[i];
-            if (slot) slot.text = masked[k] ?? '';
-        });
-    }
-    return out;
+    return turns.map((turn) => ({ role: turn.role, text: redact(turn.text) }));
 }
 
 function toMs(value: unknown): number | null {
@@ -388,6 +532,9 @@ export class CallHandle {
     cancelConfirmed = false;
     cancelInFlight = false;
     optedOut = false;
+    /** The pending hold written before the dial, until the call is settled. */
+    pendingId: string | null = null;
+    held = false;
     finished = false;
     transcript: { role: string; text: string }[] = [];
     readonly done: Promise<CallOutcome>;
@@ -510,6 +657,10 @@ export interface PreflightReport {
     ok: boolean;
     consentCount: number;
     doNotCallCount: number;
+    /** Numbers on hold until a person clears them. */
+    holdCount: number;
+    /** False when the hold file could not be read: then no call is placed. */
+    holdsReadable: boolean;
     scriptProblems: string[];
     agent: AgentCheck;
     /** True when every consented recipient is inside calling hours right now. */
@@ -517,9 +668,10 @@ export interface PreflightReport {
 }
 
 /**
- * Holds the consent list, the do-not-call list and at most one call. prepare() builds the read-back and its digest;
- * place() needs that exact digest from a fresh CONFIRM, checks everything again right before dialing, dials once,
- * and never retries.
+ * Holds the consent list, the do-not-call list, the holds and at most one call. prepare() builds the read-back and
+ * its digest; place() needs that exact digest from a fresh CONFIRM, checks everything again right before dialing,
+ * dials once, and never retries. Every dial is on hold from just before the request until the call is settled, and
+ * anything heard on a call that may be a refusal keeps the contact on hold until a person clears it.
  */
 export class Dialer {
     readonly callIds: string[] = [];
@@ -538,6 +690,11 @@ export class Dialer {
     private readonly maxConfirmToDialMs: number;
     private readonly now: () => number;
     private readonly sleep: (ms: number) => Promise<void>;
+    /**
+     * Set when a refusal hold could not be saved: then every call is refused until restart. The call's pending hold,
+     * which is never released in that case, keeps the number on hold after the restart.
+     */
+    private holdUnsaved = false;
 
     constructor(
         private readonly config: DialerConfig,
@@ -593,6 +750,7 @@ export class Dialer {
         if (!number || number === this.callback) return refusal('bad_number');
         if (isEmergencyNumber(number)) return refusal('emergency_number');
         if (this.lists.doNotCall.has(number)) return refusal('do_not_call');
+        if (this.holdUnsaved || this.lists.holds.has(number)) return refusal('opt_out_hold');
         if (now - errandSentAt > this.maxErrandAgeMs || errandSentAt - now > 60_000) return refusal('errand_stale');
         if (!insideCallingHours(now, this.spanMs(), contact.timeZone)) return refusal('outside_hours');
         return null;
@@ -615,6 +773,22 @@ export class Dialer {
         return { ok: false, refusal: refusal(code) };
     }
 
+    /**
+     * Reloads the holds from the hold file, so a hold saved by another dialer or process counts here too. False when
+     * the file cannot be read; then nothing is called.
+     */
+    private refreshHolds(): boolean {
+        if (!this.deps.readHolds) return true;
+        try {
+            const fresh = this.deps.readHolds();
+            this.lists.holds.clear();
+            for (const [number, entry] of fresh) this.lists.holds.set(number, entry);
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
     /** Checks the guards and builds the read-back. Nothing is dialed. */
     prepare(request: CallRequest): { ok: true; call: PreparedCall } | { ok: false; refusal: CallRefusal } {
         const now = this.now();
@@ -623,6 +797,7 @@ export class Dialer {
         if (sentAt === null) return this.refuse('bad_request');
         const title = typeof request.errand?.title === 'string' ? this.titles.get(titleKey(request.errand.title)) : undefined;
         if (!title) return this.refuse('errand_not_allowed');
+        if (!this.refreshHolds()) return this.refuse('hold_file_error');
         const contact = this.lists.consent.find((entry) => entry.id === request.contactId);
         const blocked = this.check(contact, sentAt, now);
         if (blocked || !contact) return this.refuse(blocked?.code ?? 'not_consented');
@@ -681,6 +856,7 @@ export class Dialer {
         if (confirmDigest !== call.digest) return this.refuse('digest_mismatch');
         if (this.usedDigests.has(call.digest)) return this.refuse('already_used');
         if (this.active && !this.active.finished) return this.refuse('line_busy');
+        if (!this.refreshHolds()) return this.refuse('hold_file_error');
         const blocked = this.recheck(call, now);
         if (blocked) return this.refuse(blocked.code);
         // Consume the confirm before anything can fail, so one confirm can never place two calls.
@@ -707,6 +883,31 @@ export class Dialer {
         return true;
     }
 
+    /**
+     * Clears a contact's holds after a person has checked, with a short reason (3 to 200 characters, in words). Not
+     * while a call is in progress: whatever that call hears is settled first. Each clear names the exact hold it ends
+     * and is saved before it takes effect; if it cannot be saved, the hold stays and this throws. Returns false when
+     * the contact had no hold.
+     */
+    clearHold(contactId: string, reason: string): boolean {
+        const why = holdClearReason(reason);
+        if (this.active && !this.active.finished) throw new CallConfigError('A call is in progress. Clear the hold after it ends.');
+        if (!this.refreshHolds()) throw new CallConfigError('The hold file could not be read, so the hold stays.');
+        const entries = [...this.lists.holds].filter(([, entry]) => entry.contact === contactId);
+        if (entries.length === 0) return false;
+        const at = new Date(this.now()).toISOString();
+        for (const [number, entry] of entries) {
+            try {
+                this.deps.saveHold?.({ action: 'clear', id: holdRecordId(), target: entry.id, contact: contactId, number, at, reason: why });
+            } catch {
+                throw new CallConfigError('The cleared hold could not be saved, so the hold stays.');
+            }
+            this.lists.holds.delete(number);
+        }
+        emit(this.deps.onEvent, { stage: 'call', status: 'ok', detail: 'hold cleared', ms: 0 });
+        return true;
+    }
+
     async deleteCallData(callId: string): Promise<DeleteResult> {
         return deleteCallData({ apiKey: this.config.apiKey, callId, fetch: this.deps.fetch, sleep: this.sleep });
     }
@@ -724,10 +925,13 @@ export class Dialer {
         const agent = await verifyAgent({ apiKey: this.config.apiKey, agentId: this.config.agentId, fetch: this.deps.fetch });
         const now = this.now();
         const insideHoursNow = this.lists.consent.length > 0 && this.lists.consent.every((entry) => insideCallingHours(now, this.spanMs(), entry.timeZone));
+        const holdsReadable = this.refreshHolds();
         return {
-            ok: scriptProblems.length === 0 && this.lists.consent.length > 0 && agent.ok,
+            ok: holdsReadable && scriptProblems.length === 0 && this.lists.consent.length > 0 && agent.ok,
             consentCount: this.lists.consent.length,
             doNotCallCount: this.lists.doNotCall.size,
+            holdCount: this.lists.holds.size,
+            holdsReadable,
             scriptProblems,
             agent,
             insideHoursNow,
@@ -742,6 +946,59 @@ export class Dialer {
         } catch {
             // The in-memory list still blocks the number for this run.
         }
+    }
+
+    /**
+     * Puts a number on hold for a possible refusal, in memory at once and then in the hold file. If saving fails, every
+     * call is refused; the call's pending hold, never released, still holds the number after a restart.
+     */
+    private addHold(number: string, contactId: string): void {
+        const id = holdRecordId();
+        this.lists.holds.set(number, { contact: contactId, id, kind: 'hold' });
+        try {
+            this.deps.saveHold?.({ action: 'hold', id, contact: contactId, number, at: new Date(this.now()).toISOString(), reason: 'heard on a call' });
+        } catch {
+            this.holdUnsaved = true;
+            emit(this.deps.onEvent, { stage: 'call', status: 'error', detail: 'hold not saved: refusing all calls', ms: 0 });
+        }
+    }
+
+    /**
+     * Settles the pending hold written before the dial, once the call has ended. Anything heard that may be a refusal
+     * holds the contact, written as the call's last record so a clear made during the call cannot outlast it. A call
+     * whose end is unknown keeps its pending hold. Only a call with a known end and nothing heard releases it, and if
+     * the release cannot be saved the contact stays on hold.
+     */
+    private settleHold(handle: CallHandle, call: Prepared, result: CallResult): void {
+        const pendingId = handle.pendingId;
+        if (pendingId === null) return;
+        handle.pendingId = null;
+        handle.held = true;
+        if (handle.optedOut || heardOptOut(handle.transcript)) {
+            handle.optedOut = true;
+            this.addHold(call.toNumber, call.contactId);
+            return;
+        }
+        if (result !== 'unknown') {
+            try {
+                this.deps.saveHold?.({
+                    action: 'release',
+                    id: holdRecordId(),
+                    target: pendingId,
+                    contact: call.contactId,
+                    number: call.toNumber,
+                    at: new Date(this.now()).toISOString(),
+                    reason: 'call ended with nothing heard',
+                });
+                if (this.lists.holds.get(call.toNumber)?.id === pendingId) this.lists.holds.delete(call.toNumber);
+                handle.held = false;
+                return;
+            } catch {
+                // Not released: the pending hold stays in the file, and in memory below.
+            }
+        }
+        if (!this.lists.holds.has(call.toNumber)) this.lists.holds.set(call.toNumber, { contact: call.contactId, id: pendingId, kind: 'pending' });
+        emit(this.deps.onEvent, { stage: 'call', status: 'error', detail: result === 'unknown' ? 'held: call end unknown' : 'held: release not saved', ms: 0 });
     }
 
     private onCancel(handle: CallHandle): void {
@@ -784,6 +1041,7 @@ export class Dialer {
         const started = this.now();
         const end = (result: CallResult, extra: Partial<CallOutcome> = {}) => {
             if (handle.finished) return;
+            this.settleHold(handle, call, result);
             const outcome: CallOutcome = {
                 requestId: call.requestId,
                 result,
@@ -793,12 +1051,14 @@ export class Dialer {
                 cancelReason: handle.cancelReason,
                 refusal: null,
                 optedOut: handle.optedOut,
+                held: handle.held,
                 spoken: '',
                 summary: null,
                 ms: this.now() - started,
                 ...extra,
             };
-            outcome.spoken = outcome.refusal ? outcome.refusal.reason : this.spokenOutcome(call.recipientName, outcome);
+            const held = outcome.held ? ` Calls to ${call.recipientName} are on hold until someone checks.` : '';
+            outcome.spoken = (outcome.refusal ? outcome.refusal.reason : this.spokenOutcome(call.recipientName, outcome)) + held;
             handle.finish(outcome);
             if (this.active === handle) this.active = null;
             emit(this.deps.onEvent, {
@@ -818,6 +1078,36 @@ export class Dialer {
             handle.phase = 'dialing';
             emit(this.deps.onEvent, { stage: 'call', status: 'started', detail: 'dialing', ms: 0 });
             this.update(handle);
+            // The pending hold goes in the hold file before the dial, so a crash, a timeout or a lost answer leaves
+            // the contact on hold, never free to call again. A pending hold that cannot be saved means no call.
+            if (!this.refreshHolds()) return end('refused', { refusal: refusal('hold_file_error') });
+            const pendingId = holdRecordId();
+            try {
+                this.deps.saveHold?.({
+                    action: 'pending',
+                    id: pendingId,
+                    contact: call.contactId,
+                    number: call.toNumber,
+                    at: new Date(this.now()).toISOString(),
+                    reason: 'call about to be placed',
+                });
+            } catch {
+                return end('refused', { refusal: refusal('hold_file_error') });
+            }
+            handle.pendingId = pendingId;
+            // Another dialer may have written its own pending hold for this number at the same moment: only the
+            // first one in the file dials.
+            if (this.deps.readHolds) {
+                let owner: HoldEntry | undefined;
+                try {
+                    owner = this.deps.readHolds().get(call.toNumber);
+                } catch {
+                    return end('refused', { refusal: refusal('hold_file_error') });
+                }
+                if (owner?.id !== pendingId) {
+                    return end('refused', { refusal: refusal(owner === undefined ? 'hold_file_error' : owner.kind === 'hold' ? 'opt_out_hold' : 'line_busy') });
+                }
+            }
             // The last check, after the last application callback above, with nothing between it and the request:
             // a STOP, HEADSET-OFF, opt-out or list change made from the dialing notice still stops the call.
             // Every guard runs again: consent, do-not-call, the number, the hours and a fresh confirm.
@@ -862,13 +1152,13 @@ export class Dialer {
             this.callIds.push(callId);
             handle.phase = 'ringing';
             this.update(handle);
-            await this.poll(handle, call, started, end);
+            await this.poll(handle, started, end);
         } catch {
             end('unknown', { dialed: handle.callId ? true : 'unknown' });
         }
     }
 
-    private async poll(handle: CallHandle, call: Prepared, started: number, end: (result: CallResult, extra?: Partial<CallOutcome>) => void): Promise<void> {
+    private async poll(handle: CallHandle, started: number, end: (result: CallResult, extra?: Partial<CallOutcome>) => void): Promise<void> {
         const callId = handle.callId as string;
         const deadline = started + this.spanMs();
         let endReason: string | null = null;
@@ -891,11 +1181,11 @@ export class Dialer {
                 if (typeof data.end_reason === 'string') endReason = data.end_reason;
                 if (typeof data.summary === 'string') summary = data.summary;
                 handle.transcript = readTranscript(data.transcript) ?? handle.transcript;
-                // An opt-out counts the moment it is heard, so no later timeout or error can lose it.
+                // The pending hold already covers this call; a possible refusal is noted here and written as a hold
+                // when the call is settled, so no timeout or error in between can release the contact.
                 if (!handle.optedOut && heardOptOut(handle.transcript)) {
                     handle.optedOut = true;
-                    this.addDoNotCall(call.toNumber);
-                    emit(this.deps.onEvent, { stage: 'call', status: 'ok', detail: 'opt-out recorded', ms: this.now() - started });
+                    emit(this.deps.onEvent, { stage: 'call', status: 'ok', detail: 'opt-out hold', ms: this.now() - started });
                 }
                 const phase = phaseFor(handle.status);
                 if (phase === 'connected') sawConnected = true;
@@ -909,9 +1199,7 @@ export class Dialer {
             if (handle.cancelReason && !handle.cancelConfirmed && (data === null || handle.phase === 'connected')) await this.sendCancel(handle);
             if (handle.status !== null && TERMINAL.has(handle.status)) break;
         }
-        // The summary is call content like the transcript, so it gets the same short threshold: "area code 415, then
-        // 555, then 0188" never shows a group.
-        const masked = summary === null ? null : (redactAll([summary], 3)[0] ?? null);
+        const masked = summary === null ? null : redact(summary);
         if (handle.status === null || !TERMINAL.has(handle.status)) {
             if (!handle.cancelConfirmed) await this.sendCancel(handle);
             return end('unknown', { dialed: true, endReason, summary: masked });
@@ -920,11 +1208,11 @@ export class Dialer {
         end(resultFor(handle.status, endReason, sawConnected), { dialed: true, endReason, summary: masked });
     }
 
+    /** The sentence for how the call ended; end() adds the hold sentence when the contact is on hold. */
     private spokenOutcome(name: string, outcome: CallOutcome): string {
-        const optedOut = outcome.optedOut ? ` ${name} asked not to be called again, so I will not call them.` : '';
         switch (outcome.result) {
             case 'answered':
-                return outcome.optedOut ? `${name} asked not to be called again. I will not call them.` : `${name} picked up. The call has ended.`;
+                return outcome.optedOut ? `${name} may not want more calls.` : `${name} picked up. The call has ended.`;
             case 'no_answer':
                 return `${name} did not answer.`;
             case 'busy':
@@ -932,13 +1220,13 @@ export class Dialer {
             case 'voicemail':
                 return 'The call went to voicemail. No message was left.';
             case 'cancelled':
-                return (outcome.dialed === true ? 'The call was cancelled.' : 'Cancelled. No call was made.') + optedOut;
+                return outcome.dialed === true ? 'The call was cancelled.' : 'Cancelled. No call was made.';
             case 'failed':
                 return 'The call could not be placed.';
             case 'refused':
                 return 'I did not call.';
             default:
-                return (outcome.dialed === 'unknown' ? 'I could not tell if the call went out. Check before trying again.' : 'I could not tell how the call ended.') + optedOut;
+                return outcome.dialed === 'unknown' ? 'I could not tell if the call went out. Check before trying again.' : 'I could not tell how the call ended.';
         }
     }
 }

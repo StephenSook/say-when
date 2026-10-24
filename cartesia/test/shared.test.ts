@@ -3,21 +3,26 @@ import './no-network.js';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { emit, redact, redactAll, type PipelineEvent } from '../src/events.js';
+import { emit, redact, type PipelineEvent } from '../src/events.js';
 import { buildRequest, CartesiaNetworkError, encodeQuery, httpError, safeErrorCode, safeRequestId, send } from '../src/http.js';
 import { buildKeyterms, MAX_KEYTERM_CHARS, MAX_KEYTERMS } from '../src/keyterms.js';
 import { base64ToBytes, Downsampler, floatToPcm16, PcmChunker, pcmDurationMs, pcmToFloat32 } from '../src/pcm.js';
 import { checkAccessToken, socketUrl } from '../src/ws.js';
 
+// A masked text may not show a number character or a word made of number words.
+const SPOKEN = /^(?:zero|oh|o|nought|naught|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|double|triple)+$/;
+const showsNoNumber = (text: string): boolean =>
+    !/\p{N}/u.test(text) && !(text.match(/\p{L}[\p{L}\p{M}]*/gu) ?? []).some((word) => SPOKEN.test(word.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()));
+
 describe('events', () => {
-    it('masks keys, tokens and phone numbers', () => {
+    it('masks keys, tokens and every digit', () => {
         assert.equal(
             redact('key sk_car_abc123 and access_token=tok_1&x=2 call +1 (415) 555-0123'),
-            'key [key] and access_token=[token]&x=2 call [number]',
+            'key [key] and access_token=[token]&x=# call +# (###) ###-####',
         );
     });
 
-    it('masks numbers written with Unicode dashes, spaces, dots, invisible marks or words', () => {
+    it('masks a phone number whatever its digits, separators or words', () => {
         const forms = [
             '415\u{2011}555\u{2011}0188', // non-breaking hyphen
             '415\u{2010}555\u{2010}0188', // hyphen
@@ -67,60 +72,42 @@ describe('events', () => {
             '415/5550188',
             '555/0188', // a local number with a slash
         ];
-        for (const form of forms) assert.equal(redact(`Call me at ${form} please`), 'Call me at [number] please', JSON.stringify(form));
-    });
-
-    it('treats every ASCII character the way its Unicode class says', () => {
-        for (let code = 0; code < 128; code++) {
-            const ch = String.fromCharCode(code);
-            // A letter or a colon breaks a number, except the letter O, which people say and write for zero.
-            const masked = !/[\p{L}\p{M}:+]/u.test(ch) || ch === 'o' || ch === 'O';
-            assert.equal(redact(`415${ch}555${ch}0188`) === '[number]', masked, `code ${code}`);
+        for (const form of forms) {
+            const shown = redact(`Call me at ${form} please`);
+            assert.ok(shown.startsWith('Call me at ') && shown.endsWith(' please'), JSON.stringify(form));
+            assert.ok(shown.includes('#') && showsNoNumber(shown), `${JSON.stringify(form)} shows ${JSON.stringify(shown)}`);
         }
     });
 
-    it('leaves everything that is not a number exactly as written', () => {
+    it('masks every input from the last review', () => {
         for (const text of [
-            'Leon got it at 10:30 AM. One or two of them, said Zo\u{00EB}.',
-            'Appointment on 10/24/2026, from 9:00-17:00.',
-            'Or 10 / 24 / 2026, or 2026 / 10 / 24.',
-            'The room is 12 m\u{00B2}.',
-            'Leon \u{2014} he got it \u{2026} thanks\u{00A0}!',
-            '\u{2022} First point\n\u{2022} Second point',
+            'Call me at 2/12 5/5 5/01/23 please',
+            'Call me at 41:55:55:01:88 please',
+            'Call me at \u{2463}\u{2460}\u{2464} \u{2464}\u{2464}\u{2464} \u{24EA}\u{2460}\u{2467}\u{2467} please', // circled
+            'Call me at \u{2074}\u{00B9}\u{2075} \u{2075}\u{2075}\u{2075} \u{2070}\u{00B9}\u{2078}\u{2078} please', // superscript
+            'Call me at \u{FF46}\u{FF4F}\u{FF55}\u{FF52} \u{FF4F}\u{FF4E}\u{FF45} \u{FF46}\u{FF49}\u{FF56}\u{FF45} please', // full-width words
+            'Call me at four\u{034F}one\u{200B}five please', // number words joined by invisible marks
         ]) {
-            assert.equal(redact(text), text, JSON.stringify(text));
+            const shown = redact(text);
+            assert.ok(showsNoNumber(shown), `${JSON.stringify(text)} shows ${JSON.stringify(shown)}`);
         }
+        for (const turn of ['My number is 2/12', '5/5', '5/01/23']) assert.ok(showsNoNumber(redact(turn)), turn);
+        assert.equal(redact('Call me at 41:55:55:01:88 please'), 'Call me at ##:##:##:##:## please');
     });
 
-    it('masks a number split across texts read together, and nothing more', () => {
-        assert.deepEqual(redactAll(['My number is 415 555', '0188, thanks']), ['My number is [number]', '[number], thanks']);
-        assert.deepEqual(redactAll(['Room 12', '34 people', 'sk_car_x1']), ['Room 12', '34 people', '[key]']);
-        assert.deepEqual(redactAll([]), []);
-        // An empty text inside a number stays empty, and a text of separators alone is left as it was.
-        assert.deepEqual(redactAll(['415 555', '', ' - ', '0188']), ['[number]', '', ' - ', '[number]']);
+    it('masks dates, times and prices too, and keeps the other words', () => {
+        assert.equal(redact('Appointment on 10/24/2026, from 9:00-17:00.'), 'Appointment on ##/##/####, from #:##-##:##.');
+        assert.equal(redact('Leon got it at 10:30 AM. One or two of them, said Zo\u{00EB}.'), 'Leon got it at ##:## AM. # or # of them, said Zo\u{00EB}.');
+        assert.equal(redact('The room is 12 m\u{00B2}, $40.'), 'The room is ## m#, $##.');
+        assert.equal(redact('\u{2022} First point\n\u{2022} Second point'), '\u{2022} First point\n\u{2022} Second point');
+        assert.equal(redact('Someone often says tone and none.'), 'Someone often says tone and none.');
     });
 
-    it('masks shorter runs when asked, for fragments that may be the start of a number', () => {
-        assert.deepEqual(redactAll(['My number is 415 555'], 3), ['My number is [number]']);
-        assert.deepEqual(redactAll(['Room 12, at five o\u{2019}clock'], 3), ['Room 12, at five o\u{2019}clock']);
-        assert.deepEqual(redactAll(['It was 2026, in words twenty twenty six'], 3), ['It was [number], in words [number]']);
-        for (const bad of [1, 16, 2.5]) assert.throws(() => redactAll(['x'], bad), RangeError);
-        // Dates keep their shape even at the short threshold.
-        const dates = 'On 10/24, 10/2026, 10/24/26, 10/24/2026 or 2026/10/24.';
-        assert.deepEqual(redactAll([dates], 3), [dates]);
-        // Only digits make a date: spoken words never do, and a digit beside a "date" makes it a number, unless that digit
-        // belongs to another date or to a short time.
-        assert.deepEqual(redactAll(['Twelve/thirty or 12/30'], 3), ['[number] or 12/30']);
-        assert.deepEqual(redactAll(['It is 4 1 5/5'], 3), ['It is [number]']);
-        assert.deepEqual(redactAll(['Call 4  1  5/5  5  5/0  1  2  3'], 3), ['Call [number]']);
-        for (const text of ['Appointment 10/24/2026 9:00 AM', 'On 10/24 10/25', 'At 9 am 10/24/2026', '10/24/2026 9 am', 'Due 9:00 10/24']) {
-            assert.deepEqual(redactAll([text], 3), [text], text);
-            assert.equal(redact(text), text, text);
-        }
-        assert.deepEqual(redactAll(['10/24/2026 415 555 0188'], 3), ['[number]']);
-        // A date-shaped piece that is part of a number cannot vouch for the next one.
-        assert.equal(redact('Call me at 415 5/5 5/01/23 please'), 'Call me at [number] please');
-        assert.deepEqual(redactAll(['Call me at 415 5/5 5/01/23 please'], 3), ['Call me at [number] please']);
+    it('shows the normalized text: look-alike forms folded, invisible characters dropped', () => {
+        assert.equal(redact('Leon \u{2014} he got it \u{2026} thanks\u{00A0}!'), 'Leon \u{2014} he got it ... thanks !');
+        assert.equal(redact('\u{FF2C}eon go\u{200B}t it'), 'Leon got it');
+        assert.equal(redact('key sk_car_\u{200B}abc'), 'key [key]');
+        assert.equal(redact(''), '');
     });
 
     it('cleans every event and survives a sink that throws', () => {
@@ -171,7 +158,7 @@ describe('http', () => {
         assert.equal(error.errorCode, 'concurrency_limited');
         assert.equal(error.requestId, '550e8400-e29b-41d4-a716-446655440000');
         assert.equal(error.message.includes('sk_car_x'), false);
-        assert.equal(httpError(500, 'plain text').message, 'HTTP 500: plain text');
+        assert.equal(httpError(500, 'plain text').message, 'HTTP ###: plain text');
     });
 
     it('drops an error code or request id that could carry a key or a number', () => {
@@ -185,11 +172,11 @@ describe('http', () => {
         assert.equal(safeRequestId('550e8400-e29b-41d4-a716-446655440000:ctx-1:x'), '550e8400-e29b-41d4-a716-446655440000');
     });
 
-    it('masks a number written with Unicode dashes in an error message and title', () => {
+    it('masks every digit of a number in an error message and title', () => {
         const error = httpError(400, JSON.stringify({ title: 'Bad 415\u{2011}555\u{2011}0188', message: 'call 415\u{2013}555\u{2013}0188 back', request_id: 'r' }));
         for (const text of [error.message, error.title]) {
             assert.equal(/555|0188/.test(text), false, text);
-            assert.match(text, /\[number\]/);
+            assert.match(text, /###/);
         }
     });
 
