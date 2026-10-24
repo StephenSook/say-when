@@ -19,13 +19,17 @@ Everything below runs against the demo database `say-when-demo`, the one https:/
 
 ## What runs where
 
-| Device | Opens | Notes |
+Laptop layout, locked by Stephen on Oct 24:
+
+| Laptop | Runs | Notes |
 |---|---|---|
-| Stephen's Mac | `scripts/demo-up.sh` (the agent sidecar), the owner commands, the projector at `/stage` | the only place the keys live |
-| Station laptop | `https://eleven-calhacks.vercel.app/station`, wired earpiece | must be the laptop running Shashank's decoder (`ws://127.0.0.1:8765` is loopback only). Chrome asks about devices on the local network: click Allow. Keyboard mode works on any laptop |
+| Shashank's EEG laptop | Screen 1: `https://eleven-calhacks.vercel.app/brain?bridge=1`, and `/station` in its own visible window (never a background tab, so its heartbeats are not slowed) with the wired earpiece | the decoder serves `ws://127.0.0.1:8766` (viz) and `ws://127.0.0.1:8765` (commands), both bound to 127.0.0.1. EEG never leaves this laptop. Chrome asks about devices on the local network: click Allow |
+| Our laptop (Stephen's Mac) | Screen 2: `https://eleven-calhacks.vercel.app/agents`, live through SpacetimeDB; `scripts/demo-up.sh` (the agent sidecar) and the owner commands | the only place the keys live |
 | Partner phone | `/partner`, label "partner phone 1" | Hold to ask, or type |
 | Room speaker | `/speaker` on a laptop with a loudspeaker | only one speaker page, or the reply is said twice |
-| Any screen | `/stage` (projector), `/replies`, `/conversation`, `/live`, `/agents`, `/judge` | anonymous, no pairing. `/brain` shows live data only on the decoder laptop (it reads `ws://127.0.0.1:8766`); elsewhere it says "Decoder not connected" |
+| Any other screen | `/stage`, `/replies`, `/conversation`, `/live`, `/judge` | anonymous, no pairing |
+
+Check on the EEG laptop before the first judge: `python3 tools/check_viz_bridge.py --seconds 10` (the viz bridge on port 8766 answers with valid messages).
 
 ## The morning, minute by minute
 
@@ -66,10 +70,10 @@ Pairing survives a reload. The sidecar's own pairing and the consent rows were d
 
 ```bash
 scripts/demo-up.sh --db say-when-demo warm                  # wakes the Actor (about 4 s cold), opens Moss, mints a token
-node scripts/demo-owner.mjs --db say-when-demo sharing on   # the projector shows the words; turn it off after judging
+node scripts/demo-owner.mjs --db say-when-demo sharing on   # the screens show the words; turn it off after judging
 ```
 
-Put `/stage` on the projector.
+Screen 1 (`/brain?bridge=1`) on the EEG laptop, Screen 2 (`/agents`) on our laptop.
 
 ## The 3-minute demo
 
@@ -77,11 +81,11 @@ Put `/stage` on the projector.
 |---|---|---|
 | 0:00 | Stephen | "Eleven is for someone who cannot speak or use their hands. The person hears up to four answers in an earpiece and picks one." |
 | 0:20 | Partner | Asks "Are you tired?" The earpiece says "Yes or no?" YES (key Y or right fist). The room voice says "Yes." A plain yes or no question skips the search and Claude, so it starts in under a second. |
-| 0:40 | Partner | Asks an open question that needs a lookup, for example "Which cafe near campus has the best hot chocolate?" `/stage` shows memory (Moss), the web search (Apify) and Claude drafting up to four options; each is read into the earpiece in its own tone. YES on the one wanted. The room voice says it. |
+| 0:40 | Partner | Asks an open question that needs a lookup, for example "Which cafe near campus has the best hot chocolate?" Screen 2 and `/live` show memory (Moss), the web search (Apify) and Claude drafting up to four options; each is read into the earpiece in its own tone. YES on the one wanted. The room voice says it. |
 | 1:30 | Partner | Asks "Can we send the care team a request for some lunch?" One option is the errand. YES. Our form-errand Actor fills the demo form and reads the values back off the page; the read-back plays in the earpiece and ends "To send it, ..." CONFIRM after the window chime (key C or double jaw clench). The station says Sent. |
 | 2:10 | Partner | Asks "Should we send the same lunch request as last time?" The errand option comes back filled from memory ("same as last time"). YES, read-back, CONFIRM, Sent. Nothing is sent from memory without its own read-back and CONFIRM. |
 | 2:40 | Partner | Only if `--calls` was accepted: a follow-up option offers to call the consented contact about the sent request. YES, read-back, CONFIRM; the phone rings and the voice says it is an automated assistant with an AI-generated voice. STOP hangs up. |
-| 2:55 | Stephen | Points at the safety line on `/stage`: STOP, a lost signal, silence or a timeout all mean nothing is sent. |
+| 2:55 | Stephen | Points at the safety line: STOP, a lost signal, silence or a timeout all mean nothing is sent. |
 
 If a question gets no errand option, ask again in plainer words ("Please send the care team a lunch request."). The demo form is the Actor's built-in one and sends nothing anywhere.
 
@@ -115,7 +119,7 @@ The whole run made 52 voice requests (34 stock phrases, the options, the read-ba
 |---|---|
 | Wi-Fi drops for a few seconds | Nothing to do. The station stops its heartbeats, the database pauses ("Signal lost. Nothing will be sent.") and resumes 3 s after the link is back. |
 | Wi-Fi is gone | Switch the Mac and the station laptop to the phone hotspot. Everything is in the cloud (SpacetimeDB, Claude, Apify, Moss's key check, Cartesia), so nothing live works offline. |
-| Still no network | Open `/stage?replay=1`. Every screen says "Sample replay, not live data" and the chip says Replay. Say out loud that it is a recording of sample rows. |
+| Still no network | Open `/agents?replay=1` (or `/stage?replay=1`). Every screen says "Sample replay, not live data" and the chip says Replay. Say out loud that it is a recording of sample rows. |
 | The decoder or headset fails | On the station: End session, pick Keyboard test, Start session. Say "key presses stand in for the headset now." |
 | No voice in the earpiece | The station says what failed ("Voice off", "Voice service problem"). Without a voice the read-back cannot play, so no errand or call can be sent: that is by design. Check Cartesia credits (Oct 24 they ran out once at 4:09 PM) and keep to typed yes or no questions until it is back. |
 | A page reloaded | Station: "Start audio and continue session N". Speaker: Start room voice. Pairing is kept. |
