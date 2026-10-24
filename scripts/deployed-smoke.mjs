@@ -55,6 +55,9 @@ const BROWSER_PAGES = [
   { path: '/conversation?replay=1', expect: replay },
   { path: '/replies', expect: liveDashboard },
   { path: '/replies?replay=1', expect: replay },
+  { path: '/stage', expect: stage },
+  { path: '/stage?replay=1', expect: replay },
+  { path: '/brain', expect: brain },
   { path: '/partner', expect: partner },
   { path: '/judge', expect: judge },
 ];
@@ -64,6 +67,8 @@ const HTML_PAGES = [
   { path: '/', finalPath: '/conversation', mustHold: [] },
   { path: '/station', finalPath: '/station', mustHold: ['Eleven station'] },
   { path: '/speaker', finalPath: '/speaker', mustHold: ['Eleven room voice', 'id="pairing-title-speaker"'] },
+  // /try is HTML only: its page pairs a sandbox station on Start, and the smoke test never writes.
+  { path: '/try', finalPath: '/try', mustHold: ['Try Eleven', 'stand in for the headset'] },
 ];
 
 const results = [];
@@ -189,6 +194,19 @@ async function replay(page) {
   await connectionChip(page, 'Replay').waitFor({ state: 'visible' });
   await page.getByText(REPLAY_QUESTION).first().waitFor({ state: 'visible' });
   return 'the sample replay shows its question';
+}
+
+/** The projector view: connected, and the stage itself drew (it has no h1 of its own). */
+async function stage(page) {
+  await connectionChip(page, 'Live').waitFor({ state: 'visible' });
+  await page.locator('main').first().waitFor({ state: 'attached' });
+  return 'connected (Live), stage drawn';
+}
+
+/** Screen 1 off the EEG laptop: it must not open the local decoder, and says so (no console error allowed). */
+async function brain(page) {
+  await page.getByText('Decoder not connected').first().waitFor({ state: 'visible' });
+  return 'shows "Decoder not connected", no decoder socket opened';
 }
 
 async function partner(page) {
