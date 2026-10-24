@@ -3,7 +3,9 @@
 /**
  * The frame around every screen. The three dashboard routes get the header (name, tabs, connection
  * chip, headset chip), the safety banner, the connection line and the replay banner. The partner
- * phone view (/partner) gets only the replay banner; it draws its own top row.
+ * phone view (/partner) gets only the replay banner; it draws its own top row. The station and the
+ * speaker (/station, /speaker) get a bare frame: they draw their own top row from their own role
+ * connection, and the board source never starts there (lib/routes.ts, docs/station.md 1.6).
  *
  * Every frame renders the page's <main id="main">, so a screen must not render another <main>.
  */
@@ -12,6 +14,7 @@ import { useEffect, type ReactNode } from 'react';
 import { cx } from '@/lib/cx';
 import { useConnection, useReplayParam } from '@/lib/data/provider';
 import { withReplayParam } from '@/lib/data/source-mode';
+import { isPhoneRoute, isRolePageRoute } from '@/lib/routes';
 import { ConnectionChip } from './ConnectionChip';
 import { ConnectionGate, ConnectionLine } from './ConnectionLine';
 import { HeadsetChip } from './HeadsetChip';
@@ -20,14 +23,26 @@ import { SafetyBanner } from './SafetyBanner';
 import { TABS, Tabs } from './Tabs';
 import styles from './Shell.module.css';
 
-export function isPhoneRoute(pathname: string | null): boolean {
-  return pathname === '/partner' || (pathname?.startsWith('/partner/') ?? false);
-}
+export { isPhoneRoute, isRolePageRoute };
 
 export function Shell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  if (isRolePageRoute(pathname)) return <BareFrame>{children}</BareFrame>;
   if (isPhoneRoute(pathname)) return <PhoneFrame>{children}</PhoneFrame>;
   return <DashboardFrame>{children}</DashboardFrame>;
+}
+
+/**
+ * The station and the speaker: no tabs, no screen keys (a stray 1, 2 or 3 must never leave a running station), no
+ * headset chip, no replay banner and no connection gate (the board connection is not opened here). The dashboard's
+ * side padding stays.
+ */
+function BareFrame({ children }: { children: ReactNode }) {
+  return (
+    <main id="main" tabIndex={-1} className={styles.main}>
+      {children}
+    </main>
+  );
 }
 
 function DashboardFrame({ children }: { children: ReactNode }) {

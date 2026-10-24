@@ -14,6 +14,7 @@ npm run typecheck   # next typegen, then tsc; works on a fresh clone
 npm test            # node:test through tsx
 npm run build
 npm run bindings    # after every spacetime generate: copies spacetime/bindings/web into lib/data/module_bindings
+npm run cartesia    # after any change in cartesia/src: copies the browser code into lib/cartesia
 ```
 
 Routes: `/live`, `/agents`, `/conversation` (also `/`), and `/partner` for the phone. Keys 1, 2 and 3 switch the dashboard screens.
@@ -117,11 +118,40 @@ Shared parts, from `@/components/ui`: `StatusMark`, `StepList`, `Row` and `RowLi
 
 Rules for every screen: one clear focus with big labels, the docs/ui.md words, words plus an icon plus a color for every state, a visible focus outline, 16 px minimum body text, no sideways scroll at 390 px, reduced motion respected, and no sample data presented as real.
 
+### Paired pages (station, speaker, partner asking)
+
+These pages pair as a role and call reducers, unlike the anonymous dashboards (`docs/station.md` sections 1 and 7.2, track C). The shared parts:
+
+| Where | What |
+|---|---|
+| `lib/role/storage.ts` | the identity token under `<host>/<db>/auth_token/<role>` in `localStorage`, and the station and speaker setup values; every access in a `try` |
+| `lib/role/connection.ts` | `createRoleConnection`: one authenticated `DbConnection` per role page, token saved on connect, rebuilds after 1, 2, 4 and 8 s, Offline after 10 s, a refused saved token stops the retries |
+| `lib/role/pairing.ts` | the pairing state machine (pure): a random 6-digit code, waiting, expiry, one retry on `code taken`, revoked, wrong role, labels only from a fixed list |
+| `lib/role/device.ts` | `createRoleDevice`: connection, pairing and the voice check wired together, plus the owner's approve and revoke commands |
+| `lib/role/calls.ts` | reducer errors by name, `sendWithResend` with an age limit, and `wordTimingsReducer` (null with bindings from before module v2) |
+| `lib/role/hooks.ts` | `useRoleDevice`, `useAudioUnlock` |
+| `lib/voice/token.ts` | `mint_voice_token` answers in words, and `getToken` for Cartesia sockets (a fresh 60 s token per socket, memory only) |
+| `lib/voice/audio.ts` | the tap that starts audio, the chimes from Appendix A, the device change watch |
+| `lib/cartesia/` | the cartesia browser code, a byte-for-byte copy of `cartesia/src` made by `npm run cartesia` |
+| `components/device/` | `PairingCard`, `StartAudio`, `VoiceStatus`, `RoleConnectionChip` |
+| `lib/routes.ts` | `/station` and `/speaker` get a bare frame (no tabs, no screen keys 1 2 3, no headset chip, no replay banner) and the board source never starts there; `/partner` keeps the phone frame |
+| `lib/station/`, `components/station/` | the station: the engine, the heard log, commands and resends, the decoder bridge, keys and the switch pattern, the heartbeat, the earpiece, read-backs, cues, staleness and the screen's words |
+| `lib/speaker/`, `components/speaker/` | the room voice: says each released reply once, then `reply_spoken` |
+| `lib/partner/`, `components/partner/AskArea.tsx`, `PairPhone.tsx` | asking from the phone: Hold to ask with Ink-2 and the typed box, one sender with a request id |
+
+No token is ever put in a page address, a link, a log line, an error message or the screen.
+
+`lib/cartesia` drops the `.js` ending of each relative import (`stripJsSpecifiers` in `scripts/cartesia-files.json`): `next build` (Turbopack) does not resolve `./tts.js` to `tts.ts`, and `test/cartesia-copy.test.ts` applies the same rewrite before comparing.
+
+The decoder runs on `ws://127.0.0.1:8765`. From an https page, Chrome 156 holds that socket in "connecting", with no error, until someone answers its local network permission prompt (checked Oct 24 in a Playwright Chrome on a Mac; `docs/station.md` 5.1); after 3 s the station says to click Allow. From `http://localhost` no prompt is needed.
+
 ## Checks
 
 `npm test` runs the unit tests and `test/writing.test.ts`, which walks every source file in web/ and fails on an en or em dash, a curly quote, a word from the team's blocklist, the old product name, a retired command name, or a claim that goes beyond the two headset signals. `test/screen-models.test.ts` runs every screen's model over a loop of the sample replay, every 100 ms, and fails on a broken value on screen or on option words reaching the partner's phone.
 
 For the live data: `test/board-map.test.ts` maps rows built with the generated binding types (`test/board-fixtures.ts`) and runs the screen models over them; `test/board-recorded.test.ts` does the same over rows recorded from `say-when-dev` during a smoke session (`test/fixtures/board-recorded.json`: made-up smoke content, identities zeroed); `test/spacetime.test.ts` checks the real bindings file subscribes to the nine tables and views and watches and reads each one; `test/module-bindings.test.ts` checks the bindings copy.
+
+For the paired pages: `test/role-storage.test.ts`, `role-calls`, `role-connection`, `role-pairing` and `role-device` (against fakes of the SDK builder and connection, `test/role-fakes.ts`), `test/voice-token.test.ts`, `voice-audio`, `device-model`, and `test/cartesia-copy.test.ts`, which fails while `lib/cartesia` differs from `cartesia/src`; `test/station-*.test.ts`, `speaker-engine`, `speaker-page`, `partner-ask` and `routes`.
 
 ## Limits
 
@@ -130,4 +160,4 @@ For the live data: `test/board-map.test.ts` maps rows built with the generated b
 - `board_calls` has no read-back time, confirm window or command ids, so a call's countdown bar and "stopped by" line cannot show on live data. `board_errands` and `board_calls` have no option id; the mapping takes the question's pick.
 - With the room's sharing toggle off, "Said out loud" stays at "Nothing yet": the reply's words are private, and the screen has no words for "a reply was said, its words are not shared".
 - The word marked in the option being read uses Cartesia's word timings when a speak event carries them, as the sample replay does. The module does not publish per-option timings yet, so on live data the mark is an estimate spread over the clip, and its tooltip says so. Likewise the Speaking step reads "An option": the module writes one speak step per scan, not one per option.
-- "Hold to ask" on the phone opens the microphone and shows its level, but speech to text is not wired in, so the note under it says nothing is sent. The dashboard is a reader: it calls no reducer, so the phone cannot send a typed question either.
+- "Hold to ask" and the typed box send questions only from a paired phone; an unpaired phone stays read-only. None of the paired pages has run against the live module with a voice yet: the module has no Cartesia key confirmed, and no station, speaker or partner phone has been approved and run on `say-when-dev` (the bindings here predate module v2; see `docs/station.md` 7.5 L1).

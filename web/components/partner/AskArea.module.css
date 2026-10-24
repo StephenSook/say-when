@@ -1,0 +1,41 @@
+.problemRow {
+  display: grid;
+  gap: var(--s2);
+  justify-items: center;
+}
+
+/* No speech, or no session: safe outcomes, so muted (docs/ui.md "Status vocabulary"). */
+.problem {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s2);
+  margin: 0;
+  font-size: var(--text);
+  color: var(--fg-muted);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.problem svg {
+  flex: none;
+  margin-top: 5px;
+}
+
+.failed {
+  color: var(--error);
+}
+
+.again {
+  min-height: 44px;
+  padding: var(--s2) var(--s6);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--control-bg);
+  color: var(--fg);
+  font-size: var(--text);
+  transition: border-color var(--dur-fast) ease;
+}
+
+.again:hover {
+  border-color: var(--fg-muted);
+}

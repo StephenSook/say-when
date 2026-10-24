@@ -1,0 +1,66 @@
+/* "In the earpiece now" (docs/station.md 2.2): the option at hero size, its words only while sharing is on. */
+
+.now {
+  display: grid;
+  gap: var(--s3);
+  padding: var(--s6);
+  border: 1px solid var(--card-border);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius-panel);
+  background: var(--card);
+  min-width: 0;
+}
+
+.label {
+  margin: 0;
+  font-size: var(--text);
+  font-weight: var(--weight);
+  color: var(--fg-muted);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-hero);
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-tight);
+  overflow-wrap: anywhere;
+}
+
+.words {
+  margin: 0;
+  font-size: var(--text-lead);
+  line-height: var(--leading-tight);
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
+}
+
+.word {
+  color: var(--fg-muted);
+}
+
+/* The word being read: full color, weight and an underline, so the mark is not color alone. */
+.current {
+  color: var(--fg);
+  font-weight: var(--weight-strong);
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-decoration-thickness: 3px;
+  text-underline-offset: 6px;
+}
+
+.note {
+  margin: 0;
+  font-size: var(--text);
+  color: var(--fg-muted);
+}
+
+.barRow {
+  display: grid;
+  gap: var(--s2);
+}
+
+@media (max-width: 720px) {
+  .now {
+    padding: var(--s4);
+  }
+}

@@ -4,13 +4,14 @@
  * The partner's main action (docs/ui.md "Screen 4"): one large "Hold to ask" button with a live
  * microphone level. Hold it with a finger, the mouse, or Space or Enter; let go to stop.
  *
- * For now it only shows the Listening state: Cartesia Ink-2 speech to text is wired in later, so
- * nothing said is turned into a question yet, and the note under the button says so on screen.
- * The level is real: it comes from this phone's microphone, opened only while the button is held.
- * `onHoldChange` is where push to talk hooks in (cartesia/README.md, "The partner phone, push to talk");
- * once it is passed, the note becomes "Listening only while you hold."
+ * `onHoldChange` is where push to talk hooks in (docs/station.md 4.2): the partner phone passes it once it is
+ * paired, and Cartesia Ink-2 then listens only while the button is held. Without it, nothing said is sent, and the
+ * note under the button says so on screen. The level is real: it comes from this phone's microphone, opened only
+ * while the button is held. The screen passes the line under the button (`note`), the words heard so far or a word
+ * count (`heard`), and "Sending" while a question is on its way (`busy`, with `disabled`, which ends a hold).
  */
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { Spinner } from '@/components/ui/Spinner';
 import { cx } from '@/lib/cx';
 import { MicMeter, type MicStatus } from './micMeter';
 import styles from './HoldToAsk.module.css';
@@ -25,10 +26,16 @@ export interface HoldToAskProps {
   /** Called with true when a hold starts and false when it ends. */
   onHoldChange?: (held: boolean) => void;
   disabled?: boolean;
+  /** The line under the button. Defaults to the wired or not wired sentence. A microphone problem replaces it. */
+  note?: string;
+  /** While held: the words heard so far (sharing on) or a word count (sharing off). */
+  heard?: string | null;
+  /** The button's words while a question is on its way, with a spinner, such as "Sending". */
+  busy?: string | null;
   className?: string;
 }
 
-export function HoldToAsk({ onHoldChange, disabled = false, className }: HoldToAskProps) {
+export function HoldToAsk({ onHoldChange, disabled = false, note: noteText, heard = null, busy = null, className }: HoldToAskProps) {
   const noteId = useId();
   /** Push to talk is wired in only when someone listens to the hold. Until then nothing said is sent. */
   const wired = onHoldChange !== undefined;
@@ -142,11 +149,13 @@ export function HoldToAsk({ onHoldChange, disabled = false, className }: HoldToA
     }
   };
 
+  const showBusy = !held && busy !== null && busy !== '';
   let label = 'Hold to ask';
   if (held) label = mic === 'blocked' ? 'Microphone blocked' : mic === 'unavailable' ? 'No microphone' : 'Listening';
+  else if (showBusy) label = busy;
 
   // Said on screen, not only to screen readers: a judge who holds the button must not think it asked.
-  let note = wired ? 'Listening only while you hold.' : 'Speech to text is not connected yet, so nothing you say is sent.';
+  let note = noteText ?? (wired ? 'Listening only while you hold.' : 'Speech to text is not connected yet, so nothing you say is sent.');
   if (problem === 'blocked') note = 'Microphone blocked. Allow it in the browser settings, then hold again.';
   else if (problem === 'unavailable') note = 'This browser cannot use the microphone here.';
 
@@ -167,15 +176,22 @@ export function HoldToAsk({ onHoldChange, disabled = false, className }: HoldToA
         onBlur={() => end()}
         onContextMenu={(event) => event.preventDefault()}
       >
-        <span ref={levelRef} className={styles.level} aria-hidden="true">
-          <span />
-          <span />
-          <span />
-          <span />
-          <span />
-        </span>
+        {showBusy ? (
+          <Spinner size={20} />
+        ) : (
+          <span ref={levelRef} className={styles.level} aria-hidden="true">
+            <span />
+            <span />
+            <span />
+            <span />
+            <span />
+          </span>
+        )}
         <span className={styles.label}>{label}</span>
       </button>
+      {held && heard ? (
+        <p className={styles.heard}>{heard}</p>
+      ) : null}
       <p id={noteId} className={styles.note}>
         {note}
       </p>

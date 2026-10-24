@@ -1,0 +1,22 @@
+/* The hollow "not started" ring (docs/ui.md "Status vocabulary"). */
+.ring {
+  display: block;
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--ring);
+  border-radius: 50%;
+}
+
+/*
+ * Long words ("Voice off: the database has no Cartesia key.") wrap inside the chip instead of pushing the page
+ * sideways at 390 px. The doubled class wins over the chip's own nowrap whatever order the CSS loads in.
+ */
+.wrap.wrap {
+  height: auto;
+  min-height: 40px;
+  max-width: 100%;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  white-space: normal;
+  line-height: var(--leading-tight);
+}

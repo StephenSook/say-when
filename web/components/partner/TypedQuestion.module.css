@@ -15,3 +15,8 @@
 .error svg {
   flex: none;
 }
+
+/* "The station is not running. Nothing was sent." is safe, not a failure: muted (docs/ui.md "Status vocabulary"). */
+.quiet {
+  color: var(--fg-muted);
+}

@@ -1,32 +1,27 @@
 'use client';
 
 /**
- * How the partner phone sends a question: the `ask_question(request_id, text, via, listen_ms)` reducer,
- * called from a paired Partner device (docs/spacetime.md 7.1 and 7.3).
+ * How the partner phone sends a question: the `ask_question(request_id, text, via, listen_ms)` reducer, called from a
+ * paired Partner device (docs/station.md 4.3; docs/spacetime.md 7.1 and 7.3).
  *
- * TODO(data layer): the data sources in lib/data cannot call reducers yet, so this returns null and the
- * typed question box stays hidden. docs/ui.md: until the reducer exists, the phone is read-only and the
- * partner asks out loud. Once the provider offers a sender, return it here; the box then appears and
- * sends with no other change on this screen.
+ * `useAsk()` returns the sender once this phone is paired (components/partner/usePartnerAsk.tsx), and null before
+ * that, or on a page with no database settings: the typed box then stays hidden and the phone is read-only.
+ * The sender rejects with an AskError (lib/partner/ask.ts) that carries the sentence to show.
  */
-export interface AskRequest {
-  /** A UUID. A retry of the same words reuses it, so a question is never asked twice. */
-  requestId: string;
-  /** 1 to 500 characters. */
-  text: string;
-  via: 'voice' | 'typed';
-  /** How long the partner held the button. 0 for a typed question. */
-  listenMs: number;
-}
+import { useContext } from 'react';
+import { MAX_QUESTION_CHARS, type AskRequest } from '@/lib/partner/ask';
+import { PartnerAskContext } from './askContext';
 
-/** Resolves once the reducer accepted the question; rejects with the reducer's error otherwise. */
+export type { AskRequest } from '@/lib/partner/ask';
+
+/** Resolves once the reducer accepted the question; rejects with an AskError otherwise. */
 export type AskFn = (request: AskRequest) => Promise<void>;
 
 /** The reducer's limit on a question's length. */
-export const MAX_QUESTION_LENGTH = 500;
+export const MAX_QUESTION_LENGTH = MAX_QUESTION_CHARS;
 
 export function useAsk(): AskFn | null {
-  return null;
+  return useContext(PartnerAskContext)?.ask ?? null;
 }
 
 /** A random UUID (version 4). crypto.randomUUID needs HTTPS; getRandomValues works on any page. */

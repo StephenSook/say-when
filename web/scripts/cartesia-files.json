@@ -1,0 +1,5 @@
+{
+  "note": "The cartesia browser closure that npm run cartesia copies from cartesia/src into lib/cartesia (docs/station.md 7.2, C3). test/cartesia-copy.test.ts reads this same file. stripJsSpecifiers is true because next build (Next 16, Turbopack) cannot resolve the ./x.js import specifiers to the .ts files (checked Oct 24: 27 Module not found errors); the script and the test apply the same rewrite.",
+  "files": ["browser.ts", "constants.ts", "events.ts", "http.ts", "keyterms.ts", "pcm.ts", "stt.ts", "tones.ts", "tts.ts", "ws.ts"],
+  "stripJsSpecifiers": true
+}

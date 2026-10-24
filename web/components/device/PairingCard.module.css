@@ -1,0 +1,165 @@
+.card {
+  display: grid;
+  gap: var(--s4);
+  width: 100%;
+  max-width: 560px;
+  margin: 0 auto;
+}
+
+.status {
+  display: grid;
+  justify-items: start;
+  gap: var(--s3);
+}
+
+.chip {
+  max-width: 100%;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-lead);
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-tight);
+  overflow-wrap: anywhere;
+}
+
+.sentence {
+  margin: 0;
+  font-size: var(--text);
+  color: var(--fg);
+}
+
+.codeBlock,
+.commandBlock {
+  display: grid;
+  gap: var(--s2);
+  min-width: 0;
+}
+
+.codeLabel {
+  margin: 0;
+  padding: 0;
+  font-size: var(--text);
+  color: var(--fg-muted);
+}
+
+/* The 6 digits, large enough to read across a table. */
+.code {
+  margin: 0;
+  font-size: clamp(40px, 9vw, 64px);
+  font-weight: var(--weight-strong);
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.meta {
+  margin: 0;
+  font-size: var(--text);
+  color: var(--fg-muted);
+}
+
+/* The owner's command wraps at 390 px instead of scrolling sideways. */
+.command {
+  display: block;
+  padding: var(--s3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--control-bg);
+  font-family: var(--font-mono);
+  font-size: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* A word wraps as a unit (a hyphen is not a break point here); only a word wider than the box breaks inside. */
+.commandWord {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s3);
+}
+
+.labels {
+  display: grid;
+  gap: var(--s2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.choice {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  min-height: 44px;
+  font-size: var(--text);
+  cursor: pointer;
+}
+
+.choice input {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.primary,
+.secondary {
+  min-height: 48px;
+  padding: var(--s2) var(--s6);
+  border-radius: var(--radius-pill);
+  font-size: var(--text);
+  line-height: var(--leading-tight);
+  transition:
+    background-color var(--dur-fast) ease,
+    border-color var(--dur-fast) ease;
+}
+
+.primary {
+  justify-self: start;
+  border: 1px solid var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--fg);
+  font-weight: var(--weight-strong);
+}
+
+.primary:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.secondary {
+  min-height: 44px;
+  border: 1px solid var(--line);
+  background: var(--control-bg);
+  color: var(--fg);
+}
+
+.secondary:hover {
+  border-color: var(--fg-muted);
+}
+
+.primary:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.footer {
+  display: grid;
+  gap: var(--s2);
+  padding-top: var(--s4);
+  border-top: 1px solid var(--divider);
+  font-size: var(--text);
+}
+
+@media (max-width: 720px) {
+  .primary {
+    justify-self: stretch;
+  }
+}

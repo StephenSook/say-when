@@ -1,0 +1,13 @@
+.link {
+  display: flex;
+  justify-content: center;
+  min-height: 44px;
+  align-items: center;
+  font-size: var(--text);
+}
+
+.card {
+  display: grid;
+  gap: var(--s3);
+  min-width: 0;
+}

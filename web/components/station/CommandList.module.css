@@ -1,0 +1,78 @@
+/* The last commands (docs/station.md 2.2): time, command, source, outcome. Ignored rows are muted, never red. */
+
+.wrap {
+  display: grid;
+  gap: var(--s3);
+  min-width: 0;
+}
+
+.label {
+  margin: 0;
+  font-size: var(--text);
+  font-weight: var(--weight);
+  color: var(--fg-muted);
+}
+
+.empty {
+  margin: 0;
+  font-size: var(--text);
+  color: var(--fg-muted);
+}
+
+.list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: max-content 9rem 5rem minmax(0, 1fr);
+  align-items: center;
+  gap: var(--s2) var(--s4);
+  padding: var(--s2) 0;
+  border-top: 1px solid var(--divider);
+  font-size: var(--text);
+}
+
+.time {
+  color: var(--fg-muted);
+}
+
+.command {
+  font-weight: var(--weight-strong);
+  overflow-wrap: anywhere;
+}
+
+.source {
+  color: var(--fg-muted);
+}
+
+.words {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.stopped .words,
+.not_started .words {
+  color: var(--fg-muted);
+}
+
+.failed .words {
+  color: var(--error);
+}
+
+@media (max-width: 720px) {
+  .row {
+    grid-template-columns: max-content minmax(0, 1fr) max-content;
+  }
+
+  .words {
+    grid-column: 1 / -1;
+  }
+}

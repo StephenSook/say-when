@@ -1,0 +1,22 @@
+.line {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s3);
+  min-width: 0;
+  max-width: 100%;
+  font-size: var(--text);
+}
+
+.block {
+  display: grid;
+  justify-items: start;
+  gap: var(--s2);
+  min-width: 0;
+}
+
+.sentence {
+  margin: 0;
+  font-size: var(--text);
+  color: var(--fg-muted);
+}

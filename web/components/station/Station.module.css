@@ -1,0 +1,251 @@
+/* The station page (docs/station.md 2.2). Tokens from app/globals.css (docs/ui.md). No text under 16 px. */
+
+.root {
+  display: grid;
+  gap: var(--s6);
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+  min-width: 0;
+}
+
+.top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s3) var(--s4);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-title);
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-tight);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+  margin-left: auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.body {
+  display: grid;
+  gap: var(--s6);
+  min-width: 0;
+}
+
+/* The honest input label: always visible while a stand-in is the input. */
+.banner {
+  margin: 0;
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--wait);
+  border-radius: var(--radius);
+  background: var(--wait-soft);
+  color: var(--fg);
+  font-size: var(--text-title);
+  line-height: var(--leading-tight);
+}
+
+.connection {
+  min-width: 0;
+}
+
+/* The one large status. A 4 px bar on the left carries the state's color; the chip carries its word and icon. */
+.status {
+  display: grid;
+  justify-items: start;
+  gap: var(--s3);
+  padding: var(--s4) var(--s6);
+  border-left: 4px solid var(--line);
+  min-width: 0;
+}
+
+.statusLive {
+  display: grid;
+  justify-items: start;
+  gap: var(--s3);
+  min-width: 0;
+}
+
+.working {
+  border-left-color: var(--accent);
+}
+
+.waiting {
+  border-left-color: var(--wait);
+}
+
+.failed {
+  border-left-color: var(--error);
+}
+
+.done {
+  border-left-color: var(--accent);
+}
+
+.statusTitle {
+  margin: 0;
+  font-size: var(--text-lead);
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-tight);
+  overflow-wrap: anywhere;
+}
+
+.failed .statusTitle {
+  color: var(--error);
+}
+
+.sentence {
+  margin: 0;
+  font-size: var(--text);
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  margin: 0;
+  font-size: var(--text);
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
+}
+
+.notice {
+  margin: 0;
+  font-size: var(--text);
+  color: var(--wait);
+}
+
+.error {
+  margin: 0;
+  font-size: var(--text);
+  color: var(--error);
+  overflow-wrap: anywhere;
+}
+
+.lead {
+  margin: 0;
+  font-size: var(--text-lead);
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-tight);
+}
+
+.legend {
+  margin: 0;
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--control-bg);
+  font-family: var(--font-mono);
+  font-size: var(--text-title);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.alertBlock {
+  display: grid;
+  gap: var(--s3);
+  padding: var(--s4);
+  border: 1px solid var(--error);
+  border-radius: var(--radius-panel);
+  background: var(--error-soft);
+}
+
+.card {
+  display: grid;
+  gap: var(--s4);
+  padding: var(--s6);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-panel);
+  background: var(--card);
+  min-width: 0;
+}
+
+.sessionRow,
+.buttons,
+.commandRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s3) var(--s4);
+  min-width: 0;
+}
+
+/* Owner commands wrap at 390 px instead of scrolling sideways. */
+.command {
+  display: block;
+  padding: var(--s3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--control-bg);
+  font-family: var(--font-mono);
+  font-size: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.primary,
+.secondary {
+  min-height: 48px;
+  padding: var(--s2) var(--s6);
+  border-radius: var(--radius-pill);
+  color: var(--fg);
+  font-size: var(--text);
+  line-height: var(--leading-tight);
+  transition:
+    background-color var(--dur-fast) ease,
+    border-color var(--dur-fast) ease;
+}
+
+.primary {
+  border: 1px solid var(--accent-line);
+  background: var(--accent-soft);
+  font-weight: var(--weight-strong);
+}
+
+.primary:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.secondary {
+  border: 1px solid var(--line);
+  background: var(--control-bg);
+}
+
+.secondary:hover:not(:disabled) {
+  border-color: var(--fg-muted);
+}
+
+.primary:disabled,
+.secondary:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+@media (max-width: 720px) {
+  .chips {
+    margin-left: 0;
+  }
+
+  .status {
+    padding: var(--s3) var(--s4);
+  }
+
+  .primary,
+  .secondary {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .primary,
+  .secondary {
+    transition: none;
+  }
+}

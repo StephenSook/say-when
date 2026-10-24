@@ -1,0 +1,186 @@
+/* Before a session (docs/station.md 2.2): steps, the input mode, Start audio, Start session. */
+
+.setup {
+  display: grid;
+  gap: var(--s6);
+  min-width: 0;
+}
+
+.group {
+  display: grid;
+  gap: var(--s2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.legend {
+  margin: 0 0 var(--s2);
+  padding: 0;
+  font-size: var(--text);
+  color: var(--fg-muted);
+}
+
+.choice,
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s3);
+  min-height: 44px;
+  font-size: var(--text);
+  cursor: pointer;
+}
+
+.choice input,
+.check input {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+
+.choiceName {
+  display: block;
+  font-weight: var(--weight-strong);
+}
+
+.choiceNote {
+  display: block;
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
+}
+
+.field {
+  display: grid;
+  justify-items: start;
+  gap: var(--s2);
+  min-width: 0;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s3);
+}
+
+.input {
+  min-height: 44px;
+  padding: 0 var(--s3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--control-bg);
+  color: var(--fg);
+  font-size: var(--text);
+}
+
+.input[aria-invalid='true'] {
+  border-color: var(--error);
+}
+
+.details {
+  font-size: var(--text);
+}
+
+.details summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.speeds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s4);
+}
+
+.speed {
+  display: grid;
+  gap: var(--s2);
+}
+
+.start {
+  display: grid;
+  justify-items: start;
+  gap: var(--s3);
+  padding-top: var(--s4);
+  border-top: 1px solid var(--divider);
+}
+
+.lead {
+  margin: 0;
+  font-size: var(--text-lead);
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-tight);
+  color: var(--wait);
+}
+
+.note {
+  margin: 0;
+  font-size: var(--text);
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
+}
+
+.error {
+  margin: 0;
+  font-size: var(--text);
+  color: var(--error);
+}
+
+.primary,
+.secondary {
+  min-height: 48px;
+  padding: var(--s2) var(--s6);
+  border-radius: var(--radius-pill);
+  color: var(--fg);
+  font-size: var(--text);
+  line-height: var(--leading-tight);
+  transition:
+    background-color var(--dur-fast) ease,
+    border-color var(--dur-fast) ease;
+}
+
+.primary {
+  min-height: 56px;
+  padding: var(--s2) var(--s8);
+  border: 1px solid var(--accent-line);
+  background: var(--accent-soft);
+  font-size: var(--text-title);
+  font-weight: var(--weight-strong);
+}
+
+.primary:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.secondary {
+  border: 1px solid var(--line);
+  background: var(--control-bg);
+}
+
+.secondary:hover:not(:disabled) {
+  border-color: var(--fg-muted);
+}
+
+.primary:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+@media (max-width: 720px) {
+  .start {
+    justify-items: stretch;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .primary,
+  .secondary {
+    transition: none;
+  }
+}

@@ -13,6 +13,9 @@
  * - Offline with no rows: "Not connected. ..." from the shell.
  * - Reconnecting, or offline with rows: the last known state at 60% under "Showing the last known state".
  * - Empty: "Ask a question out loud." (", or type it here." once a typed question can be sent).
+ * - Asking (docs/station.md 4): a paired phone asks with Hold to ask (Ink-2, only while held) or the typed box,
+ *   through its own Partner role connection beside the board connection (components/partner/usePartnerAsk.tsx).
+ *   Unpaired phones stay read-only, with "Pair this phone to ask" under the button.
  * - Working: "Listening.", "Looking it up.", "Getting options ready.", "They are choosing, option 2 of 4."
  * - Error: "Could not draft options. Ask again." and the like, with a cross in the error color.
  * - Paused: "Paused. Please wait." Headset off: "Headset off. Please wait."
@@ -22,12 +25,12 @@
  * rows live in components/partner/model.ts.
  */
 import { useId, useMemo } from 'react';
+import { AskArea } from '@/components/partner/AskArea';
 import { buildPartnerView } from '@/components/partner/model';
-import { HoldToAsk } from '@/components/partner/HoldToAsk';
 import { StatusSentence } from '@/components/partner/StatusSentence';
 import { TheirAnswer } from '@/components/partner/TheirAnswer';
-import { TypedQuestion } from '@/components/partner/TypedQuestion';
 import { useAsk } from '@/components/partner/useAsk';
+import { PartnerAskProvider } from '@/components/partner/usePartnerAsk';
 import { ConnectionChip, ConnectionGate, ConnectionLine } from '@/components/shell';
 import { StepList } from '@/components/ui';
 import { cx } from '@/lib/cx';
@@ -45,21 +48,23 @@ import styles from './Partner.module.css';
 
 export function Partner() {
   return (
-    <section className={styles.root} aria-labelledby="partner-title">
-      <div className={styles.phone}>
-        <h1 id="partner-title" className="visually-hidden">
-          Partner view
-        </h1>
-        <div className={styles.top}>
-          <span className={styles.brand}>NeuroLingo</span>
-          <ConnectionChip />
+    <PartnerAskProvider>
+      <section className={styles.root} aria-labelledby="partner-title">
+        <div className={styles.phone}>
+          <h1 id="partner-title" className="visually-hidden">
+            Partner view
+          </h1>
+          <div className={styles.top}>
+            <span className={styles.brand}>NeuroLingo</span>
+            <ConnectionChip />
+          </div>
+          <ConnectionLine />
+          <ConnectionGate>
+            <PartnerNow />
+          </ConnectionGate>
         </div>
-        <ConnectionLine />
-        <ConnectionGate>
-          <PartnerNow />
-        </ConnectionGate>
-      </div>
-    </section>
+      </section>
+    </PartnerAskProvider>
   );
 }
 
@@ -98,8 +103,7 @@ function PartnerNow() {
         {view.answer ? <TheirAnswer answer={view.answer} /> : null}
       </div>
       <div className={styles.ask}>
-        <HoldToAsk />
-        {ask ? <TypedQuestion send={ask} /> : null}
+        <AskArea scanReading={scan !== null && scan.outcome === null && (scan.phase === 'reading' || scan.phase === 'window')} />
       </div>
     </>
   );

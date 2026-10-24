@@ -12,7 +12,8 @@
     "start": "next start",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "tsx --test test/*.test.ts",
-    "bindings": "node scripts/sync-bindings.mjs"
+    "bindings": "node scripts/sync-bindings.mjs",
+    "cartesia": "node scripts/sync-cartesia.mjs"
   },
   "dependencies": {
     "next": "16.4.3",

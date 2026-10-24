@@ -94,7 +94,17 @@
 
 .note {
   margin: 0;
-  font-size: var(--text-meta);
+  font-size: var(--text);
   color: var(--fg-muted);
   text-align: center;
+}
+
+/* While held: the words heard so far (sharing on) or a word count (sharing off). */
+.heard {
+  margin: 0;
+  font-size: var(--text);
+  line-height: var(--leading);
+  color: var(--fg);
+  text-align: center;
+  overflow-wrap: anywhere;
 }
