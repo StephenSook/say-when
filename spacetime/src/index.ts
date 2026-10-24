@@ -73,6 +73,7 @@ import {
   nextHealthySince,
 } from './liveness';
 import { ensureTimers as ensureTimersImpl } from './repair';
+import { DAY_MS, HOUR_MS, meter, nextSandboxSettings, requireMeter, sandboxOn, tokenKey } from './sandbox';
 import spacetimedb, {
   callTimer,
   errandLease,
@@ -84,6 +85,8 @@ import spacetimedb, {
   scanTimer,
   SmokeResult,
   VoiceToken,
+  type Role,
+  type Session,
 } from './schema';
 import { computeStats } from './stats';
 import {
@@ -102,8 +105,10 @@ import {
   requireOptionalText,
   requireText,
   writePipeline,
+  type Actor,
 } from './util';
 import { mintWithKey, tokenError } from './voice';
+import type { Identity } from 'spacetimedb';
 import type { Ctx } from './ctx';
 
 export default spacetimedb;
@@ -165,6 +170,17 @@ export const requestPairing = spacetimedb.reducer(
     if (!Number.isInteger(code) || code < 100000 || code > 999999) throw new SenderError('code must be 6 digits');
     const r = parseRole(role);
     requireText(label, 'label', 40);
+    // The try sandbox (sandbox.ts): no owner at the table, so a Station, Partner or Speaker is paired at once, never as
+    // a caregiver. An Agent still waits for the owner.
+    const sandbox = sandboxOn(ctx.db);
+    if (sandbox && r.tag !== 'Agent') {
+      requireMeter(ctx, 'pairings', HOUR_MS, sandbox.pairingsPerHour, 'too many new devices this hour');
+      const waiting = ctx.db.pairingRequest.requester.find(ctx.sender);
+      if (waiting) ctx.db.pairingRequest.code.delete(waiting.code);
+      pairDevice(ctx, ctx.sender, r, label, false);
+      appendLedger(ctx, activeSession(ctx.db)?.id ?? 0n, 'device_paired', 'Module', { outcome: r.tag.toLowerCase(), reason: 'sandbox' });
+      return;
+    }
     const taken = ctx.db.pairingRequest.code.find(code);
     if (taken && !taken.requester.isEqual(ctx.sender)) throw new SenderError('code taken: pick a new code');
     const mine = ctx.db.pairingRequest.requester.find(ctx.sender);
@@ -181,14 +197,32 @@ export const approvePairing = spacetimedb.reducer({ code: t.u32(), caregiver: t.
   requireOwner(ctx);
   const r = ctx.db.pairingRequest.code.find(code);
   if (!r || r.expiresAt.microsSinceUnixEpoch < ctx.timestamp.microsSinceUnixEpoch) throw new SenderError('unknown or expired code');
-  const device = { identity: r.requester, role: r.role, label: r.label, caregiver, pairedAt: ctx.timestamp, revoked: false };
-  if (ctx.db.device.identity.find(r.requester)) ctx.db.device.identity.update(device);
-  else ctx.db.device.insert(device);
-  const status = { identity: r.requester, role: r.role, label: r.label, online: false, lastSeenAt: ctx.timestamp, decoderHealthy: undefined };
-  if (ctx.db.deviceStatus.identity.find(r.requester)) ctx.db.deviceStatus.identity.update(status);
-  else ctx.db.deviceStatus.insert(status);
+  pairDevice(ctx, r.requester, r.role, r.label, caregiver);
   ctx.db.pairingRequest.code.delete(code);
   appendLedger(ctx, activeSession(ctx.db)?.id ?? 0n, 'device_paired', 'Owner', { outcome: r.role.tag.toLowerCase(), reason: caregiver ? 'caregiver' : '' });
+});
+
+/** Writes the device row and its public status row (offline until it connects). */
+function pairDevice(ctx: Ctx, identity: Identity, role: Role, label: string, caregiver: boolean): void {
+  const device = { identity, role, label, caregiver, pairedAt: ctx.timestamp, revoked: false };
+  if (ctx.db.device.identity.find(identity)) ctx.db.device.identity.update(device);
+  else ctx.db.device.insert(device);
+  const status = { identity, role, label, online: false, lastSeenAt: ctx.timestamp, decoderHealthy: undefined };
+  if (ctx.db.deviceStatus.identity.find(identity)) ctx.db.deviceStatus.identity.update(status);
+  else ctx.db.deviceStatus.insert(status);
+}
+
+/**
+ * Owner: turns the judge try sandbox on or off and sets its limits (sandbox.ts), for example
+ * `spacetime call say-when-try set_sandbox '"{\"on\":true}"'`. Only ever turned on for the `say-when-try` database.
+ */
+export const setSandbox = spacetimedb.reducer({ json: t.string() }, (ctx, { json }) => {
+  requireOwner(ctx);
+  const current = ctx.db.sandboxSettings.id.find(0);
+  const next = nextSandboxSettings(current, json, ctx.timestamp);
+  if (current) ctx.db.sandboxSettings.id.update(next);
+  else ctx.db.sandboxSettings.insert(next);
+  appendLedger(ctx, activeSession(ctx.db)?.id ?? 0n, 'timing', 'Owner', { outcome: next.on ? 'sandbox_on' : 'sandbox_off' });
 });
 
 export const revokeDevice = spacetimedb.reducer({ identity: t.identity() }, (ctx, { identity }) => {
@@ -273,8 +307,22 @@ export const ensureTimers = spacetimedb.reducer((ctx) => {
 /** The wearer is ready. The first dead-man lease is already counting, so the station beats at once. */
 export const startSession = spacetimedb.reducer({ label: t.string() }, (ctx, { label }) => {
   const device = requireRole(ctx, 'Station');
-  if (activeSession(ctx.db)) throw new SenderError('a session is active');
   requireMatch(label, SESSION_LABEL_RE, 'label');
+  const sandbox = sandboxOn(ctx.db);
+  const active = activeSession(ctx.db);
+  if (active && !sandbox) throw new SenderError('a session is active');
+  if (sandbox) {
+    // One try at a time. A try whose station went quiet (the judge closed the tab) or that ran past its time gives
+    // way; a live one does not.
+    if (active) {
+      const lease = latestLease(ctx.db, active.id);
+      const quietMs = msBetween(ctx.timestamp, lease ? lease.lastBeatAt : active.startedAt);
+      const ageMs = msBetween(ctx.timestamp, active.startedAt);
+      if (quietMs < sandbox.staleTryMs && ageMs < sandbox.maxTryMs) throw new SenderError('busy: someone else is trying Eleven right now');
+    }
+    requireMeter(ctx, 'tries', HOUR_MS, sandbox.triesPerHour, 'the tries for this hour are used up');
+    if (active) closeSession(ctx, active, 'Module', 'replaced');
+  }
   const cfg = getConfig(ctx.db);
   const session = ctx.db.session.insert({
     id: 0n,
@@ -314,7 +362,14 @@ export const endSession = spacetimedb.reducer((ctx) => {
     requireRole(ctx, 'Station');
     if (!session.station.isEqual(ctx.sender)) throw new SenderError('not the session station');
   }
-  const actor = owner ? 'Owner' : 'Station';
+  closeSession(ctx, session, owner ? 'Owner' : 'Station');
+});
+
+/**
+ * Ends a session: voids everything pending, cancels open questions and their jobs, and stops the clock and the
+ * dead-man timers. `reason` goes on the ledger row (the sandbox's `replaced` and `try_time`).
+ */
+function closeSession(ctx: Ctx, session: Session, actor: Actor, reason = ''): void {
   voidPending(ctx, session.id, 'session_ended', actor);
   for (const q of [...ctx.db.question.questionBySession.filter(session.id)]) {
     if (['Drafting', 'Ready', 'Scanning'].includes(q.status.tag)) {
@@ -345,8 +400,8 @@ export const endSession = spacetimedb.reducer((ctx) => {
     updatedAt: ctx.timestamp,
   });
   ctx.db.session.id.update({ ...ctx.db.session.id.find(session.id)!, endedAt: ctx.timestamp });
-  appendLedger(ctx, session.id, 'session_end', actor);
-});
+  appendLedger(ctx, session.id, 'session_end', actor, reason ? { reason } : {});
+}
 
 /** Anyone paired as Partner or Speaker, or the owner, can pause. Only the owner lifts an operator pause. */
 export const operatorPause = spacetimedb.reducer((ctx) => {
@@ -412,6 +467,13 @@ export const askQuestion = spacetimedb.reducer(
     if (ctx.db.question.requestId.find(requestId)) return;
     requireText(text, 'text', 500);
     if (via !== 'voice' && via !== 'typed') throw new SenderError('via must be voice or typed');
+    const sandbox = sandboxOn(ctx.db);
+    if (sandbox) {
+      if (session.questionCount >= sandbox.questionsPerTry) {
+        throw new SenderError(`try limit: ${sandbox.questionsPerTry} questions per try. Start a new try.`);
+      }
+      requireMeter(ctx, 'questions', DAY_MS, sandbox.questionsPerDay, 'the questions for today are used up');
+    }
     const number = session.questionCount + 1;
     ctx.db.session.id.update({ ...session, questionCount: number });
     const q = ctx.db.question.insert({
@@ -569,6 +631,12 @@ export const reportWordTimings = spacetimedb.reducer(
  */
 export const heartbeat = spacetimedb.reducer({ beatSeq: t.u64(), decoderHealthy: t.bool() }, (ctx, { beatSeq, decoderHealthy }) => {
   const { device, session } = requireStation(ctx);
+  const sandbox = sandboxOn(ctx.db);
+  if (sandbox && msBetween(ctx.timestamp, session.startedAt) >= sandbox.maxTryMs) {
+    // A try has a time limit. The beat that finds it over ends it; the station sees its session end.
+    closeSession(ctx, session, 'Module', 'try_time');
+    return;
+  }
   const cfg = getConfig(ctx.db);
   const previous = latestLease(ctx.db, session.id);
   // A beat that arrives after its lease ran out found the dead-man deadline passed before `liveness_expired` ran.
@@ -903,12 +971,21 @@ export const pairingExpired = spacetimedb.reducer({ onSchedule: pairingTimer }, 
  */
 export const mintVoiceToken = spacetimedb.procedure({ purpose: t.string() }, VoiceToken, (ctx, { purpose }) => {
   if (purpose !== 'tts' && purpose !== 'stt') return tokenError('bad_purpose');
-  const allowed = ctx.withTx((tx) => {
+  const allowed = ctx.withTx((tx): 'yes' | 'no' | 'limit' => {
     const d = deviceOf(tx.db, tx.sender);
-    if (!d) return false;
-    return purpose === 'stt' ? d.role.tag === 'Partner' : d.role.tag === 'Station' || d.role.tag === 'Speaker';
+    if (!d) return 'no';
+    const fits = purpose === 'stt' ? d.role.tag === 'Partner' : d.role.tag === 'Station' || d.role.tag === 'Speaker';
+    if (!fits) return 'no';
+    // The try sandbox: a cap per device and one for every device, per hour (sandbox.ts).
+    const sandbox = sandboxOn(tx.db);
+    if (sandbox) {
+      if (!meter(tx, tokenKey(tx.sender), HOUR_MS, sandbox.tokensPerDevicePerHour)) return 'limit';
+      if (!meter(tx, 'tokens', HOUR_MS, sandbox.tokensPerHour)) return 'limit';
+    }
+    return 'yes';
   });
-  if (!allowed) return tokenError('not_paired_for_purpose');
+  if (allowed === 'no') return tokenError('not_paired_for_purpose');
+  if (allowed === 'limit') return tokenError('voice_try_limit');
   let key: string | undefined;
   try {
     key = ctx.env.CARTESIA_API_KEY;

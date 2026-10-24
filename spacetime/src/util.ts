@@ -137,6 +137,8 @@ const PUBLIC_CODES: ReadonlySet<string> = new Set([
   'not_configured', 'call_failed', 'dial_unknown', 'end_unknown', 'confirm_time_unknown', 'confirm_expired',
   'empty_question', 'rate_limited', 'overloaded', 'unavailable', 'truncated', 'invalid_reply', 'auth', 'not_found',
   'stale', 'disconnected', 'unknown_result', 'internal', 'gave_up',
+  // The sidecar's caps in the judge try sandbox (agent/src/sandbox.ts).
+  'try_limit',
 ]);
 
 /** The sidecar's prefixed codes (`planner_timeout`, `preview_http_404`, `not_sent_network`): prefix plus a known code. */

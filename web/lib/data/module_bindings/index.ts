@@ -65,6 +65,7 @@ import RequestPairingReducer from "./request_pairing_reducer";
 import RevokeConsentReducer from "./revoke_consent_reducer";
 import RevokeDeviceReducer from "./revoke_device_reducer";
 import SetBoardSharingReducer from "./set_board_sharing_reducer";
+import SetSandboxReducer from "./set_sandbox_reducer";
 import SetTimingReducer from "./set_timing_reducer";
 import StartSessionReducer from "./start_session_reducer";
 
@@ -92,6 +93,7 @@ import MySessionRow from "./my_session_table";
 import PartnerViewRow from "./partner_view_table";
 import PipelineEventRow from "./pipeline_event_table";
 import PublicBoardRow from "./public_board_table";
+import SandboxSettingsRow from "./sandbox_settings_table";
 import ScanStateRow from "./scan_state_table";
 
 /** Type-only namespace exports for generated type groups. */
@@ -146,6 +148,17 @@ const tablesSchema = __schema({
       { name: 'pipeline_event_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, PipelineEventRow),
+  sandboxSettings: __table({
+    name: 'sandbox_settings',
+    indexes: [
+      { accessor: 'id', name: 'sandbox_settings_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'sandbox_settings_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, SandboxSettingsRow),
   scanState: __table({
     name: 'scan_state',
     indexes: [
@@ -297,6 +310,7 @@ const reducersSchema = __reducers(
   __reducerSchema("revoke_consent", RevokeConsentReducer),
   __reducerSchema("revoke_device", RevokeDeviceReducer),
   __reducerSchema("set_board_sharing", SetBoardSharingReducer),
+  __reducerSchema("set_sandbox", SetSandboxReducer),
   __reducerSchema("set_timing", SetTimingReducer),
   __reducerSchema("start_session", StartSessionReducer),
 );
