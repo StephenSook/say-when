@@ -109,7 +109,9 @@
     overflow-x: auto;
   }
 
+  /* With four or more tabs the row is wider than a phone: the row scrolls, the tabs never squeeze under "For judges". */
   .tabs {
+    flex: none;
     gap: var(--s4);
   }
 

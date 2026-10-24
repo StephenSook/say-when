@@ -8,6 +8,7 @@ import { describe, test } from 'node:test';
 import { boardRows } from '../lib/data/spacetime-map';
 import { LOOP_MS, replayRowsAt } from '../lib/data/replay';
 import { EMPTY_ROWS } from '../lib/data/types';
+import { cameraViewport, READABLE_ZOOM } from '../lib/tree/camera';
 import { CHILD_SLOTS, firstRoundRect, OPTION_SLOTS, optionRect, slot, stepRect, type Rect } from '../lib/tree/layout';
 import { deriveReplyTree, pickPhrase, sourceLine, STOP_LINE, type OptionNode, type ReplyTree, type TreeNode } from '../lib/tree/model';
 import { config, errand, event, ledger, midScan, option, question, scan, ts } from './board-fixtures';
@@ -347,5 +348,30 @@ describe('the Suggested replies tree on the live board', () => {
     );
     assert.equal(sourceLine({ ...base, sources: [] }, true), 'Drafted');
     assert.equal(sourceLine({ ...base, kind: 'menu', sources: [] }, true), "From the person's menu");
+  });
+});
+
+describe('the camera on a projector', () => {
+  const onScreen = (rect: { x: number; y: number; width: number; height: number }, vp: { x: number; y: number; zoom: number }, w: number, h: number) =>
+    rect.x * vp.zoom + vp.x >= -0.5 && rect.y * vp.zoom + vp.y >= -0.5 && (rect.x + rect.width) * vp.zoom + vp.x <= w + 0.5 && (rect.y + rect.height) * vp.zoom + vp.y <= h + 0.5;
+
+  test('1920 x 1080: the whole first round fits, and its smallest 23 unit line is at least 20 px', () => {
+    // The canvas under the header, the replay banner and the title row, as measured in the browser check.
+    const [w, h] = [1920, 890];
+    const target = deriveReplyTree(EMPTY_ROWS).camera;
+    const vp = cameraViewport(target, w, h);
+    assert.ok(vp.zoom * 23 >= 20, `zoom ${vp.zoom}`);
+    assert.ok(onScreen(firstRoundRect(), vp, w, h));
+  });
+
+  test('1280 x 720: never below the readable floor; the tight view stays whole and slides toward the rest', () => {
+    const [w, h] = [1280, 540];
+    const options = treeAt(8).camera;
+    const vp = cameraViewport(options, w, h);
+    assert.equal(vp.zoom, READABLE_ZOOM);
+    assert.ok(READABLE_ZOOM * 29 >= 20, 'titles and option words stay at 20 px');
+    assert.ok(onScreen(options.tight, vp, w, h), 'the drafting hub and all four options are in view');
+    const centered = (options.tight.x + options.tight.width / 2) * vp.zoom + vp.x;
+    assert.ok(centered > w / 2, 'the view slid left to show more of the lookup');
   });
 });

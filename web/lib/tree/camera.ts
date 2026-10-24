@@ -40,12 +40,25 @@ export function viewportFor(rect: Rect, width: number, height: number, minZoom: 
   };
 }
 
+/** Moves `from` toward `to` by at most `limit` (never past it). */
+function toward(from: number, to: number, limit: number): number {
+  if (limit <= 0) return from;
+  return from + Math.max(-limit, Math.min(limit, to - from));
+}
+
 /**
- * The rectangle to frame for a camera target on this screen: the preferred view when its labels stay readable,
- * else the tighter one. The zoom never goes below READABLE_ZOOM, so on a small screen the tighter view is centered
- * and its edges may sit just off screen rather than shrink.
+ * The viewport for a camera target on this screen: the preferred rectangle when its labels stay readable; else the
+ * tight rectangle at the readable floor (never smaller), nudged toward the preferred one as far as the tight one stays
+ * fully in view, so the spare room shows more of the tree instead of empty canvas.
  */
 export function cameraViewport(target: Pick<CameraTarget, 'rect' | 'tight'>, width: number, height: number, maxZoom: number = 1): Viewport {
-  const readable = fitZoom(target.rect, width, height) >= READABLE_ZOOM;
-  return viewportFor(readable ? target.rect : target.tight, width, height, READABLE_ZOOM, maxZoom);
+  if (fitZoom(target.rect, width, height) >= READABLE_ZOOM) return viewportFor(target.rect, width, height, READABLE_ZOOM, maxZoom);
+  const tight = target.tight;
+  const zoom = Math.min(maxZoom, Math.max(READABLE_ZOOM, fitZoom(tight, width, height)));
+  // How far the view's center may move, in canvas units, before the tight rectangle's padded edge leaves the screen.
+  const slackX = Math.max(0, (width / zoom - tight.width * (1 + 2 * PADDING)) / 2);
+  const slackY = Math.max(0, (height / zoom - tight.height * (1 + 2 * PADDING)) / 2);
+  const cx = toward(tight.x + tight.width / 2, target.rect.x + target.rect.width / 2, slackX);
+  const cy = toward(tight.y + tight.height / 2, target.rect.y + target.rect.height / 2, slackY);
+  return { x: width / 2 - cx * zoom, y: height / 2 - cy * zoom, zoom };
 }
