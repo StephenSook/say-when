@@ -56,12 +56,21 @@ export function renderTemplate(text: string, values: Readonly<Record<string, str
  * calling someone who said no, so there is no attempt to read intent and no exception for negations.
  */
 export const HOLD_TRIGGERS = {
-    /** Each holds on its own, matched at the start of a word: "stop" also holds on "stopped" and "stop by". */
+    /**
+     * Each holds on its own, matched at the start of a word: "stop" also holds on "stopped" and "stop by". Every
+     * phrase with "me" or "my" also has its "us" or "our" form.
+     */
     words: [
-        'stop', 'remove', 'unsubscribe', 'opt out', 'optout', 'take me off', 'take my', 'off your list', 'off the list',
-        'leave me alone', 'leave me be', 'lose my number', 'no more', 'no longer', 'not interested', 'enough', 'record',
-        'desist', 'delete', 'erase', 'harass', 'quit it', 'knock it off', 'cut it out', 'go away',
+        'stop', 'remove', 'unsubscribe', 'opt out', 'optout', 'take me off', 'take us off', 'take my', 'take our',
+        'leave me alone', 'leave us alone', 'leave me be', 'leave us be', 'lose my', 'lose our', 'forget my', 'forget our',
+        'no more', 'no longer', 'not interested', 'enough', 'record', 'desist', 'delete', 'erase', 'harass', 'quit it',
+        'knock it off', 'cut it out', 'go away',
     ],
+    /**
+     * One of these, then up to three words, then "list": "off your list", "off the call list", "off our calling list",
+     * "off of this list", "from your contact list".
+     */
+    listWords: ['off', 'from'],
     /** A whole word that refuses, negates or ends, followed within eight words by a calling word: "don't call", "do not
      * ever call", "I don't want any more of these automated phone calls", "never contact", "did not consent", "no
      * calls", "quit calling", "cease calling", "end these calls". Apostrophes are dropped first, so "don't" reads
@@ -78,29 +87,41 @@ export const OPT_OUT_REPLY = 'will not call again';
 export const REFUSAL_RULE = 'refuses in any way';
 
 const NEGATED_CALL = new RegExp(` (?:${HOLD_TRIGGERS.negations.join('|')})(?: \\S+){0,8} (?:${HOLD_TRIGGERS.callingWords.join('|')})`);
+const OFF_LIST = new RegExp(` (?:${HOLD_TRIGGERS.listWords.join('|')})(?: \\S+){0,3} list`);
 
-/** Lower case, NFKC, no invisible characters or apostrophes, every other mark one space, padded with a space each side. */
+/** Characters that may stand for an apostrophe, dropped so "don't" reads "dont". */
+const APOSTROPHES = /['\u{2018}\u{2019}\u{201B}\u{02BC}\u{2032}`\u{00B4}\u{FF07}]/gu;
+
+/**
+ * The words of a turn, ready to match: apostrophes dropped (before normalizing too, since a spacing accent used as an
+ * apostrophe would otherwise split the word), then NFKD with every combining mark removed, so accented, decomposed,
+ * full-width and styled letters all read as plain letters; no invisible characters; lower case; every other mark one
+ * space; padded with a space each side.
+ */
 export function speechWords(text: string): string {
     const words = String(text)
-        .normalize('NFKC')
+        .replace(APOSTROPHES, '')
+        .normalize('NFKD')
+        .replace(/\p{M}/gu, '')
+        .replace(APOSTROPHES, '')
         .replace(/\p{Default_Ignorable_Code_Point}/gu, '')
         .toLowerCase()
-        .replace(/['\u{2018}\u{2019}\u{201B}\u{02BC}\u{2032}`\u{00B4}]/gu, '')
         .replace(/[^\p{L}\p{N}]+/gu, ' ')
         .trim();
     return ` ${words} `;
 }
 
 /**
- * True when the call should put its contact on hold: the person called ("user") said any HOLD_TRIGGERS word or a
- * negated calling word, in any one turn or across their turns read together, so a refusal split over two turns
- * ("please stop", "calling me") still holds; or the agent ("assistant") gave its reply to a refusal. "system" turns are
- * logs and never count. Errs toward holding.
+ * True when the call should put its contact on hold: the person called ("user") said any HOLD_TRIGGERS word, a
+ * negated calling word or a list to come off, in any one turn or across their turns read together, so a refusal split
+ * over two turns ("please stop", "calling me") still holds; or the agent ("assistant") gave its reply to a refusal.
+ * "system" turns are logs and never count. Errs toward holding.
  */
 export function heardOptOut(transcript: readonly { role: string; text: string }[]): boolean {
     const said = transcript.filter((turn) => String(turn.role).toLowerCase() === 'user').map((turn) => speechWords(turn.text));
     const joined = ` ${said.map((words) => words.trim()).join(' ')} `;
-    if (HOLD_TRIGGERS.words.some((word) => joined.includes(` ${word}`)) || NEGATED_CALL.test(joined)) return true;
+    if (HOLD_TRIGGERS.words.some((word) => joined.includes(` ${word}`))) return true;
+    if (NEGATED_CALL.test(joined) || OFF_LIST.test(joined)) return true;
     return transcript.some((turn) => {
         if (String(turn.role).toLowerCase() !== 'assistant') return false;
         const words = speechWords(turn.text);

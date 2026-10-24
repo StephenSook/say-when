@@ -1310,6 +1310,89 @@ describe('the reviewed script', () => {
     });
 });
 
+/**
+ * Every refusal the old detector's tests (commit 55c9392, test/call.test.ts) expected it to hear, copied word for
+ * word. The old test/shared.test.ts had none. Each one must put the contact on hold.
+ */
+const OLD_SUITE_REFUSALS: { role: string; text: string }[][] = [
+    [{ role: 'user', text: 'Yes. Please don\u2019t call me again.' }],
+    [{ role: 'user', text: 'Please stop calling me.' }],
+    [{ role: 'user', text: 'I do not want these calls.' }],
+    [{ role: 'user', text: 'Please never call me again.' }],
+    [{ role: 'user', text: 'I don\u{2019}t want any more calls from you.' }],
+    [{ role: 'user', text: 'We no longer want your calls' }],
+    [{ role: 'user', text: 'I don\u{2019}t want to be called again.' }],
+    [{ role: 'user', text: 'Can you stop calling this number?' }],
+    [{ role: 'user', text: 'Take me off your list, please.' }],
+    [{ role: 'user', text: 'Remove my number.' }],
+    [{ role: 'user', text: 'Put me on your do\u{2011}not\u{2011}call list.' }],
+    [{ role: 'user', text: 'Opt-out.' }],
+    [{ role: 'user', text: 'I don\u{2019}t want to receive these calls.' }],
+    [{ role: 'user', text: 'I don\u{2019}t want any more of these calls.' }],
+    [{ role: 'user', text: 'I don\u{2019}t want this call to be recorded.' }],
+    [{ role: 'User', text: 'Stop calling.' }],
+    [{ role: 'user', text: 'Don\u{2019}t bother calling again.' }],
+    [{ role: 'user', text: 'No more of these calls.' }],
+    [{ role: 'user', text: 'I\u{2019}d like to be removed from your list.' }],
+    [{ role: 'user', text: 'I don\u{2019}t need these calls.' }],
+    [{ role: 'user', text: 'I don\u{2019}t want this call.' }],
+    [{ role: 'user', text: 'Stop recording me.' }],
+    [{ role: 'user', text: 'I do not consent to being recorded.' }],
+    [{ role: 'user', text: 'I do not want this recorded.' }],
+    [{ role: 'user', text: 'Don\u{2019}t you dare call me again.' }],
+    [{ role: 'user', text: 'Lose my number.' }],
+    [{ role: 'user', text: 'I do not wish to receive any more calls.' }],
+    [{ role: 'user', text: 'I don\u{2019}t want you calling me.' }],
+    [{ role: 'user', text: 'Do not contact me again.' }],
+    [{ role: 'user', text: 'Unsubscribe me.' }],
+    [{ role: 'user', text: 'Never contact us again.' }],
+    [{ role: 'user', text: 'Please STOP CALLING!' }],
+    [{ role: 'user', text: 'I don\u{2069}t want these calls.' }],
+    [{ role: 'user', text: 'I don\u{2019}t want you to record this call.' }],
+    [{ role: 'user', text: 'I don\u{2019}t want this call, please.' }],
+    [{ role: 'user', text: 'I don\u{2019}t want to be called again, thank you.' }],
+    [{ role: 'user', text: 'I don\u{2019}t want any more of these automated phone calls.' }],
+    [{ role: 'user', text: 'I don\u{2019}t want these calls to continue.' }],
+    [{ role: 'user', text: 'Turn off the recording.' }],
+    [{ role: 'user', text: 'I did not consent to this.' }],
+    [{ role: 'user', text: 'I didn\u{2019}t agree to being recorded.' }],
+    [{ role: 'user', text: 'Never call me.' }],
+    [{ role: 'user', text: 'Please never call here.' }],
+    [{ role: 'user', text: 'Please stop the recording.' }],
+    [{ role: 'user', text: 'Please turn the recording off.' }],
+    [{ role: 'user', text: 'I don\u{2019}t agree to recording.' }],
+    [{ role: 'user', text: 'I object to the recording.' }],
+    [{ role: 'user', text: 'Stop the calls.' }],
+    [{ role: 'user', text: 'Leave me alone.' }],
+    [{ role: 'user', text: 'I don\u{2019}t want these calls to keep coming.' }],
+    [{ role: 'user', text: 'I\u{2019}m not interested, stop calling me.' }],
+    [{ role: 'user', text: 'Enough with the calls.' }],
+    [{ role: 'user', text: 'I\u{2019}d rather not be called.' }],
+    [{ role: 'user', text: 'I\u{2019}d prefer you didn\u{2019}t call.' }],
+    [{ role: 'user', text: 'Can you not call me?' }],
+    [{ role: 'user', text: 'Take my name off your list.' }],
+    [{ role: 'user', text: 'I don\u{2019}t want to be on a recorded line.' }],
+    [{ role: 'user', text: 'Please delete the recording.' }],
+    [{ role: 'user', text: 'No recording, please.' }],
+    [{ role: 'user', text: 'Could you please not call me again?' }],
+    [{ role: 'user', text: 'Would you kindly never contact us?' }],
+    [{ role: 'user', text: 'I\u{2019}d appreciate it if you didn\u{2019}t call again.' }],
+    [{ role: 'user', text: 'I would appreciate it if you stopped calling.' }],
+    [{ role: 'user', text: 'If you don\u{2019}t stop calling me, I\u{2019}ll report you.' }],
+    [{ role: 'user', text: 'I don\u{2019}t want you to keep calling me.' }],
+    [{ role: 'user', text: 'I don\u{2019}t want you to ever call me again.' }],
+    [{ role: 'user', text: 'Could you please not record this?' }],
+    [{ role: 'user', text: 'I don\u{2019}t want you to keep calling my number.' }],
+    [{ role: 'user', text: 'I don\u{2019}t want you to call my phone again.' }],
+    [{ role: 'user', text: 'Don\u{2019}t call me Lee.' }],
+    [{ role: 'user', text: 'I don\u{2019}t want to be called Bob.' }],
+    [{ role: 'user', text: 'Please, stop calling.' }],
+    [{ role: 'user', text: 'Please, do not want these calls.' }],
+    [{ role: 'user', text: 'Please, do not want the call recorded.' }],
+    [{ role: 'user', text: 'Leave me alone.' }, { role: 'assistant', text: 'I am sorry. I will not call again. Goodbye.' }],
+    [{ role: 'assistant', text: 'Understood, we won\u{2019}t be calling you again.' }],
+];
+
 describe('the hold triggers and the agent script', () => {
     it('tells the agent to end the call on any refusal, and the check enforces it', () => {
         assert.ok(script.instructions.includes(REFUSAL_RULE));
@@ -1320,8 +1403,13 @@ describe('the hold triggers and the agent script', () => {
         }
     });
 
-    it('holds on every word in the shared list, on a negated calling word, and on the agent reply', () => {
+    it('holds on every word in the shared list, on a list to come off, on a negated calling word, and on the agent reply', () => {
         for (const word of HOLD_TRIGGERS.words) assert.equal(heardOptOut([{ role: 'user', text: `Well, ${word} it.` }]), true, word);
+        for (const word of HOLD_TRIGGERS.listWords) {
+            for (const list of ['list', 'your list', 'the calling list', 'of our phone list']) {
+                assert.equal(heardOptOut([{ role: 'user', text: `Put me ${word} ${list}.` }]), true, `${word} ${list}`);
+            }
+        }
         for (const negation of HOLD_TRIGGERS.negations) {
             for (const calling of HOLD_TRIGGERS.callingWords) {
                 assert.equal(heardOptOut([{ role: 'user', text: `I ${negation} want any more ${calling}s.` }]), true, `${negation} ${calling}`);
@@ -1425,6 +1513,73 @@ describe('the hold triggers and the agent script', () => {
             assert.ok(!next.ok && next.refusal.code === 'opt_out_hold', text);
             assert.equal(dials(h.fetch.calls), 1, text);
         }
+    });
+
+    it('holds on every refusal the old detector was tested on', async () => {
+        assert.equal(OLD_SUITE_REFUSALS.length, 76);
+        for (const transcript of OLD_SUITE_REFUSALS) {
+            const label = transcript.map((turn) => turn.text).join(' / ');
+            assert.equal(heardOptOut(transcript), true, label);
+            const h = heard(transcript);
+            const outcome = await prepareAndPlace(h).handle.done;
+            assert.equal(outcome.held, true, label);
+            assert.equal(h.journal.holds().get(LEON)?.kind, 'hold', label);
+            const next = h.dialer.prepare(request(h.clock, { requestId: 'call_2', errand: { title: 'Lunch order', sentAt: h.clock.t } }));
+            assert.ok(!next.ok && next.refusal.code === 'opt_out_hold', label);
+        }
+    });
+
+    it('holds on the us and our forms, and on any list the person asks to come off', () => {
+        for (const text of [
+            'Take us off.',
+            'Take us off, please.',
+            'Take our number off.',
+            'Take our names off your list.',
+            'Leave us alone.',
+            'Leave us be.',
+            'Lose our number.',
+            'Lose my phone number.',
+            'Forget our number.',
+            'Forget my number.',
+            'Get me off your calling list.',
+            'Get us off the call list.',
+            'Put us off your phone list.',
+            'Cross us off your contact list.',
+            'Get me off of your list.',
+            'Get us off our list.',
+            'Get me off this list.',
+            'Scratch us from your calling list.',
+        ]) {
+            assert.equal(heardOptOut([{ role: 'user', text }]), true, text);
+        }
+    });
+
+    it('reads accented, decomposed and styled letters as plain letters', () => {
+        for (const text of [
+            'St\u{00F3}p calling me.',
+            'Sto\u{0301}p calling me.',
+            'S\u{0302}top.',
+            'D\u{00F3}n\u{2019}t c\u{00E1}ll me.',
+            'Do\u{0301}n\u{2019}t ca\u{0301}ll me.',
+            'N\u{00E9}ver call again.',
+            'Ne\u{0300}ver call again.',
+            'R\u{00E9}move my number.',
+            '\u{00DC}nsubscribe me.',
+            'U\u{0308}nsubscribe me.',
+            'Leave me \u{00E1}lone.',
+            'T\u{00E1}ke us off.',
+            'Don\u{00B4}t call me again.',
+            'Don\u{FF07}t call me again.',
+            'Don\u{FF40}t call me again.',
+            'Don\u{2033}t call me again.',
+            '\u{1D412}\u{1D42D}\u{1D428}\u{1D429} calling.',
+            '\u{24C8}\u{24E3}\u{24DE}\u{24DF} calling.',
+            '\u{0130} don\u{2019}t want these calls.',
+        ]) {
+            assert.equal(heardOptOut([{ role: 'user', text }]), true, text);
+        }
+        assert.equal(speechWords('Do\u{0301}n\u{2019}t ST\u{00D3}P, R\u{00C9}MOVE'), ' dont stop remove ');
+        assert.equal(heardOptOut([{ role: 'assistant', text: 'Sorry. I will n\u{00F3}t call again.' }]), true);
     });
 
     it('stays fast on long input', () => {
