@@ -85,8 +85,17 @@
   color: var(--fg-muted);
 }
 
+/* "STOP: none of these" over the canvas's top right corner, always in view whatever the camera frames. */
+.stopOverlay {
+  position: absolute;
+  top: var(--s4);
+  right: var(--s6);
+  z-index: 5;
+}
+
 /* Full bleed: out of the page's 1440 px column to the window's edges. */
 .canvas {
+  position: relative;
   width: 100vw;
   margin-left: calc(50% - 50vw);
   height: calc(100vh - 220px);

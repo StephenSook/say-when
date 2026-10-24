@@ -59,6 +59,15 @@ export function Replies() {
   const phone = useMediaQuery('(max-width: 720px)');
   const reduced = useReducedMotion();
   const { ref, height } = useFillHeight(!phone);
+  const stopLine = (
+    <p className={cx(styles.stop, tree.stop.used && styles.stopUsed)}>
+      <span className={styles.stopMark} aria-hidden="true">
+        <PauseIcon size={14} />
+      </span>
+      <span>{tree.stop.text}</span>
+      {tree.stop.used && tree.stop.detail ? <span className={styles.stopDetail}>{tree.stop.detail}</span> : null}
+    </p>
+  );
 
   return (
     <section className={cx(styles.root, !phone && styles.wide)} aria-labelledby="replies-title">
@@ -69,13 +78,7 @@ export function Replies() {
           </h1>
           <p className={styles.subtitle}>{SCREEN_SUBTITLE}</p>
         </div>
-        <p className={cx(styles.stop, tree.stop.used && styles.stopUsed)}>
-          <span className={styles.stopMark} aria-hidden="true">
-            <PauseIcon size={14} />
-          </span>
-          <span>{tree.stop.text}</span>
-          {tree.stop.used && tree.stop.detail ? <span className={styles.stopDetail}>{tree.stop.detail}</span> : null}
-        </p>
+        {phone ? stopLine : null}
       </header>
 
       {/* One polite line for screen readers: the newest pick, confirm, end or failure. */}
@@ -88,6 +91,8 @@ export function Replies() {
       ) : (
         <div ref={ref} className={styles.canvas} style={height ? { height } : undefined}>
           <ReplyGraph tree={tree} reduced={reduced} />
+          {/* Over the canvas, so it never costs the tree a row of height and is never framed out. */}
+          <div className={styles.stopOverlay}>{stopLine}</div>
         </div>
       )}
     </section>
