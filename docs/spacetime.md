@@ -1,6 +1,6 @@
 # NeuroLingo on SpacetimeDB: the backend plan
 
-The plan anyone on the team can build against for PLAN rows 1.1 (the module) and 1.2 (the contracts). The product is NeuroLingo (PLAN D13, formerly NeuroLingo); code identifiers keep `say-when`, so the databases are `say-when-dev` and `say-when-demo`.
+The plan anyone on the team can build against for PLAN rows 1.1 (the module) and 1.2 (the contracts). The product is NeuroLingo (PLAN D13, formerly Say When); code identifiers keep `say-when`, so the databases are `say-when-dev` and `say-when-demo`.
 
 - **Status:** plan, version 1, written Fri Oct 23, 2026, about 11:15 PM PDT. No module code exists yet. Owner: Stephen (D6), built with Claude.
 - **Follows:** D4 (the model never clicks or dials), D11 (the command map), D12 (the niche features), D13 (the name), the UI spec in `docs/ui.md`, and the research in the private workspace (`reports/Spacetime sponsor stack build.md` with its lane notes `spacetime_integration.md` and `spacetime_niche_features.md`).
