@@ -573,7 +573,7 @@ listen({
 ```
 
    `listen` starts the mic before the socket opens and holds up to about 5 s of audio until it does (**checked**: `MAX_PENDING_CHUNKS = 50` of 100 ms). With `endOn: 'release'`, turn ends do not stop the session; turns are joined with spaces (**checked**). No turn profile is set, so the server default applies.
-2. **Release:** `session.release()`, then `partner_listening(requestId, false)`. `done` resolves after the last events (at most 3 s of drain, 5 s release deadline; **checked** defaults).
+2. **Release:** `session.release()`, then `partner_listening(requestId, false)`. `done` resolves after the last events (at most 5 s of drain, 5 s release deadline; **checked** defaults). The drain was 3 s until Oct 24, when a live test caught a slow Ink-2 final transcript 3.5 s after the close command and the question was cut to "What should we have for" (**measured**).
 3. **Result:**
 
 | `done` result | Phone |

@@ -235,7 +235,7 @@ This is not legal advice.
 15. Whether the free number needs a card, and whether LLM tokens are billed on calls today (three Cartesia pages disagree).
 16. `MicCapture` on a real phone: the permission prompt, AudioWorklet support and the sample rate.
 17. The tone mapping (`warm` to `content`, `firm` to `angry`) is our choice. It needs a listening test.
-18. Our own limits, not Cartesia's: 500 dictionary entries, 30 seconds per question, 1 to 10 minute calls, 100 to 3000 ms pauses, 30 seconds from CONFIRM to dial, 10 seconds to get a token, 5 seconds to finish after the button is let go.
+18. Our own limits, not Cartesia's: 500 dictionary entries, 30 seconds per question, 1 to 10 minute calls, 100 to 3000 ms pauses, 30 seconds from CONFIRM to dial, 10 seconds to get a token, 5 seconds to finish after the button is let go, 5 seconds to wait for the last transcript after the close command (`drainMs`; it was 3 seconds until an Oct 24 live test saw a final transcript arrive 3.5 seconds after the close).
 19. Whether the Playground stores a pasted script exactly as typed. If it adds or trims anything, the exact check refuses and `call:check` says where.
 20. The recipient's time zone comes from the consent file. The code checks it is a real `America/` or `Pacific/` zone the runtime knows, not that it matches where the phone actually is.
 21. How Sonic and the call agent say "Eleven". If it comes out wrong, add it to the private lexicon with a `sayAs` the team has listened to; the dictionary has no entry for it today.
