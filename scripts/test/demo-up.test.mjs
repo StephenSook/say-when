@@ -4,8 +4,8 @@
 // Run: cd scripts && npm test
 
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -78,10 +78,30 @@ function demoUp(args, c, extraEnv = {}) {
             DEMO_UP_STATE_DIR: c.state,
             DEMO_UP_TOKEN_DIR: c.tokens,
             DEMO_UP_ENV_FILE: c.envFile,
+            DEMO_UP_TEST_HOOKS: '1',
             ...extraEnv,
         },
     });
     return { code: result.status, text: `${result.stdout}${result.stderr}` };
+}
+
+/** A live process whose command line reads like `name`, so the script's ps checks see it. Killed by the caller. */
+function fakeProcess(name) {
+    const child = spawn('bash', ['-c', `exec -a "${name}" sleep 60`], { stdio: 'ignore' });
+    return child;
+}
+
+async function settled(ms) {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function alive(pid) {
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 function freePort() {
@@ -257,5 +277,66 @@ describe('status and stop', () => {
         assert.match(r.text, /removed an old state file/);
         const status = demoUp(['--db', 'say-when-dev', 'status'], c);
         assert.match(status.text, /not running/);
+    });
+
+    it('an old state file never gets another caffeinate killed, only the one waiting on its own wrapper', async () => {
+        const c = setup();
+        mkdirSync(c.state, { recursive: true });
+        const dead = 999_999;
+        const other = fakeProcess('caffeinate');
+        const ours = fakeProcess(`caffeinate -dims -w ${dead}`);
+        await settled(300);
+        try {
+            writeFileSync(join(c.state, 'say-when-dev.state'), `wrapper=${dead}\nstarted=x\ncaffeinate=${other.pid}\n`);
+            assert.equal(demoUp(['--db', 'say-when-dev', 'stop'], c).code, 0);
+            await settled(200);
+            assert.ok(alive(other.pid), 'a caffeinate that waits on another pid is left alone');
+            writeFileSync(join(c.state, 'say-when-dev.state'), `wrapper=${dead}\nstarted=x\ncaffeinate=${ours.pid}\n`);
+            assert.equal(demoUp(['--db', 'say-when-dev', 'stop'], c).code, 0);
+            await settled(300);
+            assert.ok(!alive(ours.pid), 'the one waiting on the recorded wrapper is stopped (control)');
+        } finally {
+            other.kill();
+            ours.kill();
+        }
+    });
+
+    it('a sidecar still running without its wrapper is reported, never signalled, and blocks a second start', async () => {
+        const c = setup();
+        mkdirSync(c.state, { recursive: true });
+        const stray = fakeProcess('node src/main.ts run');
+        await settled(300);
+        try {
+            writeFileSync(join(c.tokens, 'agent_token_say-when-dev.pid'), `${JSON.stringify({ pid: stray.pid, nonce: 'n'.repeat(32) })}\n`);
+            writeFileSync(join(c.state, 'say-when-dev.state'), `wrapper=999999\nstarted=x\ncaffeinate=999998\n`);
+            const stop = demoUp(['--db', 'say-when-dev', 'stop'], c);
+            assert.equal(stop.code, 1);
+            assert.match(stop.text, new RegExp(`names a running sidecar \\(pid ${stray.pid}\\)`));
+            assert.ok(existsSync(join(c.state, 'say-when-dev.state')), 'the state file stays');
+            await settled(200);
+            assert.ok(alive(stray.pid), 'not signalled');
+            const up = demoUp(['--db', 'say-when-dev', '--port', String(await freePort()), '--dry-run'], c);
+            assert.equal(up.code, 1);
+            assert.match(up.text, /already running as pid/);
+        } finally {
+            stray.kill();
+        }
+    });
+});
+
+describe('the call check hook', () => {
+    it('is ignored without DEMO_UP_TEST_HOOKS=1: the real call:check runs', async () => {
+        const dir = mkdtempSync(join(root, 'npm-'));
+        writeFileSync(join(dir, 'npm'), '#!/bin/sh\necho "fake npm $*"\nexit 3\n');
+        chmodSync(join(dir, 'npm'), 0o755);
+        const r = demoUp(['--db', 'say-when-demo', '--calls', '--port', String(await freePort()), '--dry-run'], setup(), {
+            PATH: `${dir}:${bin}:${process.env.PATH}`,
+            DEMO_UP_TEST_HOOKS: '',
+            DEMO_UP_CALL_CHECK: PASSING_CHECK,
+        });
+        assert.equal(r.code, 1);
+        assert.match(r.text, /fake npm run --silent call:check/);
+        assert.match(r.text, /call:check failed \(exit 3\)/);
+        assert.doesNotMatch(r.text, /calls on/);
     });
 });

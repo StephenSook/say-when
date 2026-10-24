@@ -24,8 +24,9 @@
 # - The log goes to ~/.config/say-when/demo-up/<database>-<time>.log (mode 600). It holds the sidecar's fixed
 #   messages: ids, codes, counts and times, never a key or any content.
 #
-# Test hooks (scripts/test/demo-up.test.mjs): DEMO_UP_STATE_DIR, DEMO_UP_TOKEN_DIR, DEMO_UP_ENV_FILE and
-# DEMO_UP_CALL_CHECK (a command run instead of `npm run call:check`). bash 3.2 compatible (macOS).
+# Test hooks (scripts/test/demo-up.test.mjs): DEMO_UP_STATE_DIR, DEMO_UP_TOKEN_DIR, DEMO_UP_ENV_FILE, and
+# DEMO_UP_CALL_CHECK (a command run instead of `npm run call:check`), which counts only together with
+# DEMO_UP_TEST_HOOKS=1 and says so when it is used. bash 3.2 compatible (macOS).
 
 set -euo pipefail
 
@@ -178,12 +179,10 @@ pid_matches() {
     esac
 }
 
-# The sidecar's own pid, from the pid file it writes next to its token file once it can answer (agent/src/warm.ts),
-# and only when that process is a child of the wrapper this script started (tsx runs the sidecar as its child).
-sidecar_pid() {
-    local wrapper="$1" pid parent
-    [ -n "$wrapper" ] && [ -f "$token_file.pid" ] || return 0
-    pid="$(python3 -I -c '
+# The pid in the pid file the sidecar writes next to its token file once it can answer (agent/src/warm.ts), or nothing.
+pidfile_pid() {
+    [ -f "$token_file.pid" ] || return 0
+    python3 -I -c '
 import json, sys
 try:
     pid = json.load(open(sys.argv[1])).get("pid")
@@ -191,10 +190,31 @@ try:
         print(pid)
 except Exception:
     pass
-' "$token_file.pid")"
+' "$token_file.pid"
+}
+
+# The sidecar's own pid, only when that process is a child of the wrapper this script started (tsx runs the sidecar
+# as its child).
+sidecar_pid() {
+    local wrapper="$1" pid parent
+    [ -n "$wrapper" ] || return 0
+    pid="$(pidfile_pid)"
     [ -n "$pid" ] || return 0
     parent="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ' || true)"
     if [ "$parent" = "$wrapper" ]; then printf '%s\n' "$pid"; fi
+}
+
+# A live process the pid file names that runs the sidecar, whoever started it (another terminal, or a sidecar whose
+# wrapper is gone). This script never signals one of these; it reports it and stops.
+stray_sidecar() {
+    local pid
+    pid="$(pidfile_pid)"
+    if pid_matches "$pid" "src/main.ts run"; then printf '%s\n' "$pid"; fi
+}
+
+# The caffeinate this script started: it waits on exactly our wrapper's pid.
+caffeinate_ours() {
+    pid_matches "$1" "caffeinate -dims -w $2"
 }
 
 # Keys from the Keychain, by service and account. An empty item still exits 0, so the length is the check.
@@ -244,7 +264,8 @@ prepare_calls() {
     check_log="$state_dir/$db-call-check.log"
     echo "Checking the call setup (cartesia call:check; it places no call and prints no number)..."
     status=0
-    if [ -n "${DEMO_UP_CALL_CHECK:-}" ]; then
+    if [ -n "${DEMO_UP_CALL_CHECK:-}" ] && [ "${DEMO_UP_TEST_HOOKS:-}" = "1" ]; then
+        echo "  test hook: DEMO_UP_CALL_CHECK runs instead of call:check"
         (cd "$cartesia_dir" && sh -c "$DEMO_UP_CALL_CHECK") >"$check_log" 2>&1 || status=$?
     else
         (cd "$cartesia_dir" && npm run --silent call:check) >"$check_log" 2>&1 || status=$?
@@ -292,7 +313,7 @@ cmd_status() {
     else
         echo "not running: $db"
     fi
-    if pid_matches "$caffeinate_pid" caffeinate; then echo "caffeinate: on (pid $caffeinate_pid)"; else echo "caffeinate: off"; fi
+    if caffeinate_ours "$caffeinate_pid" "$wrapper"; then echo "caffeinate: on (pid $caffeinate_pid)"; else echo "caffeinate: off"; fi
     files_check
     if body="$(health_json "http://127.0.0.1:$state_port/healthz" 2>/dev/null)"; then
         echo "health: $body"
@@ -310,7 +331,11 @@ cmd_stop() {
         return 0
     fi
     if ! wrapper_ours; then
-        if pid_matches "$caffeinate_pid" caffeinate; then kill -TERM "$caffeinate_pid"; fi
+        sidecar="$(stray_sidecar)"
+        if [ -n "$sidecar" ]; then
+            die "the wrapper this script started is gone, but the pid file names a running sidecar (pid $sidecar). It was not signalled; check it with ps, stop it with kill -TERM $sidecar, then run stop again."
+        fi
+        if caffeinate_ours "$caffeinate_pid" "$wrapper"; then kill -TERM "$caffeinate_pid"; fi
         rm -f "$state_file"
         echo "not running: $db (removed an old state file)"
         return 0
@@ -332,7 +357,7 @@ cmd_stop() {
     if pid_matches "$sidecar" "src/main.ts run" || pid_matches "$wrapper" "src/main.ts run"; then
         die "still running after 40 s (sidecar ${sidecar:-?}, wrapper ${wrapper:-?}); stop it with kill <pid> and check the log."
     fi
-    if pid_matches "$caffeinate_pid" caffeinate; then kill -TERM "$caffeinate_pid"; fi
+    if caffeinate_ours "$caffeinate_pid" "$wrapper"; then kill -TERM "$caffeinate_pid"; fi
     rm -f "$state_file"
     echo "stopped: $db (after ${waited} s)"
 }
@@ -382,6 +407,10 @@ cmd_up() {
         return 0
     fi
     [ -s "$token_file" ] || die "the sidecar is not paired with $db yet (no $token_file). Run: $0 --db $db pair"
+    sidecar="$(stray_sidecar)"
+    if [ -n "$sidecar" ]; then
+        die "a sidecar for $db is already running as pid $sidecar, not under this script (one identity runs one sidecar). Stop it first."
+    fi
     if port_in_use "$port"; then
         die "port $port already answers on this Mac (8790 is the try sidecar). Pick another with --port."
     fi
@@ -424,7 +453,7 @@ cmd_up() {
         if ! kill -0 "$wrapper" 2>/dev/null; then
             echo "The sidecar exited during startup. The last lines of $log:" >&2
             tail -20 "$log" >&2
-            if pid_matches "$caffeinate_pid" caffeinate; then kill -TERM "$caffeinate_pid"; fi
+            if caffeinate_ours "$caffeinate_pid" "$wrapper"; then kill -TERM "$caffeinate_pid"; fi
             rm -f "$state_file"
             exit 1
         fi
