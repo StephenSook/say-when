@@ -21,10 +21,11 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⛔ blocked
 | 2.1 | Headset reader and four-command decoder | `switch/` | Shashank | ⬜ | - | Which headset? See Q1 |
 | 2.2 | Calibration: per-person signal map and thresholds | `switch/` | Shashank | ⬜ | 2.1 | Idle false-activation rate goes on the dashboard |
 | 2.3 | PAUSE and HEADSET-OFF watchdog | `switch/` | Shashank | ⬜ | 2.1 | 0.5 s packet watchdog |
+| 2.4 | Brain mode (optional): imagined fist squeeze as the CALL request | `switch/` | Shashank | ⬜ | 2.2 | Only with a C3/C4 headset and only if it passes `docs/brain-mode-test.md` at the venue. Never the confirm. See D9 |
 | 3.1 | Partner speech to text (Cartesia Ink-2) | `cartesia/` | Stephen | 🟡 | - | Stephen, since Oct 23 9:30pm PT. Claude implementing |
 | 3.2 | Apify search and scrape client (RAG Web Browser, Google Maps) | `apify/client/` | Stephen | 🟡 | - | Stephen, since Oct 23 8:45pm PT. Claude implementing |
 | 3.3 | Moss retrieval over Apify results and memory | `moss/` | Stephen | 🟡 | 3.2 | Stephen, since Oct 23 9:30pm PT. Research landed; Claude implementing |
-| 3.4 | Option planner (Claude, up to four options) | `agent/` | Shashank | ⬜ | 3.2, 3.3 | |
+| 3.4 | Option planner (Claude, up to four options) | `agent/` | Shashank | ⬜ | 3.2, 3.3 | Skip the web search when no outside facts are needed. See D8 |
 | 3.5 | Earpiece voice (Cartesia Sonic, pronunciation dictionary) | `cartesia/` | Stephen | 🟡 | 3.4 | Stephen, since Oct 23 9:30pm PT. Claude implementing |
 | 4.1 | Form-errand Apify Actor: preview, read back, submit | `apify/form-errand/` | Stephen | 🟡 | - | Stephen, since Oct 23 8:45pm PT. Built, 40 tests green in CI. Next: `apify login`, `apify push`, publish to Store |
 | 4.2 | Errand wiring: ERRAND, read-back, confirm_errand, submit | `agent/` | Shashank | ⬜ | 1.1, 4.1 | |
@@ -113,6 +114,18 @@ Apify search, the form-errand Actor, Moss retrieval, and every Cartesia piece (I
 
 **Locked Oct 23 by Stephen.**
 
+### D8: Search the web only when the question needs outside facts
+
+Small talk and personal questions ("Are you tired?", "Want some water?") never wait on Apify. Moss recalls memory first, locally, in milliseconds. A fast check decides whether the question needs outside facts (places, opening hours, news, prices, weather); only then does the search run, in parallel with memory, and memory-based options can be read while it runs. Suggested by Khadim.
+
+**Locked Oct 23 by Stephen.**
+
+### D9: Brain mode is optional and gated by a test written before measuring
+
+An imagined fist squeeze can become the CALL request only if it passes the 40-trial test in `docs/brain-mode-test.md`, committed before any measurement. It is never the confirm, and it is never claimed to read thoughts. If it fails, CALL uses the eye hold and the result is reported as an experiment. Suggested by Khadim.
+
+**Proposed Oct 23. Needs a C3/C4 headset (Q1).**
+
 ### D7: Three live dashboard screens
 
 All three update over SpacetimeDB subscriptions, so every laptop shows the same thing at the same moment. Stephen and Khadim build the UI themselves. Every page stays very simple: one clear focus per screen, big labels, and nothing a judge has to decode. Style and layout follow `docs/ui.md`.
@@ -132,6 +145,8 @@ All three update over SpacetimeDB subscriptions, so every laptop shows the same 
 - [ ] **Q3:** Demo form: a Google Form owned by the caregiver, or our own page on the dashboard domain? Needs Leon and Stephen.
 - [ ] **Q4:** Can the free Cartesia phone number be set up without a card? Needs Shashank.
 - [ ] **Q5:** Who plays the caller's recipient, and is their consent written down? Needs Leon.
+- [ ] **Q6:** Voice-clone moment: the reply spoken in the wearer's own voice (Cartesia Instant Voice Clone, 10 to 60 s of audio). Needs the voice owner's explicit consent recorded first, a private voice, a synthetic-voice label, and likely the $5 Pro plan or the Cal Hacks promo. Needs Stephen to decide.
+- [ ] **Q7:** Pitch opening: lead with ALS and the recent implant stories (implants need brain surgery; Say When uses a headband and the muscles and eyes people keep). Every implant fact must be checked and cited before it goes in the script. Needs Leon and Stephen.
 
 ---
 
