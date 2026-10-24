@@ -18,7 +18,7 @@ Built at Cal Hacks 13, October 23 to 25, 2026.
 6. **Choose.** The headset decoder turns signals into four commands: YES, NO, CONFIRM and STOP.
 7. **Act.** When the moment calls for it, the options include an errand or a call: our Apify form-errand Actor fills a form, or a Cartesia voice agent places a consented phone call. Both only after a spoken read-back and a double jaw clench.
 
-Every step writes to SpacetimeDB, so the dashboard on any laptop updates live over WebSocket subscriptions. Tiger Data keeps switch timing and latency telemetry.
+Every step writes to SpacetimeDB, so the dashboard on any laptop updates live over WebSocket subscriptions. Switch timing and latency telemetry in Tiger Data is planned (PLAN row 6.1) and not built yet.
 
 ## The four commands
 
@@ -59,17 +59,17 @@ SpacetimeDB is the whole live backend. One server-side clock (chained scheduled 
 
 ## Repo layout
 
-| Path | What |
-|---|---|
-| `spacetime/` | SpacetimeDB module: tables, reducers, views, scan clock, consent gate |
-| `switch/` | Headset reader, four-command decoder, calibration |
-| `agent/` | Option planner and the agent sidecar |
-| `apify/form-errand/` | Apify Actor: preview, read back, submit |
-| `apify/client/` | Apify client for the agent: web search, places, errand preview and submit |
-| `cartesia/` | Ink-2 speech to text, Sonic voice, pronunciation dictionary, outbound call |
-| `moss/` | Moss retrieval over web results and the person's memory |
-| `web/` | Live dashboard and partner phone view |
-| `telemetry/` | Tiger Data telemetry writer and SQL |
+| Path | What | State |
+|---|---|---|
+| `spacetime/` | SpacetimeDB module: tables, reducers, views, scan clock, consent gate | In progress |
+| `switch/` | Headset reader, four-command decoder, calibration | Planned |
+| `agent/` | Option planner and the agent sidecar | Planned |
+| `apify/form-errand/` | Apify Actor: preview, read back, submit | Built |
+| `apify/client/` | Apify client for the agent: web search, places, errand preview and submit | Built |
+| `cartesia/` | Ink-2 speech to text, Sonic voice, pronunciation dictionary, outbound call | Built |
+| `moss/` | Moss retrieval over web results and the person's memory | Built |
+| `web/` | Live dashboard and partner phone view | In progress |
+| `telemetry/` | Tiger Data telemetry writer and SQL | Planned (PLAN row 6.1) |
 
 Team coordination lives in [PLAN.md](PLAN.md).
 
