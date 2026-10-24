@@ -19,13 +19,13 @@
     "@react-three/drei": "10.7.9",
     "@react-three/fiber": "9.8.2",
     "@react-three/postprocessing": "3.2.2",
+    "@xyflow/react": "12.12.0",
     "next": "16.4.3",
     "postprocessing": "6.39.5",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "spacetimedb": "2.13.0",
-    "three": "0.186.1",
-    "uplot": "1.6.32"
+    "three": "0.186.1"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",

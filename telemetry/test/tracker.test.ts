@@ -660,3 +660,86 @@ describe('snapshots and reconnects', () => {
         assert.equal(rowsOf(play(s.events).rows, 'switch_events').length, 1);
     });
 });
+
+describe('the input a session ran with (T1)', () => {
+    test('is the word from the label prefix, never the label, one row per session', () => {
+        const cases: Array<[string, string]> = [
+            ['keyboard-test', 'keyboard'],
+            ['switch-demo', 'switch'],
+            ['switch-test', 'switch'],
+            ['headset-demo', 'headset'],
+            ['headset-test', 'headset'],
+            ['smoke', 'unknown'],
+            ['demo', 'unknown'],
+            ['', 'unknown'],
+            ['keyboardtest', 'unknown'],
+            ['test-headset-', 'unknown'],
+        ];
+        for (const [label, want] of cases) {
+            const s = new Scenario().start(sec(0), true, label).ready();
+            const start = s.events.find((e) => e.type === 'ledger' && e.row.kind === 'session_start');
+            assert.ok(start);
+            s.events.push(start); // a replayed session_start lands once
+            assert.deepEqual(rowsOf(play(s.events).rows, 'session_inputs'), [{ time: sec(0), sessionId: 'test-unit:1', input: want }], label);
+        }
+    });
+
+    test('is written for a session that started more than six days before its current commands', () => {
+        const week = 7 * 86_400;
+        const s = new Scenario(5n).start(sec(0), true, 'headset-demo');
+        s.tick(sec(week));
+        s.gesture(sec(week + 1), 'NO', 'ignored:idle');
+        s.ready(); // first seen in a snapshot taken a week after the session started
+        const { rows, tracker } = play(s.events);
+        assert.equal(rowsOf(rows, 'switch_events').length, 1, 'the current command lands');
+        assert.ok(tracker.counters.tooOld > 0, 'old raw rows are still dropped');
+        assert.deepEqual(rowsOf(rows, 'session_inputs'), [{ time: sec(0), sessionId: 'test-unit:5', input: 'headset' }]);
+    });
+
+    test('is written for a session that starts after the snapshot too', () => {
+        const s = new Scenario(2n).ready();
+        s.start(sec(1), true, 'switch-test');
+        assert.deepEqual(rowsOf(play(s.events).rows, 'session_inputs'), [{ time: sec(1), sessionId: 'test-unit:2', input: 'switch' }]);
+    });
+
+    test('an ended keyboard session read from a snapshot: commands and timed picks, no rest, so no false activation', () => {
+        const s = new Scenario(13n).start(sec(0), true, 'keyboard-test');
+        s.preparing(sec(1), 7n).read(sec(2), 7n, 1).window(sec(4));
+        const heard = s.step;
+        s.pick(sec(4.8), 7n, 1, 'reply');
+        s.gesture(sec(4.8), 'YES', 'accepted:pick', { heard, questionId: 7n, optionId: 101n, cursor: 1 });
+        s.veto(sec(4.8)).idle(sec(6));
+        s.gesture(sec(20), 'NO', 'ignored:idle');
+        s.end(sec(30)).tick(sec(40)).ready();
+        const { rows } = play(s.events);
+        assert.deepEqual(rowsOf(rows, 'session_inputs'), [{ time: sec(0), sessionId: 'test-unit:13', input: 'keyboard' }]);
+        const events = rowsOf(rows, 'switch_events');
+        assert.equal(events.length, 2);
+        // The snapshot cannot prove rest before the writer connected (device_status keeps only the latest sighting).
+        for (const e of events) {
+            assert.equal(e.resting, null);
+            assert.equal(e.falseActivation, false);
+        }
+        assert.equal(rowsOf(rows, 'picks')[0]?.timeToPickMs, 2800);
+        assert.equal(restTotalMs(rows), 0);
+    });
+
+    test('onlySessions writes the chosen sessions only, and still follows the others', () => {
+        const a = new Scenario(13n, STATION, 0n).start(sec(0), true, 'keyboard-test');
+        a.gesture(sec(5), 'NO', 'ignored:idle');
+        a.end(sec(10));
+        const b = new Scenario(14n, STATION, 1_000n).start(sec(20), true, 'smoke');
+        b.gesture(sec(25), 'NO', 'ignored:idle');
+        b.end(sec(30));
+        const rows: TelemetryRow[] = [];
+        const tracker = new Tracker({ database: 'test-unit', emit: (r) => rows.push(r), onlySessions: new Set([13n]) });
+        feed(tracker, [...a.events, ...b.events, { type: 'ready' }]);
+        tracker.checkpoint();
+        assert.deepEqual([...new Set(rows.map((r) => r.row.sessionId))], ['test-unit:13']);
+        assert.deepEqual(rowsOf(rows, 'session_inputs').map((r) => r.input), ['keyboard']);
+        assert.equal(rowsOf(rows, 'switch_events').length, 1);
+        assert.ok(tracker.counters.otherSessions >= 3, `${tracker.counters.otherSessions} rows of session 14 left out`);
+        // Session 14 was still followed: its start and end are known.
+        assert.equal(tracker.stateAt(14n, sec(31)), 'off');
+    });
+});

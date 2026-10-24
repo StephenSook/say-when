@@ -118,7 +118,7 @@ const prepared = dialer.prepare({ requestId, contactId: 'leon', errand: { title:
 const placed = dialer.place(requestId, confirmedDigest, confirmedAtMs);
 // placed.ok is false with refusal.code 'expired' when that CONFIRM is over 30 s old, or 'confirm_time_unknown' when
 // the time is missing, not a number, or more than 5 s ahead of this laptop's clock.
-// STOP (long jaw clench), HEADSET-OFF or the idle auto-pause: dialer.cancelActive('stop' | 'headset_off' | 'auto_pause')
+// STOP (single jaw clench), HEADSET-OFF or the idle auto-pause: dialer.cancelActive('stop' | 'headset_off' | 'auto_pause')
 const outcome = await placed.handle.done; // outcome.spoken is one sentence for the earpiece
 // outcome.held means the contact is on hold: a possible refusal, an end the dialer could not read, or a hold file
 // problem. After a person has checked with them (not while a call is in progress):
@@ -165,7 +165,7 @@ The consent file is a JSON array. Every entry needs the recipient's own IANA tim
 - One CONFIRM places one call. Retries are off. A dial that gets no answer, a server error or an unreadable reply is reported as "could not tell", never as "not dialed", and never sent again, and the contact stays on hold until a person checks.
 - The opening line (the agent's welcome message) says it is an automated assistant with an AI-generated voice calling for the named person through the Eleven app, says the call is recorded, and gives the callback number before the message. The check refuses a welcome that leaves any of these out or says them after the message. The agent's instructions tell it to give the callback number again before it hangs up; that part depends on the agent following its prompt.
 - Before every call it reads the published agent and compares it, character for character, with `agent/welcome.txt` and `agent/instructions.txt`, which are the only baseline. It refuses on any difference, if a voicemail message is set, or if the voice is not a library voice. There is no way to skip this check.
-- STOP (long jaw clench), HEADSET-OFF and the 2-minute idle auto-pause cancel or hang up. Cartesia can only cancel a call that has started, so a cancel while ringing waits and fires the moment the call connects; the 25 second ring timeout bounds the rest.
+- STOP (single jaw clench), HEADSET-OFF and the 2-minute idle auto-pause cancel or hang up. Cartesia can only cancel a call that has started, so a cancel while ringing waits and fires the moment the call connects; the 25 second ring timeout bounds the rest.
 - Status comes from polling Get Call about every 1.5 seconds (lifecycle webhooks are not available yet). Every copy of text that leaves the dialer (dashboard transcript lines, the call summary, event details, error messages) goes through `redact()`: the text is normalized (NFKC), invisible characters are dropped, keys and tokens are masked, then every number character in any script or form (circled, superscript, full-width) becomes `#`, and every spoken number word (zero to nineteen, the tens, hundred, thousand, oh, o, nought, double, triple, and any word made only of these) becomes `#`. There are no exceptions: dates, times, prices and ages are masked too, so "415-555-0188" shows as "###-###-####" and "at 9:30" as "at #:##". The private transcript stays inside the dialer unchanged; only the hold check reads it.
 - After judging, delete the call data: `npm run call:delete -- <call ids>` or `dialer.deleteAll()`.
 
@@ -235,7 +235,7 @@ This is not legal advice.
 15. Whether the free number needs a card, and whether LLM tokens are billed on calls today (three Cartesia pages disagree).
 16. `MicCapture` on a real phone: the permission prompt, AudioWorklet support and the sample rate.
 17. The tone mapping (`warm` to `content`, `firm` to `angry`) is our choice. It needs a listening test.
-18. Our own limits, not Cartesia's: 500 dictionary entries, 30 seconds per question, 1 to 10 minute calls, 100 to 3000 ms pauses, 30 seconds from CONFIRM to dial, 10 seconds to get a token, 5 seconds to finish after the button is let go.
+18. Our own limits, not Cartesia's: 500 dictionary entries, 30 seconds per question, 1 to 10 minute calls, 100 to 3000 ms pauses, 30 seconds from CONFIRM to dial, 10 seconds to get a token, 5 seconds to finish after the button is let go, 5 seconds to wait for the last transcript after the close command (`drainMs`; it was 3 seconds until an Oct 24 live test saw a final transcript arrive 3.5 seconds after the close).
 19. Whether the Playground stores a pasted script exactly as typed. If it adds or trims anything, the exact check refuses and `call:check` says where.
 20. The recipient's time zone comes from the consent file. The code checks it is a real `America/` or `Pacific/` zone the runtime knows, not that it matches where the phone actually is.
 21. How Sonic and the call agent say "Eleven". If it comes out wrong, add it to the private lexicon with a `sayAs` the team has listened to; the dictionary has no entry for it today.

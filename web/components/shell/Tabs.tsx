@@ -7,12 +7,13 @@ import { useReplayParam } from '@/lib/data/provider';
 import { withReplayParam } from '@/lib/data/source-mode';
 import styles from './Tabs.module.css';
 
-/** The dashboard screens in PLAN order, then the live brain (Screen 1). Keys 1 to 4 switch between them. */
+/** The dashboard screens in PLAN order: keys 1 to 3, the live brain (Screen 1) on 4, Suggested replies on 5. */
 export const TABS = [
   { href: '/live', label: 'Live data', key: '1' },
   { href: '/agents', label: 'Agents', key: '2' },
   { href: '/conversation', label: 'Conversation', key: '3' },
   { href: '/brain', label: 'Brain', key: '4' },
+  { href: '/replies', label: 'Replies', key: '5' },
 ] as const;
 
 export function isCurrentTab(pathname: string | null, href: string): boolean {

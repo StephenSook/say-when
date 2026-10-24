@@ -8,7 +8,7 @@ Anything that leaves the room, like sending a form or placing a phone call, is r
 
 Built at Cal Hacks 13, October 23 to 25, 2026.
 
-Live dashboards: [neurolingo-web.vercel.app](https://neurolingo-web.vercel.app) (Live data, Agents, Conversation and the partner phone, reading the demo database `say-when-demo`; empty until the demo session runs).
+Live dashboards: [eleven-calhacks.vercel.app](https://eleven-calhacks.vercel.app) (Live data, Agents, Conversation and the partner phone, reading the demo database `say-when-demo`; empty until the demo session runs). For judges: [eleven-calhacks.vercel.app/judge](https://eleven-calhacks.vercel.app/judge). The older address [neurolingo-web.vercel.app](https://neurolingo-web.vercel.app) serves the same deployment.
 
 ## How it works
 
@@ -29,7 +29,7 @@ Every step writes to SpacetimeDB, so the dashboard on any laptop updates live ov
 | YES | Imagine squeezing your right fist | Picks the option just heard, or answers yes. While nothing is happening, it opens the person's own menu ("I need something", "Send a request", "Call", "Say something else"). |
 | NO | Imagine squeezing your left fist | Skips the option, or answers no. |
 | CONFIRM | Double jaw clench | The only way anything leaves the room: it sends the form or places the call that was just read back. |
-| STOP | Long jaw clench, about 1 second | Cancels, means "none of these", hangs up a call, and pauses. |
+| STOP | Single jaw clench | Cancels, means "none of these", hangs up a call, and pauses. |
 
 The brain makes the choices and the jaw commits or stops. Taking the headset off (HEADSET-OFF) and two minutes with no command (auto-pause) also cancel anything pending.
 
@@ -48,15 +48,17 @@ The hand commands are imagined movements read over the motor cortex, so they onl
 | Part | Folder | State |
 |---|---|---|
 | Form-errand Actor | `apify/form-errand/` | Built and published: [Confirm-Gated Form Errand on the Apify Store](https://apify.com/stephensookra/confirm-gated-form-errand), build 0.1.5 (Oct 24: the same code, its README now under the Eleven name). 46 tests in CI. Verified on the platform with build 0.1.4 (Oct 24): preview, submit with the confirmed digest, and a repeat submit refused as a duplicate |
-| Apify client (search, places, errand) | `apify/client/` | Built, 191 tests in CI |
-| Cartesia (speech to text, voice, dictionary, call) | `cartesia/` | Built, 164 tests in CI. Calls fail safe: every number on a public copy is masked, and any refusal-like phrase holds the contact until a person clears it. Sonic voiced the options and read-backs in the first end-to-end live run (Oct 24), with tokens the database minted; Ink-2 and calls not run live yet |
+| Apify client (search, places, errand) | `apify/client/` | Built, 192 tests in CI |
+| Cartesia (speech to text, voice, dictionary, call) | `cartesia/` | Built, 166 tests in CI. Calls fail safe: every number on a public copy is masked, and any refusal-like phrase holds the contact until a person clears it. Sonic voiced the options and read-backs in the first end-to-end live run (Oct 24), with tokens the database minted. Ink-2 turned a spoken question into text live on Oct 24 (a recorded voice played into a test microphone, not a phone yet). Calls not run live yet |
 | Moss retrieval | `moss/` | Built, 75 tests in CI. Ran against real Moss in the first end-to-end live run (Oct 24): recall, the per-question web index and search, and a memory write; the memory was empty, so no memory hit yet. Memory text stays private unless a memory is marked shareable |
 | SpacetimeDB module | `spacetime/` | Built, 177 tests in CI. Four rounds of adversarial review by a second model ([docs/spacetime.md](docs/spacetime.md) section 13). Live on Maincloud as `say-when-dev` (Oct 24) and smoke-tested there after the review: 17 of 17 end-to-end checks ([spacetime/README.md](spacetime/README.md)). Design in [docs/spacetime.md](docs/spacetime.md) |
-| Dashboard and partner phone | `web/` | Built, 501 tests and a production build in CI. Reads the live module (`say-when-dev`) as an anonymous viewer, checked in a browser while the module's smoke test ran: the scan cursor, picks, an errand from preview to sent, the sharing toggle, the dead-man pause and every connection state. Words stay hidden unless the room turns sharing on. Spec in [docs/ui.md](docs/ui.md) |
+| Dashboard and partner phone | `web/` | Built, 524 tests and a production build in CI. Reads the live module (`say-when-dev`) as an anonymous viewer, checked in a browser while the module's smoke test ran: the scan cursor, picks, an errand from preview to sent, the sharing toggle, the dead-man pause and every connection state. Words stay hidden unless the room turns sharing on. Spec in [docs/ui.md](docs/ui.md) |
 | Station, speaker and partner asking | `web/` (`/station`, `/speaker`, `/partner`) | Built. Each device pairs with a code the owner approves. The station relays commands, keeps the dead-man heartbeat, reads options into the earpiece and plays read-backs; the speaker says the chosen reply once; the phone asks by voice or by typing. Live keyboard run on `say-when-dev` (Oct 24, no voice yet): 11 of 13 checks pass, including a pick that landed 52 ms after the next option began and still took the option heard. The first end-to-end live run (Oct 24, voiced, keyboard input, made-up content) ran the whole loop and sent an errand only after a fresh CONFIRM ([docs/station.md](docs/station.md) 7.5). The room voice speaking live is fixed but not yet seen live |
-| Agent sidecar (Claude planner, errands, calls) | `agent/` | Built, 212 tests in CI. Plans up to four options with Claude (structured output, checked strictly), retrieves memory first, searches only when needed, and runs the errand and call steps only after the module records a matching CONFIRM. Ran against the live services in the first end-to-end live run (Oct 24), started with `agent/scripts/run-with-keychain.sh`; calls stay off |
+| Agent sidecar (Claude planner, errands, calls) | `agent/` | Built, 213 tests in CI. Plans up to four options with Claude (structured output, checked strictly), retrieves memory first, searches only when needed, and runs the errand and call steps only after the module records a matching CONFIRM. Ran against the live services in the first end-to-end live run (Oct 24), started with `agent/scripts/run-with-keychain.sh`; calls stay off |
 | Tiger Data telemetry | `telemetry/` | Built, 149 tests in CI. Live on a free Tiger service: 5 hypertables, 3 real-time continuous aggregates, retention and a columnstore policy, verified from the live catalog (73 checks); pinned TLS. Not yet run during a real session |
 | Headset decoder | `switch/` | Shashank; not in this repo yet. Brain test in [docs/brain-mode-test.md](docs/brain-mode-test.md) |
+
+The deployed site is checked on its own, every hour and on every push to main ([deployed-smoke.yml](.github/workflows/deployed-smoke.yml), [scripts/deployed-smoke.mjs](scripts/deployed-smoke.mjs)): every page answers 200 with an Eleven title, the dashboards, the partner phone and the judge page load in a browser with no page or console error, the sample replay and the judge page's stats render, and the public stats route answers JSON. It only reads: the station and speaker pages ask to pair as they load, so those two are checked from their server HTML.
 
 ## How we use SpacetimeDB
 

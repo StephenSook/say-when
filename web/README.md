@@ -17,7 +17,7 @@ npm run bindings    # after every spacetime generate: copies spacetime/bindings/
 npm run cartesia    # after any change in cartesia/src: copies the browser code into lib/cartesia
 ```
 
-Routes: `/live`, `/agents`, `/conversation` (also `/`), `/brain` (Screen 1, the live brain), and `/partner` for the phone. Keys 1 to 4 switch the dashboard screens.
+Routes: `/live`, `/agents`, `/conversation` (also `/`), `/brain` (Screen 1, the live brain), `/replies` (Suggested replies, the tree of saved notes, web and drafting that grows from the pipeline rows), and `/partner` for the phone. Keys 1 to 5 switch the dashboard screens.
 
 ### Against the live database
 
@@ -27,6 +27,8 @@ The dashboard reads the SpacetimeDB module on Maincloud as an anonymous viewer: 
 NEXT_PUBLIC_SPACETIMEDB_HOST=https://maincloud.spacetimedb.com NEXT_PUBLIC_SPACETIMEDB_DB=say-when-dev npm run build
 npx next start -p 3217     # http://localhost:3217/conversation shows say-when-dev, chip Live
 ```
+
+Production (Vercel project `neurolingo-web`, served at https://eleven-calhacks.vercel.app): both values are stored as Production environment variables on the project (`NEXT_PUBLIC_SPACETIMEDB_HOST=https://maincloud.spacetimedb.com`, `NEXT_PUBLIC_SPACETIMEDB_DB=say-when-demo`), so `vercel --prod` from `web/` builds against the demo database. Before Oct 24 they were passed as `--build-env` flags; one deploy without the flags shipped pages with no database ("This page has no database to pair with") and was rolled back. After any deploy, run the deployed smoke test (`cd scripts && npm run smoke`).
 
 The board shows the module's current or most recent session (`config.active_session_id`). To watch it move, run the module's smoke test from `spacetime/` (owner only, made-up content, about 90 s; `spacetime/README.md`, "Smoke test"); it starts a session, plays a station and a stand-in agent, ends the session and revokes its devices. `?replay=1` still plays the bannered sample replay on the same build.
 
@@ -71,7 +73,7 @@ The scan clock's phases are idle, preparing, reading, window, veto and paused (`
 | YES | imagine squeezing the right fist | Pick this option, or answer yes. While nothing is happening, it opens the person's menu. |
 | NO | imagine squeezing the left fist | Skip this option, or answer no. |
 | CONFIRM | double jaw clench | The only way anything leaves the room (a form or a call), after the read-back. |
-| STOP | long jaw clench, about 1 s | Cancel, none of these, hang up, pause. |
+| STOP | single jaw clench | Cancel, none of these, hang up, pause. |
 
 HEADSET_OFF is a system event, not a command the person gives. It and the 2-minute idle auto-pause cancel anything pending. Errands and calls are not gestures: Claude offers them as follow-up options, YES picks one, the read-back plays, and only a fresh CONFIRM matched to the read-back digest sends it. Silence moves on.
 
@@ -91,6 +93,7 @@ Each screen has its own file pair. Change only yours; everything else is shared.
 | Live data | `components/screens/LiveData.tsx`, `LiveData.module.css` | docs/ui.md Screen 1, docs/mockups/live.html |
 | Agents | `components/screens/Agents.tsx`, `Agents.module.css` | docs/ui.md Screen 2, docs/mockups/agents.html |
 | Conversation | `components/screens/Conversation.tsx`, `Conversation.module.css` | docs/ui.md Screen 3, docs/mockups/conversation.html |
+| Suggested replies | `components/screens/Replies.tsx`, `components/replies/`, `lib/tree/` (model, layout, camera) | PLAN.md 5.10; tests in `test/reply-tree.test.ts` |
 | Partner phone | `components/screens/Partner.tsx`, `Partner.module.css` | docs/ui.md Screen 4, docs/mockups/partner.html |
 
 The dashboard screens render inside the shell's `<main>` behind `ConnectionGate`, so rows exist when they render; do not render another `<main>`. The phone view has no header and no gate: it draws its own top row and handles loading and offline itself.

@@ -26,7 +26,8 @@ import { syntheticSession } from './synthetic.js';
 const LIVE = process.env.TIGER_IT === '1';
 const RUN = `test-it-${Date.now().toString(36)}`;
 const SESSION = `${RUN}:1`;
-const TABLES = ['switch_events', 'scan_steps', 'picks', 'action_outcomes', 'rest_minutes'];
+/** Every table the pipeline writes: the five hypertables and session_inputs (sql/060). */
+const TABLES = ['switch_events', 'scan_steps', 'picks', 'action_outcomes', 'rest_minutes', 'session_inputs'];
 const AGGREGATES = ['switch_1m', 'idle_1m', 'picks_1m'];
 
 /** Synthetic times: eight minutes ago plus `s` seconds, on whole milliseconds (test/live/synthetic.ts). */
@@ -144,10 +145,14 @@ describe('the live Tiger service', { skip: !LIVE && 'set TIGER_IT=1 (npm run tes
         const evAgain = await one('SELECT count(*)::int AS n FROM telemetry.switch_events WHERE session_id = $1');
         assert.equal(evAgain.n, expected.commands, 'a replayed ledger row lands once');
 
-        // Real-usage numbers never include it.
-        const realOnly = await getStats(conn.pool, { windowMinutes: 30 });
-        const withTest = await getStats(conn.pool, { windowMinutes: 30, includeTest: true });
+        // Real-usage numbers never include it. Its label names no input, so it is `unknown` (sql/060) and only `any` counts it.
+        const input = (await conn.pool.query('SELECT input FROM telemetry.session_inputs WHERE session_id = $1', [SESSION])).rows as Array<{ input: string }>;
+        assert.deepEqual(input, [{ input: 'unknown' }]);
+        const realOnly = await getStats(conn.pool, { windowMinutes: 30, input: 'any' });
+        const withTest = await getStats(conn.pool, { windowMinutes: 30, includeTest: true, input: 'any' });
         assert.ok(withTest.commands - realOnly.commands >= expected.commands, 'the default stats leave test sessions out');
+        const headsetWithTest = await getStats(conn.pool, { windowMinutes: 30, includeTest: true });
+        assert.ok(withTest.commands - headsetWithTest.commands >= expected.commands, 'a session whose input is not headset never counts as headset');
         assert.equal(log.lines.filter((l) => /password|postgres(ql)?:\/\//i.test(l)).length, 0);
     });
 

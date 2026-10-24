@@ -57,12 +57,15 @@ export class MemorySink implements RowSink {
     readonly calls: Array<{ table: TableName; count: number }> = [];
     failNext = 0;
     failAlways = false;
+    /** When set, every insert into this one table fails (the others succeed). */
+    failTable: TableName | null = null;
     /** When set, each insert waits for this before finishing. */
     gate: Promise<void> | null = null;
 
     async insert(table: TableName, rows: readonly unknown[]): Promise<void> {
         this.calls.push({ table, count: rows.length });
         if (this.gate) await this.gate;
+        if (this.failTable === table) throw new Error(LEAKY_ERROR_TEXT);
         if (this.failAlways || this.failNext > 0) {
             if (this.failNext > 0) this.failNext--;
             throw new Error(LEAKY_ERROR_TEXT);

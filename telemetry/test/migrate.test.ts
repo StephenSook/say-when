@@ -32,6 +32,7 @@ import {
     type IdentityIndexRow,
     type JobRow,
 } from '../src/migrate.js';
+import { INPUT_KINDS } from '../src/types.js';
 
 /** Catalog-shaped compression_settings rows for a layout, as the live service printed them for sql/050. */
 function settingRows(name: string, segmentby: readonly string[], orderby: ReadonlyArray<{ col: string; asc: boolean; nullsFirst: boolean }>): ColumnstoreSettingRow[] {
@@ -258,6 +259,31 @@ describe('the content-free column check', () => {
             }
         }
     });
+
+    test('session_inputs (sql/060): the expected columns and CHECKs are what the file creates, and its words are INPUT_KINDS', () => {
+        const sql = readFileSync(new URL('../sql/060_session_inputs.sql', import.meta.url), 'utf8');
+        const sqlType: Record<string, string> = { timestamptz: 'timestamp with time zone', text: 'text' };
+        const created = Object.fromEntries([...sql.matchAll(/^\s+([a-z_]+) (timestamptz|text)\b/gm)].map((m) => [m[1]!, sqlType[m[2]!]!]));
+        assert.deepEqual(created, { ...EXPECTED_COLUMNS.session_inputs });
+        assert.deepEqual(Object.keys(EXPECTED_TEXT_CHECKS.session_inputs).sort(), ['input', 'session_id']);
+        assert.equal(EXPECTED_TEXT_CHECKS.session_inputs.session_id, EXPECTED_TEXT_CHECKS.picks.session_id);
+        assert.equal(EXPECTED_TEXT_CHECKS.session_inputs.input, `CHECK ((input = ANY (ARRAY[${INPUT_KINDS.map((w) => `'${w}'::text`).join(', ')}])))`);
+        assert.match(sql, new RegExp(`CHECK \\(input IN \\(${INPUT_KINDS.map((w) => `'${w}'`).join(', ')}\\)\\)`));
+        const m = /CREATE UNIQUE INDEX IF NOT EXISTS session_inputs_identity ON telemetry\.session_inputs \(([^)]*)\)/.exec(sql);
+        assert.deepEqual(m?.[1]?.split(',').map((c) => c.trim()), [...IDENTITY_COLUMNS.session_inputs]);
+        assert.doesNotMatch(sql, /create_hypertable|columnstore|retention/i);
+        // Catalog-shaped rows as the live service would describe the table: they pass, and a loosened word list fails.
+        const good: ColumnRow[] = Object.entries(EXPECTED_COLUMNS.session_inputs).map(([col, type]) => ({
+            tbl: 'session_inputs',
+            col,
+            type,
+            checks: type === 'text' ? [EXPECTED_TEXT_CHECKS.session_inputs[col]!] : [],
+        }));
+        assert.equal(judgeColumns('session_inputs', good).ok, true);
+        const loose = good.map((r) => (r.col === 'input' ? { ...r, checks: ["CHECK ((input = ANY (ARRAY['headset'::text, 'keyboard'::text, 'switch'::text, 'unknown'::text, 'keyboard-test'::text])))"] } : r));
+        assert.equal(judgeColumns('session_inputs', loose).ok, false);
+        assert.equal(judgeColumns('session_inputs', [...good, { tbl: 'session_inputs', col: 'label', type: 'text', checks: [] }]).ok, false, 'a stored label');
+    });
 });
 
 describe('the identity index check', () => {
@@ -313,8 +339,31 @@ describe('the sql files', () => {
             '030_retention.sql': 8,
             '040_switch_events_no_gesture_id.sql': 1,
             '050_columnstore.sql': 10,
+            '060_session_inputs.sql': 2,
         });
         for (const f of files) for (const s of f.statements) assert.ok(!s.includes(';'), `${f.file}: a statement still holds a semicolon`);
+    });
+
+    test('a file applied to the live service is frozen byte for byte, comments included', () => {
+        // The checksums recorded in telemetry.migrations on the live service (npm run migrate compares the whole file,
+        // so even a comment edit makes it refuse every later migration). The Eleven rename once edited a comment in
+        // 001 this way; its applied bytes were restored. A change belongs in a new file.
+        const applied: Record<string, string> = {
+            '001_schema.sql': '0a0c58ee60a68cbba72c0c7b570d316d9b4f0f7d58d7380ff1f3ba0688cbfb38',
+            '010_switch_events.sql': 'ae4833103862f3ebdbfee578d79349c8c203d95301a9492aea96ff1ec9cbf716',
+            '011_scan_steps.sql': '3c99d9794df3f7dd317b15c22e6d2a9f8be4475dfc1034c9517e5e7f8ca180d7',
+            '012_picks.sql': '6e52e4d7171df593d0ff31f7218f92120ec6ffbc19a4367de73359e8eca7cc09',
+            '013_action_outcomes.sql': '1e331c73bb405e668beabd973fd2729a2d5636321f62886da92d95676ef5a4f1',
+            '014_rest_minutes.sql': '31489be79eb215975f236a7bef8e18533c91206caaef2dd5cd1b56a488cc9846',
+            '020_switch_1m.sql': '157c26bfe834d3539a19283ee37981f4416ee85a9c32da61d6ebbc0ed031229b',
+            '021_idle_1m.sql': '0db07c958f6d061118e610630daa611351aabc62423b38c54b18e4cfb35ea499',
+            '022_picks_1m.toolkit.sql': 'b51818b947aa58f2c31e160e92cdeabf172d92a00504507e961fda6de1acbd30',
+            '030_retention.sql': '5a9363f19bc56f2e1350dcf7db9deca0d792facd2dd4bb90342ebf81e2ea5a92',
+            '040_switch_events_no_gesture_id.sql': 'e86c569c48949d2d9ae10ae97fa0ede73b25581a520da2992c546c14a3640ad7',
+            '050_columnstore.sql': '5e68db9864fbaebe9573d1454a9e0f595e1d4aee0c075a87f0ef10dbe1b0bed4',
+            '060_session_inputs.sql': 'fafe164b46c3d5a64678eb4224582485c69e19150bc509b146c0e832100d2fb8',
+        };
+        for (const [file, checksum] of Object.entries(applied)) assert.equal(files.find((f) => f.file === file)?.checksum, checksum, `sql/${file} was edited after it was applied`);
     });
 
     test('the splitter drops comment lines and keeps multi-line statements whole', () => {
@@ -324,7 +373,21 @@ describe('the sql files', () => {
     test('the plan takes one variant per migration', () => {
         assert.deepEqual(
             choosePlan(files, 'toolkit').map((f) => f.file),
-            ['001_schema.sql', '010_switch_events.sql', '011_scan_steps.sql', '012_picks.sql', '013_action_outcomes.sql', '014_rest_minutes.sql', '020_switch_1m.sql', '021_idle_1m.sql', '022_picks_1m.toolkit.sql', '030_retention.sql', '040_switch_events_no_gesture_id.sql', '050_columnstore.sql'],
+            [
+                '001_schema.sql',
+                '010_switch_events.sql',
+                '011_scan_steps.sql',
+                '012_picks.sql',
+                '013_action_outcomes.sql',
+                '014_rest_minutes.sql',
+                '020_switch_1m.sql',
+                '021_idle_1m.sql',
+                '022_picks_1m.toolkit.sql',
+                '030_retention.sql',
+                '040_switch_events_no_gesture_id.sql',
+                '050_columnstore.sql',
+                '060_session_inputs.sql',
+            ],
         );
         assert.equal(choosePlan(files, 'exact').find((f) => f.id === '022_picks_1m')?.variant, 'exact');
     });
