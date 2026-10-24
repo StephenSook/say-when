@@ -7,7 +7,9 @@
     "node": ">=22"
   },
   "scripts": {
-    "smoke": "node deployed-smoke.mjs"
+    "smoke": "node deployed-smoke.mjs",
+    "owner": "node demo-owner.mjs",
+    "test": "node --test test/demo-owner.test.mjs test/demo-up.test.mjs"
   },
   "dependencies": {
     "playwright": "1.64.0"
