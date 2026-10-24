@@ -98,6 +98,14 @@ Each screen has its own file pair. Change only yours; everything else is shared.
 
 The dashboard screens render inside the shell's `<main>` behind `ConnectionGate`, so rows exist when they render; do not render another `<main>`. The phone view has no header and no gate: it draws its own top row and handles loading and offline itself.
 
+### The stage view (/stage)
+
+`/stage` (and `/stage?replay=1`) is the projector screen for the live demo: the whole loop on one screen, so nobody switches tabs. It is not a tab and has no screen key; open it by its address. It is made of the other screens' parts, fed by the same rows (`components/stage/`): the partner's question (Conversation's header), the Suggested replies tree as the main area, a side column with the brain slot, what is in the earpiece now (or the pick and where its errand or call is) and what was said out loud, and the command strip in the session's true input words. The connection and input chips are the shell's.
+
+- Frame (`lib/stage/layout.ts`): from 1600 px wide the side column is 520 px (a 1920 x 1080 projector); from 960 px it is 400 px and the question sits on one row (1280 x 720); under 960 px wide or 540 px tall it is one column with the tree as a list. On a projector the stage fills the window, so nothing scrolls.
+- Brain slot: the live brain (Screen 1, branch `screen1-brain`) is not on main yet, so the slot shows the decoder panel (`components/stage/DecoderPanel.tsx`, `lib/stage/decoder.ts`): the session's input, the newest command that counted (large, with what the person did, when, and the decoder's confidence in a headset session) and the other recent ones (a repeat that did not count says so). Only an imagined fist gets a color (YES cyan, NO amber); a keyboard session names keys. It draws no brain activity. When Screen 1 is on main, replace the one line in `components/stage/live-brain.ts` with the line in its comment; `?brain=0` then keeps the decoder panel, for a stage laptop that does not run the EEG bridge.
+- Tests: `test/stage.test.ts` (the frame, the slot, the decoder panel's words, and the side column over a loop of the sample replay).
+
 Hooks, from `@/lib/data/provider`:
 
 | Hook | Returns |
