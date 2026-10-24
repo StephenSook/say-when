@@ -30,9 +30,11 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⛔ blocked
 | 4.2 | Errand wiring: ERRAND, read-back, confirm_errand, submit | `agent/` | Shashank | ⬜ | 1.1, 4.1 | |
 | 4.3 | Care team request form (demo target) | external | Leon | ⬜ | - | Owned by the consenting caregiver |
 | 4.4 | Outbound call agent (Cartesia Managed Agents) | `agent/` | Shashank | ⬜ | 1.1, 4.2 | Consenting number only |
-| 5.1 | Live dashboard shell (Next.js, SpacetimeDB subscriptions) | `web/` | Khadim | ⬜ | 1.1 | Must work on any laptop |
-| 5.2 | Pipeline panels: Apify, Moss, Cartesia, errand, call | `web/` | Stephen | ⬜ | 5.1 | |
-| 5.3 | Partner phone view | `web/` | Khadim | ⬜ | 5.1 | |
+| 5.1 | Dashboard shell: Next.js, SpacetimeDB WebSocket subscriptions, layout | `web/` | Khadim | ⬜ | 1.1 | Must work on any laptop with no login. See D7 |
+| 5.2 | Screen 1, Live data: each pipeline stage with its real payload as it flows | `web/` | Stephen | ⬜ | 5.1 | Reads `pipeline_event` |
+| 5.3 | Screen 2, Agents at work: form errand and phone call, step by step | `web/` | Stephen | ⬜ | 5.1, 4.1 | Reads `errand`, `call_request` |
+| 5.4 | Screen 3, Live conversation: question, options, pick, spoken reply | `web/` | Khadim | ⬜ | 5.1 | Reads `option`, command events |
+| 5.5 | Partner phone view | `web/` | Khadim | ⬜ | 5.1 | |
 | 6.1 | Telemetry to Tiger Data (switch timing, latency) | `telemetry/` | Shashank | ⬜ | 2.1 | Telemetry only, no app state |
 | 7.1 | User consult and consent per surface | - | Leon | ⬜ | - | |
 | 7.2 | Demo script and video | `docs/` | Leon | ⬜ | 4.2 | |
@@ -107,6 +109,16 @@ Deterministic Playwright, not an LLM clicking. Preview by default, a form allowl
 ### D6: Stephen owns Apify and Moss
 
 Apify search, the form-errand Actor and Moss retrieval are Stephen's, alongside frontend work with Khadim.
+
+**Locked Oct 23 by Stephen.**
+
+### D7: Three live dashboard screens
+
+All three update over SpacetimeDB subscriptions, so every laptop shows the same thing at the same moment.
+
+1. **Live data.** The data actually flowing: the partner's words from Ink-2, the Apify rows that came back (with source and fetch time), the Moss hits, the options Claude drafted, the voice clip Sonic played, and how long each step took.
+2. **Agents at work.** The agents doing their jobs: the form-errand Actor's preview screenshot, the values it read back off the page, the digest, the confirm, and the confirmation text after submit. Then the call: who is being called, ringing, connected, the live transcript, and how it ended.
+3. **Live conversation.** The conversation itself: the partner's question, the four options as each is read aloud, the scan cursor moving, which option the person picked, and the reply that was spoken.
 
 **Locked Oct 23 by Stephen.**
 
