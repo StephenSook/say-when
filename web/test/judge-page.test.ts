@@ -148,22 +148,23 @@ describe('judge page model', () => {
     assert.match(page.safety, /fresh CONFIRM/);
   });
 
-  test('the itinerary is five numbered stops with one line each, every dashboard tab among them', () => {
+  test('the itinerary is six numbered stops with one line each, every dashboard tab among them', () => {
     const steps = buildItinerary();
     assert.deepEqual(
       steps.map((s) => [s.n, s.title, s.href]),
       [
         [1, 'Live data', '/live'],
         [2, 'Conversation', '/conversation'],
-        [3, 'Suggested replies', '/replies'],
-        [4, 'Agents', '/agents'],
-        [5, 'Partner phone', '/partner'],
+        [3, 'Brain', '/brain'],
+        [4, 'Suggested replies', '/replies'],
+        [5, 'Agents', '/agents'],
+        [6, 'Partner phone', '/partner'],
       ],
     );
     // The tabs are read from the shell's source, so a new dashboard screen fails here until the tour visits it.
     const tabs = readFileSync(join(WEB, 'components', 'shell', 'Tabs.tsx'), 'utf8');
     const tabHrefs = [...tabs.matchAll(/\{ href: '(\/[a-z]+)', label: /g)].map((m) => m[1]);
-    assert.ok(tabHrefs.length >= 4, `read ${tabHrefs.length} tabs from Tabs.tsx`);
+    assert.ok(tabHrefs.length >= 5, `read ${tabHrefs.length} tabs from Tabs.tsx`);
     for (const href of tabHrefs) assert.ok(steps.some((s) => s.href === href), `the tour visits ${href}`);
     for (const step of steps) {
       assert.ok(step.line.length > 0 && step.line.length <= 70, `"${step.line}" is one short line`);

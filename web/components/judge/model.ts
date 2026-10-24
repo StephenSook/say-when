@@ -73,6 +73,7 @@ const OCT_24 = 'Oct 24';
 const ITINERARY: readonly Omit<ItineraryStep, 'n'>[] = [
   { title: 'Live data', href: '/live', line: 'Each step of a question as it runs, with its time.' },
   { title: 'Conversation', href: '/conversation', line: 'The options, and the cursor on the one in the earpiece.' },
+  { title: 'Brain', href: '/brain', line: 'The headset signal, live on the laptop the headset uses.' },
   { title: 'Suggested replies', href: '/replies', line: 'Where each option came from: notes and the web.' },
   { title: 'Agents', href: '/agents', line: 'An errand read back, then its confirm window.' },
   { title: 'Partner phone', href: '/partner', line: 'The partner view. Open it on a phone, or at 390 px wide.' },
