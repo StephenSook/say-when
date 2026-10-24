@@ -54,6 +54,7 @@ const POSITIVES = [
     'Are you cold?',
     'Is the Berkeley Public Library open on Sunday?',
     'Are you able to hear me?',
+    'Have you slept?',
     // Review round 2: offers to rest, go or sit stay fast.
     'Do you want to go outside?',
     'Would you like to rest now?',
@@ -96,6 +97,18 @@ const NEGATIVES: [string, string][] = [
     ['Could you be more specific?', 'request'],
     ['Are you able to describe it?', 'request'],
     ['Would you be cold outside?', 'request'],
+    // Review round 5 (Codex): a safe first verb must not approve the sentence. Compounds, content requests and any
+    // main verb off the plain yes or no list go to the planner.
+    ['Can you hear me and say your name?', 'compound'],
+    ['Do you mind describing your pain?', 'request'],
+    ['Are you saying no?', 'request'],
+    ['Do you prefer the window seat?', 'main_verb'],
+    ['Did you finish the soup?', 'main_verb'],
+    ['Does your back hurt?', 'main_verb'],
+    ['Will it rain tomorrow?', 'main_verb'],
+    // Found while preparing round 6: the same rule after have, has and had.
+    ['Have you decided on lunch?', 'main_verb'],
+    ['Has it stopped raining?', 'main_verb'],
     // Review round 3 (Codex): a list of alternatives, with commas or slashes, is a choice for the planner.
     ['Is your pain mild/moderate/severe?', 'list'],
     ['Do you prefer tea, coffee, juice?', 'list'],

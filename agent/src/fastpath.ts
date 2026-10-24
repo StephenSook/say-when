@@ -22,7 +22,9 @@ export type YesNoReason =
     | 'knowledge'
     | 'open_ended'
     | 'errand_verb'
+    | 'compound'
     | 'request'
+    | 'main_verb'
     | 'statement'
     | 'several_sentences';
 
@@ -76,12 +78,31 @@ const KNOWLEDGE = /\b(know|knows|knew|remember|remembers|remembered|recall|recal
 const OPEN_ENDED = /\b(anything|something|someone|somebody|anyone|anybody)\b/;
 /** A sentence break followed by more words: two questions, or a question and a statement. */
 const SENTENCE_BREAK = /[.?!;]\s+\S/;
+/** Two things asked at once ("Can you hear me and say your name?"): a safe first part must not approve the rest. */
+const COMPOUND = /\b(and|but|then|also|plus)\b/;
+/** Asks for words or a showing, not a yes ("Do you mind describing your pain?", "Are you saying no?"). */
+const CONTENT_VERB = /\b(mind|minds|describe|describes|describing|explain|explains|explaining|say|says|saying|said|spell|spelling|show|shows|showing|repeat|repeating|share|sharing|point|pointing|choose)\b/;
+/** The auxiliaries followed by a subject and a bare verb ("Do you want", "Will it rain", "May I sit"). */
+const DO_OR_MODAL: readonly string[] = ['do', 'does', 'did', 'can', 'could', 'will', 'would', 'should', 'shall', 'may', 'might'];
+/**
+ * After one of DO_OR_MODAL, the subject must be a pronoun and the main verb one of these plain yes or no verbs.
+ * Anything else ("Did you finish the soup?", "Does your back hurt?", "Do you prefer the window seat?") goes to the
+ * planner, which can still answer yes or no.
+ */
+const MAIN_SAFE: readonly string[] = [...OFFER_SAFE, 'be', 'hurt', 'ache', 'agree', 'enjoy', 'love', 'care', 'understand'];
+const PRONOUN_VERB = /^[a-z]+ (?:you|i|we|it|he|she|they) ([a-z]+)/;
+/** After have, has and had: a pronoun subject and one of these plain participles ("Have you eaten yet?"). */
+const HAVE: readonly string[] = ['have', 'has', 'had'];
+const PARTICIPLE_SAFE: readonly string[] = ['eaten', 'slept', 'heard', 'seen', 'felt', 'been', 'had', 'rested', 'drunk', 'tried', 'enjoyed', 'liked', 'understood', 'come', 'gone', 'walked', 'met'];
 
 /**
- * True only for a question that begins with an auxiliary verb, offers no choice ("or", "between", "pick"), has no
- * wh-word, names no errand or call verb ("call", "send", "submit", "get"), is not a request or an offer to act ("could
- * you hand me", "do you want me to open", "shall I turn on") unless its verb is a plain yes or no one, is one
- * sentence and does not end like a statement ("." or "!"); or for any question carrying the smoke tag.
+ * True only for a question that begins with an auxiliary verb, offers no choice ("or", "between", "pick") and no list,
+ * has no wh-word, asks nothing about what the person knows, leaves no need open, names no errand or call verb ("call",
+ * "send", "submit", "get"), asks one thing, asks for no words ("describe", "say"), is not a request or an offer to act
+ * ("could you hand me", "do you want me to open", "shall I turn on") unless its verb is a plain yes or no one, is one
+ * sentence, does not end like a statement ("." or "!"), and, after do, can, will and the other modals (or have, has
+ * and had), has a pronoun subject and a plain yes or no main verb (or participle); or for any question carrying the
+ * smoke tag.
  */
 export function classifyYesNo(question: string): YesNoVerdict {
     const text = question
@@ -101,6 +122,8 @@ export function classifyYesNo(question: string): YesNoVerdict {
     if (KNOWLEDGE.test(body)) return { yesNo: false, reason: 'knowledge' };
     if (OPEN_ENDED.test(body)) return { yesNo: false, reason: 'open_ended' };
     if (ERRAND_VERB.test(body)) return { yesNo: false, reason: 'errand_verb' };
+    if (COMPOUND.test(body)) return { yesNo: false, reason: 'compound' };
+    if (CONTENT_VERB.test(body)) return { yesNo: false, reason: 'request' };
     if (REQUEST_START.test(body)) {
         const verb = /^[a-z]+ you ([a-z]+)/.exec(body)?.[1] ?? '';
         if (!REQUEST_SAFE.includes(verb)) return { yesNo: false, reason: 'request' };
@@ -112,6 +135,14 @@ export function classifyYesNo(question: string): YesNoVerdict {
     const end = body.replace(/["'“”)\s]+$/, '');
     if (end.endsWith('.') || end.endsWith('!')) return { yesNo: false, reason: 'statement' };
     if (SENTENCE_BREAK.test(end)) return { yesNo: false, reason: 'several_sentences' };
+    if (DO_OR_MODAL.includes(first)) {
+        const verb = PRONOUN_VERB.exec(body)?.[1];
+        if (verb === undefined || !MAIN_SAFE.includes(verb)) return { yesNo: false, reason: 'main_verb' };
+    }
+    if (HAVE.includes(first)) {
+        const participle = PRONOUN_VERB.exec(body)?.[1];
+        if (participle === undefined || !PARTICIPLE_SAFE.includes(participle)) return { yesNo: false, reason: 'main_verb' };
+    }
     return { yesNo: true, reason: 'auxiliary' };
 }
 
