@@ -8,7 +8,7 @@
  * Focus: one status sentence at the top, then the reply. One column, at most 420 px wide.
  *
  * It renders inside the phone frame's <main> with no dashboard header, so it draws its own top row
- * (NeuroLingo and the connection chip) and its own connection states:
+ * (Eleven and the connection chip) and its own connection states:
  * - Loading: the status line ("Connecting to the live data", or "Loading the sample replay").
  * - Offline with no rows: "Not connected. ..." from the shell.
  * - Reconnecting, or offline with rows: the last known state at 60% under "Showing the last known state".
@@ -56,7 +56,7 @@ export function Partner() {
             Partner view
           </h1>
           <div className={styles.top}>
-            <span className={styles.brand}>NeuroLingo</span>
+            <span className={styles.brand}>Eleven</span>
             <ConnectionChip />
           </div>
           <ConnectionLine />

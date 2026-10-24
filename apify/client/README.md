@@ -1,6 +1,6 @@
-# NeuroLingo Apify client
+# Eleven Apify client
 
-The Apify layer of the NeuroLingo agent sidecar: a local check for whether a question needs the web, live web and place search, and a client for our form-errand Actor. TypeScript, Node 22, no runtime dependencies.
+The Apify layer of the Eleven agent sidecar: a local check for whether a question needs the web, live web and place search, and a client for our form-errand Actor. TypeScript, Node 22, no runtime dependencies.
 
 ## What it does
 

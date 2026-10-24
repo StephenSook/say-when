@@ -1,6 +1,6 @@
-# NeuroLingo SpacetimeDB module
+# Eleven SpacetimeDB module
 
-The live backend for NeuroLingo (formerly Say When): one TypeScript module on SpacetimeDB 2.13.0 that holds the scan clock, the dead-man pause, the consent gate for errands and calls, the agent's job queue, and the data every screen shows. Every device and the agent talk to it, and to nothing else, for live state. The full design, with every table, reducer and rule, is [`docs/spacetime.md`](../docs/spacetime.md); this file says how to build, publish, pair and connect, and what Maincloud showed when we ran it.
+The live backend for Eleven (formerly NeuroLingo and before that Say When): one TypeScript module on SpacetimeDB 2.13.0 that holds the scan clock, the dead-man pause, the consent gate for errands and calls, the agent's job queue, and the data every screen shows. Every device and the agent talk to it, and to nothing else, for live state. The full design, with every table, reducer and rule, is [`docs/spacetime.md`](../docs/spacetime.md); this file says how to build, publish, pair and connect, and what Maincloud showed when we ran it.
 
 ## The two databases
 
@@ -126,7 +126,7 @@ The commands above name `say-when-dev`; for the demo, the same commands name `sa
 1. Add the Cartesia key with the publish command in [Adding the Cartesia key](#publish-owner-only), naming `say-when-demo` (an `--env-only` publish, or the full publish while the module is unchanged).
 2. Point every client at it: `NEXT_PUBLIC_SPACETIMEDB_DB=say-when-demo` for the deployed web app, `SPACETIMEDB_DB=say-when-demo` for the agent sidecar.
 3. Pair the demo devices (station, partner phone, speaker, agent) with `approve_pairing <code> false`, using role words as labels, never a person's name. The agent pairs with `SPACETIMEDB_DB=say-when-demo npm run pair` and keeps a separate token file from the dev one (`AGENT_TOKEN_FILE`).
-4. Grant the consent rows the demo needs: `errand <form_key>` for each demo form, `call <contact_id>` for each consenting contact (consent under the NeuroLingo name, PLAN D13), `web_search ""` and `memory ""` if the agent may use them, and `board_text ""` only if the board should show text.
+4. Grant the consent rows the demo needs: `errand <form_key>` for each demo form, `call <contact_id>` for each consenting contact (consent under the Eleven name, PLAN D13), `web_search ""` and `memory ""` if the agent may use them, and `board_text ""` only if the board should show text.
 5. Set the wearer's timing from calibration with `set_timing`.
 6. `spacetime lock say-when-demo` (it only blocks deletion).
 

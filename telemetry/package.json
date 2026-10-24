@@ -3,7 +3,7 @@
     "version": "0.1.0",
     "private": true,
     "type": "module",
-    "description": "NeuroLingo telemetry: content-free switch events, scan steps, picks and errand and call outcomes from SpacetimeDB into Tiger Data hypertables, with real-time continuous aggregates behind the dashboard numbers.",
+    "description": "Eleven telemetry: content-free switch events, scan steps, picks and errand and call outcomes from SpacetimeDB into Tiger Data hypertables, with real-time continuous aggregates behind the dashboard numbers.",
     "engines": {
         "node": ">=22"
     },

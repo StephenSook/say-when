@@ -1,6 +1,6 @@
 # Moss retrieval
 
-The retrieval layer for the NeuroLingo agent sidecar. (Code identifiers, the `@say-when/moss` package name and the `say-when` session name, keep the old name until the repo is renamed; see PLAN.md D13.) One Moss session on the agent laptop holds two things:
+The retrieval layer for the Eleven agent sidecar. (Code identifiers, the `@say-when/moss` package name and the `say-when` session name, keep the old name until the repo is renamed; see PLAN.md D13.) One Moss session on the agent laptop holds two things:
 
 1. **The person's own memory**: replies they confirmed before (with which partner asked and when) and their preferences. It is recalled locally the moment a question's text lands, before any web search, so the earpiece can start with the person's own past answers.
 2. **The current question's web passages and places**, from the Apify rows. They are chunked and indexed on the laptop, searched, and deleted once the question is answered.

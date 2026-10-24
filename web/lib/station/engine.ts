@@ -1066,7 +1066,7 @@ export class StationEngine {
   }
 
   private voiceError(error: unknown): void {
-    console.error('NeuroLingo: the voice failed', error);
+    console.error('Eleven: the voice failed', error);
     if (this.voiceDown) return;
     this.voiceDown = true;
     this.say('voiceDown');

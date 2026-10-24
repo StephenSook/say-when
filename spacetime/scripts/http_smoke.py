@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Talk to the NeuroLingo SpacetimeDB module over plain HTTPS, with the Python standard library only.
+"""Talk to the Eleven SpacetimeDB module over plain HTTPS, with the Python standard library only.
 
 This is the reference for any Python process that calls the module (the headset decoder's fallback path,
 docs/spacetime.md 7.5) and the tool behind the HTTP numbers in spacetime/README.md. It never prints a token:

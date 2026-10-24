@@ -1,5 +1,5 @@
 /*
- * NeuroLingo design tokens, from docs/ui.md "Tokens" and docs/mockups/tokens.css (values measured
+ * Eleven design tokens, from docs/ui.md "Tokens" and docs/mockups/tokens.css (values measured
  * from tube unless marked "ours"). Where the two differ, docs/ui.md wins: --text-hero follows its
  * Accessibility rule, options at 32 to 48 px. Fonts come from next/font in app/layout.tsx as
  * --font-geist-sans and --font-geist-mono.

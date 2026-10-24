@@ -2,7 +2,7 @@
   "name": "@say-when/web",
   "version": "0.1.0",
   "private": true,
-  "description": "NeuroLingo live dashboard (Live data, Agents, Conversation) and the partner phone view.",
+  "description": "Eleven live dashboard (Live data, Agents, Conversation) and the partner phone view.",
   "engines": {
     "node": ">=22"
   },

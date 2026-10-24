@@ -656,7 +656,7 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
     [
       connectedAt + 300,
       'assistant',
-      'Hi Demo caregiver. This is an automated assistant with an AI-generated voice, calling for Demo user through the NeuroLingo app. ' +
+      'Hi Demo caregiver. This is an automated assistant with an AI-generated voice, calling for Demo user through the Eleven app. ' +
         "This call is recorded and transcribed. To reach Demo user's team, call [number hidden].",
     ],
     [

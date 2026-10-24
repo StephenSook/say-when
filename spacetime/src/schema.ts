@@ -1,4 +1,4 @@
-// NeuroLingo's SpacetimeDB schema: every enum, shared object type and table (docs/spacetime.md section 2).
+// Eleven's SpacetimeDB schema: every enum, shared object type and table (docs/spacetime.md section 2).
 //
 // Keys are camelCase here. The 2.13 default case policy makes the wire names snake_case, so `scanState` is the
 // table `scan_state` and `stepSeq` is its column `step_seq`. Generated bindings are camelCase again.

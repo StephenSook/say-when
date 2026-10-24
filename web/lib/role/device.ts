@@ -169,7 +169,7 @@ export function createRoleDevice<Conn extends AnyDbConnection = DbConnection>(op
     try {
       dispatch({ type: 'rows', rows: [...pairingTables(conn).db.deviceStatus.iter()].map(deviceRowLite) });
     } catch (error) {
-      console.error('NeuroLingo: could not read device_status', error);
+      console.error('Eleven: could not read device_status', error);
     }
   };
 
@@ -203,7 +203,7 @@ export function createRoleDevice<Conn extends AnyDbConnection = DbConnection>(op
       try {
         detachPage = options.attach?.(conn);
       } catch (error) {
-        console.error('NeuroLingo: the page could not register its row callbacks', error);
+        console.error('Eleven: the page could not register its row callbacks', error);
       }
       return () => {
         tablesOf.removeOnInsert(changed);

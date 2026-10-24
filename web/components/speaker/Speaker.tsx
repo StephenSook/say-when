@@ -33,7 +33,7 @@ export function Speaker() {
     <section className={styles.root} aria-labelledby="speaker-title">
       <div className={styles.top}>
         <h1 id="speaker-title" className={styles.brand}>
-          NeuroLingo room voice
+          Eleven room voice
         </h1>
         <RoleConnectionChip state={connection} onForget={() => device?.forget()} />
       </div>

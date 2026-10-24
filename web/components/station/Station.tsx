@@ -69,7 +69,7 @@ export function Station() {
     <section className={styles.root} aria-labelledby="station-title">
       <header className={styles.top}>
         <h1 id="station-title" className={styles.title}>
-          NeuroLingo station
+          Eleven station
         </h1>
         {snapshot ? <Chips s={snapshot} engine={engine} /> : null}
       </header>

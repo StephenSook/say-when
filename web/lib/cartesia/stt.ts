@@ -81,14 +81,14 @@ export interface AudioSource {
 
 // An AudioWorklet that hands each mono block to the page, as in Cartesia's browser STT example.
 const CAPTURE_WORKLET = `
-class NeuroLingoCapture extends AudioWorkletProcessor {
+class ElevenCapture extends AudioWorkletProcessor {
     process(inputs) {
         const channel = inputs[0] && inputs[0][0];
         if (channel) this.port.postMessage(channel.slice(0));
         return true;
     }
 }
-registerProcessor('neurolingo-capture', NeuroLingoCapture);
+registerProcessor('neurolingo-capture', ElevenCapture);
 `;
 
 /** Microphone capture with getUserMedia and an AudioWorklet, downsampled to 16 kHz 16-bit mono. */

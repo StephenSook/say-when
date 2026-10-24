@@ -1,4 +1,4 @@
-# NeuroLingo telemetry (Tiger Data)
+# Eleven telemetry (Tiger Data)
 
 PLAN row 6.1. A read-only subscriber to the SpacetimeDB module that turns what the person's switch did into content-free rows in a Tiger Data (TimescaleDB) service, plus one function that returns the numbers the dashboard shows. Telemetry only: no app state lives in Tiger (PLAN D2), and telemetry never writes to SpacetimeDB.
 

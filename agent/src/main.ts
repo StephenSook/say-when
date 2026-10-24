@@ -1,4 +1,4 @@
-// The NeuroLingo agent sidecar's command line.
+// The Eleven agent sidecar's command line.
 //
 //   npm start         run the sidecar (loads agent/.env.local, then the repo's .env.local, without overriding
 //                     variables already set)

@@ -435,7 +435,7 @@ export class Earpiece<Clip extends ClipLike = ClipLike> {
       waitForLive: (ms) => this.deps.waitForLive(ms),
       sleep: this.deps.sleep,
     }).catch((error: unknown) => {
-      console.error('NeuroLingo: report_clip_ready was not accepted', callErrorText(error));
+      console.error('Eleven: report_clip_ready was not accepted', callErrorText(error));
     });
   }
 
@@ -486,7 +486,7 @@ export class Earpiece<Clip extends ClipLike = ClipLike> {
   private start(clip: Clip, optionStartSeq: bigint, optionId: bigint, rank: number, kind: 'option' | 'prompt'): void {
     const playStart = this.deps.now() + Math.max(0, this.deps.latencyMs());
     void this.deps.options.play(clip, kind).catch((error: unknown) => {
-      console.error('NeuroLingo: the earpiece could not play a clip', error);
+      console.error('Eleven: the earpiece could not play a clip', error);
     });
     this.deps.heard.played(optionStartSeq, playStart, kind === 'option' ? optionId : undefined);
     this.nowPlaying = { kind, optionId, rank, optionStartSeq, startedAt: playStart };
@@ -518,12 +518,12 @@ export class Earpiece<Clip extends ClipLike = ClipLike> {
       const text = callErrorText(error);
       // A module without v2 fails the call in a way the SDK does not document: log once and stop for the session.
       if (kind === 'internal' || kind === 'other' || /reducer/i.test(text)) {
-        if (!this.timingsOff) console.error('NeuroLingo: report_word_timings is not available; not calling it again this session', text);
+        if (!this.timingsOff) console.error('Eleven: report_word_timings is not available; not calling it again this session', text);
         this.timingsOff = true;
         this.deps.onChange?.();
         return;
       }
-      console.error('NeuroLingo: report_word_timings was not accepted', text);
+      console.error('Eleven: report_word_timings was not accepted', text);
     });
   }
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""End-to-end smoke test of a NeuroLingo dev database on Maincloud (docs/spacetime.md 6.3 and 12). Owner only.
+"""End-to-end smoke test of a Eleven dev database on Maincloud (docs/spacetime.md 6.3 and 12). Owner only.
 
 Plays every role with made-up content and prints what the database did:
   the owner      through the spacetime CLI you are logged in with (questions, pairing approval, consent, the toggle)

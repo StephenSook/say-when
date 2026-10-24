@@ -1,8 +1,8 @@
-# NeuroLingo
+# Eleven
 
 A screenless reply and errand assistant for people who cannot speak or use their hands.
 
-A conversation partner asks a question out loud. NeuroLingo drafts up to four answers, reads them one at a time into an earpiece, and the person picks one with an EEG headset: an imagined hand squeeze to choose, and a jaw clench to confirm or stop.
+A conversation partner asks a question out loud. Eleven drafts up to four answers, reads them one at a time into an earpiece, and the person picks one with an EEG headset: an imagined hand squeeze to choose, and a jaw clench to confirm or stop.
 
 Anything that leaves the room, like sending a form or placing a phone call, is read back first and only happens after a fresh confirm.
 

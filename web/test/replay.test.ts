@@ -241,7 +241,7 @@ describe('replay script (D11 commands)', () => {
     assert.ok(call.consentOnFile);
     assert.ok(call.transcript.length >= 2);
     assert.ok(call.transcript.every((line) => line.at < (call.endedAt ?? 0)));
-    assert.match(call.transcript[0]?.text ?? '', /NeuroLingo/, 'the AI disclosure names NeuroLingo');
+    assert.match(call.transcript[0]?.text ?? '', /Eleven/, 'the AI disclosure names Eleven');
   });
 
   test('STOP during the call asks the call agent to hang up, and the call ends a moment later', () => {

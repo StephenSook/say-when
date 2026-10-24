@@ -16,7 +16,7 @@ await withTiger('stats', async (conn) => {
         return 0;
     }
     const scope = sessionId ? `session ${sessionId}` : includeTest ? 'all sessions, test rows included' : 'real sessions only';
-    console.log(`NeuroLingo telemetry, last ${s.windowMinutes} minutes (${scope}), as of ${s.asOf}`);
+    console.log(`Eleven telemetry, last ${s.windowMinutes} minutes (${scope}), as of ${s.asOf}`);
     console.log(`  false activations per idle minute: ${s.falseActivationsPerIdleMinute ?? 'not enough rest yet'} (${s.falseActivations} in ${s.idleMinutes} idle minutes)`);
     console.log(`  YES at rest that opened the menu or lifted a pause: ${s.yesActedAtRest}`);
     console.log(`  time to pick: p50 ${s.timeToPick.p50Ms ?? '-'} ms, p95 ${s.timeToPick.p95Ms ?? '-'} ms over ${s.timeToPick.picks} picks (${s.timeToPick.method})`);

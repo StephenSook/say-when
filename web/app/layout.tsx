@@ -19,11 +19,11 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: 'NeuroLingo',
-    template: '%s, NeuroLingo',
+    default: 'Eleven',
+    template: '%s, Eleven',
   },
   description:
-    'Live dashboard and partner phone view for NeuroLingo, a screenless reply and errand assistant for people who cannot speak or use their hands.',
+    'Live dashboard and partner phone view for Eleven, a screenless reply and errand assistant for people who cannot speak or use their hands.',
 };
 
 export const viewport: Viewport = {

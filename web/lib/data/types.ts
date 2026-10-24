@@ -1,5 +1,5 @@
 /**
- * Data types for the NeuroLingo dashboard and the partner phone view.
+ * Data types for the Eleven dashboard and the partner phone view.
  *
  * DRAFT until PLAN 1.2 locks the contracts. These follow "Shared Contracts" in PLAN.md (D11 command
  * names) and fill the gaps listed at the end of docs/ui.md ("Contract gaps for PLAN 1.2"). Anything

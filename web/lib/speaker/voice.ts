@@ -13,7 +13,7 @@ import { AudioOut, TtsPlayer, utterance, voiceProfile, type AudioContextLike, ty
 import type { SayJob, SayResult } from './engine';
 
 /** The Test voice sentence (docs/station.md Appendix A, speaker only). */
-export const TEST_VOICE_TEXT = 'This is the NeuroLingo room voice.';
+export const TEST_VOICE_TEXT = 'This is the Eleven room voice.';
 
 /** How often the end of playback is checked. */
 export const PLAYBACK_POLL_MS = 100;

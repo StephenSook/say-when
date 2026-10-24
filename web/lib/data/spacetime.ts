@@ -147,7 +147,7 @@ export function createSpacetimeSource(settings: SpacetimeSettings, deps: Spaceti
       set({ rows: onLaptopClock(bindings.read(conn), false) });
     } catch (error) {
       // A mapping bug keeps the last good rows on screen and shows its text in the tooltip.
-      console.error('NeuroLingo: could not read the SpacetimeDB rows', error);
+      console.error('Eleven: could not read the SpacetimeDB rows', error);
       set({ errorText: errorText(error) });
     }
   };
@@ -193,7 +193,7 @@ export function createSpacetimeSource(settings: SpacetimeSettings, deps: Spaceti
           // A (re)applied subscription holds old rows: a snapshot, which never moves the clock offset.
           set({ rows: onLaptopClock(active.read(connected), true), connection: 'live', ready: true, reason: null, errorText: null });
         } catch (error) {
-          console.error('NeuroLingo: could not read the SpacetimeDB rows', error);
+          console.error('Eleven: could not read the SpacetimeDB rows', error);
           set({ connection: 'live', ready: true, reason: null, errorText: errorText(error) });
         }
       })

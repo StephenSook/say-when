@@ -174,7 +174,7 @@ describe('Hold to ask', () => {
     const options = h.sessions[0]!.options;
     assert.equal(options.endOn, 'release', 'push to talk: the partner decides when it is over');
     assert.equal(options.maxMs, LISTEN_MAX_MS);
-    assert.ok(PARTNER_KEYTERMS.includes('NeuroLingo'));
+    assert.ok(PARTNER_KEYTERMS.includes('Eleven'));
     assert.equal(await options.getToken(), 'stt-token');
 
     options.onPartial?.('what should');

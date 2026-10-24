@@ -1,5 +1,5 @@
 /**
- * A guard for the team's writing rules across web/: plain words, NeuroLingo as the product name,
+ * A guard for the team's writing rules across web/: plain words, Eleven as the product name,
  * D11 command names, and no claim that the app reads thoughts. It walks the source files, so a new
  * screen is checked the moment it exists, committed or not. Run it with `npm test`.
  */
@@ -31,7 +31,7 @@ const TRANSFORM = /\btransform(s|ed|ing|ation)?\b/gi;
 // Built from code points, so this file holds no dash or curly quote itself: en dash, em dash, and the four curly quotes.
 const TYPOGRAPHIC = [0x2013, 0x2014, 0x2018, 0x2019, 0x201c, 0x201d].map((code) => String.fromCharCode(code));
 const DASHES_AND_CURLY_QUOTES = new RegExp(`[${TYPOGRAPHIC.join('')}]`);
-const OLD_NAME = /Say When/;
+const OLD_NAME = /Say When|NeuroLingo/;
 const OLD_COMMANDS = /\b(SELECT|ERRAND|CALL|PAUSE)\b/;
 const MIND_CLAIMS = /\b(reads?|reading)\s+(your\s+|their\s+|the\s+person's\s+|a\s+person's\s+)?(thoughts|minds?)\b|\b(mind|thought)[- ]reading\b/i;
 
@@ -54,7 +54,7 @@ function problemsIn(text: string, path: string): string[] {
         if (!isCode) problems.push(`${where} uses "${match[0]}"`);
       }
     }
-    if (OLD_NAME.test(line)) problems.push(`${where} says the old product name; use NeuroLingo`);
+    if (OLD_NAME.test(line)) problems.push(`${where} says the old product name; use Eleven`);
     // Tests may name the retired commands to prove they are rejected; SQL in a test fixture is fine too.
     if (!isTest && OLD_COMMANDS.test(line)) problems.push(`${where} uses a retired command name; use YES, NO, CONFIRM or STOP`);
     if (MIND_CLAIMS.test(line)) problems.push(`${where} claims the app reads thoughts or minds`);

@@ -3,7 +3,7 @@
     "version": "0.1.0",
     "private": true,
     "type": "module",
-    "description": "NeuroLingo agent sidecar: drafts up to four options with Claude from Moss memory and Apify results, and runs confirmed errands and calls, all through the SpacetimeDB module.",
+    "description": "Eleven agent sidecar: drafts up to four options with Claude from Moss memory and Apify results, and runs confirmed errands and calls, all through the SpacetimeDB module.",
     "engines": {
         "node": ">=22"
     },

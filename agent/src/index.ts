@@ -1,4 +1,4 @@
-// Public surface of @say-when/agent, the NeuroLingo agent sidecar. `npm start` runs src/main.ts; these exports
+// Public surface of @say-when/agent, the Eleven agent sidecar. `npm start` runs src/main.ts; these exports
 // are for tests and for anyone embedding the pieces.
 
 export {

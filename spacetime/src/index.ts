@@ -1,4 +1,4 @@
-// NeuroLingo's SpacetimeDB module (docs/spacetime.md). This file holds the default schema export and every module
+// Eleven's SpacetimeDB module (docs/spacetime.md). This file holds the default schema export and every module
 // export (reducers, views, procedures, HTTP handlers and the router) and nothing else: any other exported value
 // makes the module throw "exporting something that is not a spacetime export" at load. Logic lives in the
 // helper files.

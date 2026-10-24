@@ -17,7 +17,7 @@ import { countWords } from '../format';
 import type { AskOutcome, AskRequest, AskSender } from './ask';
 
 /** No household names here: a list in the page would ship them in a public bundle (docs/station.md 4.2, O7). */
-export const PARTNER_KEYTERMS: readonly string[] = buildKeyterms(['NeuroLingo', 'Cal Hacks', 'care team']).keyterms;
+export const PARTNER_KEYTERMS: readonly string[] = buildKeyterms(['Eleven', 'Cal Hacks', 'care team']).keyterms;
 
 /** A hard stop for a stuck button: Ink-2 bills every second sent. */
 export const LISTEN_MAX_MS = 30_000;

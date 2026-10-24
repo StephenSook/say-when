@@ -1,4 +1,4 @@
-# NeuroLingo: Plan and Coordination
+# Eleven: Plan and Coordination
 
 > Living status doc for Stephen, Khadim, Shashank and Leon. Update it on every task change and push to `main`. This file is the single source of truth for who is working on what.
 
@@ -26,11 +26,11 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⛔ blocked
 | 3.2 | Apify search and scrape client (RAG Web Browser, Google Maps) | `apify/client/` | Stephen | ✅ | - | Built, 166 tests, Codex round 1 fixed (4891a05) |
 | 3.3 | Moss retrieval over Apify results and memory | `moss/` | Stephen | ✅ | 3.2 | Built, 75 tests, six Codex rounds (last two clean). Memory first; text private unless shareable. First real Moss run pending |
 | 3.4 | Option planner (Claude, up to four options) | `agent/` | Stephen | ✅ | 3.2, 3.3 | Built in the sidecar (claude-haiku-5-5, structured output, strict checks), 191 tests on fakes, seven Codex rounds. First live run against Anthropic, Apify, Moss and say-when-dev pending (needs the API keys). Skips the web search when no outside facts are needed (D8) |
-| 3.5 | Earpiece voice (Cartesia Sonic, pronunciation dictionary) | `cartesia/` | Stephen | ✅ | 3.4 | Built and tested offline. Nobody has heard Sonic say "NeuroLingo" yet |
+| 3.5 | Earpiece voice (Cartesia Sonic, pronunciation dictionary) | `cartesia/` | Stephen | ✅ | 3.4 | Built and tested offline. Nobody has heard Sonic say "Eleven" yet |
 | 4.1 | Form-errand Apify Actor: preview, read back, submit | `apify/form-errand/` | Stephen | ✅ | - | Public on the Apify Store: https://apify.com/stephensookra/confirm-gated-form-errand (build 0.1.3, includes the round 1 fixes). Now build 0.1.4 (round 2 fixes), verified on the platform: preview, submit, and a repeat submit refused as a duplicate |
 | 4.2 | Errand wiring: errand option or idle menu, read-back, CONFIRM, submit | `agent/` | Stephen | ✅ | 1.1, 4.1 | Built in the sidecar: preview, read-back digest, submit only after the module records a matching CONFIRM, unknown outcomes never retried. Live run pending. Errands and calls are options, not gestures (D11) |
 | 4.3 | Care team request form (demo target) | external | Leon | ⬜ | - | Owned by the consenting caregiver |
-| 4.4 | Outbound call agent (Cartesia Managed Agents) | `cartesia/` | Stephen | 🟡 | 1.1, 4.2 | Code built and tested offline. Still needed: create the agent from `cartesia/agent/*.txt`, consent re-confirmed under the NeuroLingo name (D13), one live test call to a consenting number |
+| 4.4 | Outbound call agent (Cartesia Managed Agents) | `cartesia/` | Stephen | 🟡 | 1.1, 4.2 | Code built and tested offline. Still needed: create the agent from `cartesia/agent/*.txt`, consent re-confirmed under the Eleven name (D13), one live test call to a consenting number |
 | 5.0 | UI reference: `docs/ui.md` with tokens, wireframes and mockups | `docs/` | Stephen | ✅ | - | Open `docs/mockups/index.html`. Stephen builds the UI from it |
 | 5.1 | Dashboard shell: Next.js, SpacetimeDB WebSocket subscriptions, layout | `web/` | Stephen | ✅ | 1.1 | Built, 141 tests; reads the live module as an anonymous viewer, no login. See D7 |
 | 5.2 | Screen 1, Live data: each pipeline stage with its real payload as it flows | `web/` | Stephen | ✅ | 5.1 | Built and checked on live data |
@@ -165,13 +165,19 @@ SpacetimeDB is the whole live backend, not a store behind an API:
 
 **Locked Oct 23 by Stephen. Design detail in `docs/spacetime.md`.**
 
+### D15: The product is called Eleven
+
+It was NeuroLingo from Oct 23 (D13) until Oct 24, and "Say When" before that. Every screen, document and spoken line, including the outbound call's AI disclosure and the planner's prompt, now says Eleven. Code identifiers keep their old names: `say-when` (repo, packages, databases, Moss session) and `neurolingo` (the Vercel project and its `neurolingo-web.vercel.app` alias, the Tiger service, `localStorage` keys, log prefixes such as `neurolingo-agent`, the audio worklet name). Consent collected under an earlier name is confirmed again under Eleven before any real call. The copy stays honest as in D13.
+
+**Locked Oct 24 by Stephen.**
+
 ### D14: Stephen's side owns the whole backend
 
 Stephen (with Claude) builds and runs all of the backend: the SpacetimeDB module, the agent sidecar and the Claude option planner, the errand and call wiring, and the Tiger Data telemetry writer, along with the UI and the Apify, Moss and Cartesia packages. Shashank owns the headset: the reader, the four-command decoder, calibration and the brain test. The decoder talks to the backend only through the SpacetimeDB contract in `docs/spacetime.md`.
 
 **Locked Oct 24 by Stephen.**
 
-### D13: The product is called NeuroLingo
+### D13: The product is called NeuroLingo (superseded by D15)
 
 It was "Say When" until Oct 23. Every screen, document and spoken line, including the outbound call's AI disclosure, now says NeuroLingo. Code identifiers (package names, the Moss session name, the SpacetimeDB database name) and the repo URL keep `say-when` until Stephen decides whether to rename the repo. Consent collected under the old name is confirmed again under the new name before any real call. The copy stays honest: the jaw clench is a muscle signal, the imagined squeeze is the brain test, and nothing claims to read thoughts.
 
@@ -197,7 +203,7 @@ All three update over SpacetimeDB subscriptions, so every laptop shows the same 
 - [ ] **Q4:** Can the free Cartesia phone number be set up without a card? Needs Stephen (Cartesia account; the call agent and number do not exist yet).
 - [ ] **Q5:** Who plays the caller's recipient, and is their consent written down? Needs Leon.
 - [x] **Q6:** Voice clone? Decided Oct 23 by Stephen: no cloning. See D10.
-- [ ] **Q7:** Pitch opening: lead with ALS and the recent implant stories (implants need brain surgery; NeuroLingo uses a headband that reads jaw clenches and imagined hand squeezes). Every implant fact must be checked and cited before it goes in the script. Needs Leon and Stephen.
+- [ ] **Q7:** Pitch opening: lead with ALS and the recent implant stories (implants need brain surgery; Eleven uses a headband that reads jaw clenches and imagined hand squeezes). Every implant fact must be checked and cited before it goes in the script. Needs Leon and Stephen.
 - [ ] **Q8:** What does Khadim own now that all UI/UX moved to Stephen? Needs Stephen.
 - [ ] **Q9:** YES while idle opens the person's menu (Khadim recommends keeping it: it is the most brain-first piece, and a misfire only opens the menu). Default: keep. Needs Stephen to confirm.
 - [ ] **Q10:** Someone with ALS who loses the jaw has no way to CONFIRM. A brain-only confirm (for example two YES in a row after the read-back) is the next step; default: say it in the pitch as future work, do not build it this weekend. Needs Stephen to confirm.

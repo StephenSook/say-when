@@ -6,7 +6,7 @@
 // Every error that could carry it goes through `redact` first.
 import { execFile } from 'node:child_process';
 
-/** The free Tiger Cloud service created for NeuroLingo telemetry (an id, not a secret). */
+/** The free Tiger Cloud service created for Eleven telemetry (an id, not a secret). */
 export const DEFAULT_SERVICE_ID = 'ipx9051gbc';
 
 /** What the pg client needs. Holds the password: never log or serialize this object. */

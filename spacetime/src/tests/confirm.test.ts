@@ -482,8 +482,8 @@ test('a call is prepared on the pick, confirmed after its read-back, claimed onc
   as(db, AGENT, (ctx) => m.claimCall(ctx, { callId: c.id, digest: CALL_DIGEST }));
   expect([callOf(db).status.tag, callOf(db).claimAttempt]).toEqual(['Dialing', 1]);
   as(db, AGENT, (ctx) => m.reportCallStatus(ctx, { callId: c.id, attempt: 1, status: 'connected', result: '', endReason: '', reasonCode: '', reason: '' }));
-  as(db, AGENT, (ctx) => m.addCallLine(ctx, { callId: c.id, attempt: 1, lineKey: 'line-1', role: 'assistant', text: 'Hello, this is NeuroLingo.' }));
-  as(db, AGENT, (ctx) => m.addCallLine(ctx, { callId: c.id, attempt: 1, lineKey: 'line-1', role: 'assistant', text: 'Hello, this is NeuroLingo.' }));
+  as(db, AGENT, (ctx) => m.addCallLine(ctx, { callId: c.id, attempt: 1, lineKey: 'line-1', role: 'assistant', text: 'Hello, this is Eleven.' }));
+  as(db, AGENT, (ctx) => m.addCallLine(ctx, { callId: c.id, attempt: 1, lineKey: 'line-1', role: 'assistant', text: 'Hello, this is Eleven.' }));
   expect([...db.db.callLine.callId.filter(c.id)]).toHaveLength(1); // a retry of the same line_key
   settle(db);
   expect(gesture(db, 'STOP').outcome).toBe('accepted:hang_up');

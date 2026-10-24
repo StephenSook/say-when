@@ -12,7 +12,7 @@ export interface AgentScript {
 }
 
 /** The app the call says it comes from. The welcome must name it in the disclosure, before the message. */
-export const PRODUCT_NAME = 'NeuroLingo';
+export const PRODUCT_NAME = 'Eleven';
 
 /** The only dynamic variables the script may use. The dialer supplies every one of them on each call. */
 export const SCRIPT_VARIABLES = ['recipient_name', 'person_name', 'callback_number', 'message'] as const;

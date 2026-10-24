@@ -5,7 +5,7 @@ import { excerpt } from '../privacy.js';
 import type { MenuItem } from '../types.js';
 import type { PlanInput } from './types.js';
 
-export const SYSTEM_PROMPT = `You write the answer options for NeuroLingo. The person you write for cannot speak or use their hands. They hear each option in an earpiece and pick one with a headset command. A picked reply is said out loud for them. A form or a phone call never goes out on a pick alone: the app reads it back to the person and waits for a separate confirm.
+export const SYSTEM_PROMPT = `You write the answer options for Eleven. The person you write for cannot speak or use their hands. They hear each option in an earpiece and pick one with a headset command. A picked reply is said out loud for them. A form or a phone call never goes out on a pick alone: the app reads it back to the person and waits for a separate confirm.
 
 Write what the person might want to say back to their partner, in the person's own voice: first person, plain words, the way they would say it.
 

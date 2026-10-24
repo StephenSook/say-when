@@ -3,7 +3,7 @@
     "version": "0.1.0",
     "private": true,
     "type": "module",
-    "description": "Moss retrieval for NeuroLingo: the person's own memory first, then the current question's web passages, with options ordered by memory.",
+    "description": "Moss retrieval for Eleven: the person's own memory first, then the current question's web passages, with options ordered by memory.",
     "engines": {
         "node": ">=22"
     },

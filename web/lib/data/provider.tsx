@@ -105,7 +105,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
 function useData(): DataContextValue {
   const value = useContext(DataContext);
-  if (!value) throw new Error('NeuroLingo: wrap the app in <DataProvider> (app/layout.tsx does this).');
+  if (!value) throw new Error('Eleven: wrap the app in <DataProvider> (app/layout.tsx does this).');
   return value;
 }
 

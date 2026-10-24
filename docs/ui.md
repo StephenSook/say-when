@@ -1,4 +1,4 @@
-# NeuroLingo UI spec
+# Eleven UI spec
 
 For Stephen, who builds all of the UI. How the dashboard and the partner phone view should look and behave. It is modeled on tube's UI and cut down to what we need.
 
@@ -46,7 +46,7 @@ Skip:
 
 ## Stack
 
-| Layer | Tube | NeuroLingo |
+| Layer | Tube | Eleven |
 |---|---|---|
 | Framework | Vite 7.3.7, React 19.3.0. No router library: `main.tsx` picks a page from `location.pathname` and lazy loads it | Next.js App Router in `web/`, one route per screen |
 | Styling | Plain CSS with custom properties in four files: `base.css`, `styles.css`, `archive/archive.css`, `landing/landing.css`. No Tailwind, no CSS Modules, no component library | Plain CSS. Tokens in `app/globals.css`, one CSS Module per component. No Tailwind, no component kit |
@@ -217,7 +217,7 @@ Wireframe legend: `[v]` done, `[*]` running, `[ ]` not yet, `[x]` failed, `|` th
 
 ```
 +------------------------------------------------------------------------------+
-| NeuroLingo   Live data   Agents   Conversation        (o Live) (Headset on)  |
+| Eleven   Live data   Agents   Conversation        (o Live) (Headset on)  |
 |                                   ============                               |
 +------------------------------------------------------------------------------+
 | Paused. Nothing will be sent.                        (only while paused)     |
@@ -228,7 +228,7 @@ Wireframe legend: `[v]` done, `[*]` running, `[ ]` not yet, `[x]` failed, `|` th
 +------------------------------------------------------------------------------+
 ```
 
-- Header: `--header-h` tall, `--s6` side padding, a `--divider` line under it. "NeuroLingo" at `--text-title`, weight 500.
+- Header: `--header-h` tall, `--s6` side padding, a `--divider` line under it. "Eleven" at `--text-title`, weight 500.
 - Tabs: plain links at `--text`. The current one is `--fg` at weight 500 with a 2 px `--fg` underline and `aria-current="page"` (tube's archive tab uses a 1 px underline). Others are `--fg-muted`. Routes: `/live`, `/agents`, `/conversation`, and `/partner` for the phone. Keys 1, 2 and 3 switch screens in PLAN order (tube binds `/`, arrows and Space in `useKeyboard.ts`). Open question for Stephen: should `/` open Conversation, the demo screen?
 - Connection chip, driven by `useSpacetimeDB().isActive` and each screen's `useTable` `isReady`:
 
@@ -378,7 +378,7 @@ Focus: one status sentence at the top, then the reply.
 
 ```
 +----------------------------------+
-| NeuroLingo                o Live |
+| Eleven                o Live |
 |                                  |
 | Reading the options              |   --text-lead
 |                                  |

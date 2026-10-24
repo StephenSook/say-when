@@ -183,7 +183,7 @@ export class CueSpeaker<Clip extends ClipLike = ClipLike> {
         if (seq !== this.safetySeq) return;
         void this.deps.prompts.play(clip, 'phrase').catch(() => {});
       },
-      (error: unknown) => console.error('NeuroLingo: a safety sentence could not be voiced', error),
+      (error: unknown) => console.error('Eleven: a safety sentence could not be voiced', error),
     );
   }
 
@@ -239,7 +239,7 @@ export class CueSpeaker<Clip extends ClipLike = ClipLike> {
         this.deps.prompts.play(c, 'phrase').then(done, done);
       },
       (error: unknown) => {
-        console.error('NeuroLingo: a sentence could not be voiced', error);
+        console.error('Eleven: a sentence could not be voiced', error);
         done();
       },
     );

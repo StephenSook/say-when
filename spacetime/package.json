@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "NeuroLingo's SpacetimeDB module: the scan clock, the dead-man pause, the consent gate, the agent job queue and every screen's live data.",
+  "description": "Eleven's SpacetimeDB module: the scan clock, the dead-man pause, the consent gate, the agent job queue and every screen's live data.",
   "engines": {
     "node": ">=22"
   },

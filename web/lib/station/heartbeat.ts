@@ -296,7 +296,7 @@ export class Heartbeat {
     }
     const kind = callErrorKind(error);
     // A beat lost to the connection is skipped, never queued; the lease decides what the module does.
-    if (kind !== 'disconnected' && kind !== 'unknown_result') console.error('NeuroLingo: a heartbeat failed', error);
+    if (kind !== 'disconnected' && kind !== 'unknown_result') console.error('Eleven: a heartbeat failed', error);
   }
 
   private set(patch: Partial<HeartbeatState>): void {

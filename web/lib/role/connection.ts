@@ -234,7 +234,7 @@ export function createRoleConnection<Conn extends AnyDbConnection = DbConnection
       try {
         detachRows = options.attach(conn) ?? null;
       } catch (error) {
-        console.error('NeuroLingo: a role page could not register its row callbacks', error);
+        console.error('Eleven: a role page could not register its row callbacks', error);
       }
     }
     conn
@@ -246,7 +246,7 @@ export function createRoleConnection<Conn extends AnyDbConnection = DbConnection
         try {
           options.onApplied?.(conn);
         } catch (error) {
-          console.error('NeuroLingo: a role page failed after its subscription applied', error);
+          console.error('Eleven: a role page failed after its subscription applied', error);
         }
       })
       .onError((ctx: { event?: unknown }) => {

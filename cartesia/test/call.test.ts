@@ -59,7 +59,7 @@ const consentFor = (extra: Record<string, unknown> = {}) =>
             name: 'Leon',
             phone: LEON,
             timeZone: 'America/Los_Angeles',
-            consentText: 'I agree to AI-voice calls from the NeuroLingo demo during Cal Hacks 13, recorded and transcribed by Cartesia.',
+            consentText: 'I agree to AI-voice calls from the Eleven demo during Cal Hacks 13, recorded and transcribed by Cartesia.',
             consentedAt: '2026-10-23T16:00:00Z',
             ...extra,
         },
@@ -1009,7 +1009,7 @@ const MAYA = '+14155550177';
 const withMaya = () =>
     JSON.stringify([
         ...(JSON.parse(consentFor()) as unknown[]),
-        { id: 'maya', name: 'Maya', phone: MAYA, timeZone: 'America/Los_Angeles', consentText: 'I agree to AI-voice calls from the NeuroLingo demo.', consentedAt: '2026-10-23T16:00:00Z' },
+        { id: 'maya', name: 'Maya', phone: MAYA, timeZone: 'America/Los_Angeles', consentText: 'I agree to AI-voice calls from the Eleven demo.', consentedAt: '2026-10-23T16:00:00Z' },
     ]);
 const refusedThen = (...texts: string[]) => ({ statuses: [...texts.map((text) => ({ status: 'started', transcript: [{ role: 'user', text }] })), ANSWERED] });
 const record = (action: HoldRecord['action'], id: string, extra: Partial<HoldRecord> = {}) =>
@@ -1419,7 +1419,7 @@ describe('the reviewed script', () => {
     });
 
     it('names the app in the disclosure, and flags a welcome that does not', () => {
-        assert.equal(PRODUCT_NAME, 'NeuroLingo');
+        assert.equal(PRODUCT_NAME, 'Eleven');
         const before = script.welcome.indexOf('{{message}}');
         assert.ok(script.welcome.indexOf(`through the ${PRODUCT_NAME} app`) >= 0);
         assert.ok(script.welcome.indexOf(PRODUCT_NAME) < before);

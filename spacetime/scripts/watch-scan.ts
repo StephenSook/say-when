@@ -1,4 +1,4 @@
-// Smoke watcher for a NeuroLingo database, built on the generated agent bindings (docs/spacetime.md 6.3, S4).
+// Smoke watcher for a Eleven database, built on the generated agent bindings (docs/spacetime.md 6.3, S4).
 //
 //   npm run smoke -- pair --code 482913       ask to pair this script's identity as an Agent; the owner approves
 //   npm run smoke -- watch --seconds 60       print every scan_state change and how late each scheduled tick ran
