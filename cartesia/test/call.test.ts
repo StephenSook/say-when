@@ -595,7 +595,17 @@ describe('Dialer calls', () => {
             scriptProblems: [],
             agent: { ok: true },
             insideHoursNow: true,
+            unreachable: [],
         });
+        assert.equal(dials(h.fetch.calls), 0);
+    });
+
+    it('the setup check flags a contact the dialer would refuse, such as one whose number is the callback number', async () => {
+        // Oct 24: a consent entry sharing the callback number passed the check, then every call was refused bad_number.
+        const h = harness({ consent: consentFor({ phone: CALLBACK }) });
+        const report = await h.dialer.preflight();
+        assert.equal(report.ok, false);
+        assert.deepEqual(report.unreachable, [{ contact: 'leon', code: 'bad_number' }]);
         assert.equal(dials(h.fetch.calls), 0);
     });
 

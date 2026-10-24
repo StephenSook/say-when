@@ -679,6 +679,8 @@ export interface PreflightReport {
     agent: AgentCheck;
     /** True when every consented recipient is inside calling hours right now. */
     insideHoursNow: boolean;
+    /** Contacts every call to would be refused right now, whatever the request (ids and codes only, never numbers). */
+    unreachable: { contact: string; code: CallRefusal['code'] }[];
 }
 
 /**
@@ -970,8 +972,21 @@ export class Dialer {
         const now = this.now();
         const insideHoursNow = this.lists.consent.length > 0 && this.lists.consent.every((entry) => insideCallingHours(now, this.spanMs(), entry.timeZone));
         const holdsReadable = this.refreshHolds();
+        // The same per-contact checks prepare() runs, minus the request and the hour, so a setup that refuses every
+        // call (a contact whose number is the callback number, for one) cannot report ready.
+        const unreachable = this.lists.consent.flatMap((entry) => {
+            const number = toUsE164(entry.phone);
+            const code: CallRefusal['code'] | null =
+                entry.expiresAt !== undefined && Date.parse(entry.expiresAt) <= now ? 'consent_expired'
+                : !number || number === this.callback ? 'bad_number'
+                : isEmergencyNumber(number) ? 'emergency_number'
+                : this.lists.doNotCall.has(number) ? 'do_not_call'
+                : this.lists.holds.has(number) ? 'opt_out_hold'
+                : null;
+            return code === null ? [] : [{ contact: entry.id, code }];
+        });
         return {
-            ok: holdsReadable && scriptProblems.length === 0 && this.lists.consent.length > 0 && agent.ok,
+            ok: holdsReadable && scriptProblems.length === 0 && this.lists.consent.length > unreachable.length && agent.ok,
             consentCount: this.lists.consent.length,
             doNotCallCount: this.lists.doNotCall.size,
             holdCount: this.lists.holds.size,
@@ -979,6 +994,7 @@ export class Dialer {
             scriptProblems,
             agent,
             insideHoursNow,
+            unreachable,
         };
     }
 
