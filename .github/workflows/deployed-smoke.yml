@@ -9,7 +9,7 @@ on:
       url:
         description: Site to check
         required: false
-        default: https://neurolingo-web.vercel.app
+        default: https://eleven-calhacks.vercel.app
   schedule:
     # Hourly, at an offset minute: GitHub delays schedules that start on the hour the most.
     - cron: '17 * * * *'
@@ -28,7 +28,7 @@ jobs:
       run:
         working-directory: scripts
     env:
-      DEPLOYED_URL: ${{ inputs.url || 'https://neurolingo-web.vercel.app' }}
+      DEPLOYED_URL: ${{ inputs.url || 'https://eleven-calhacks.vercel.app' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

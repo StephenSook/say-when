@@ -3,7 +3,7 @@
  * Smoke test of the DEPLOYED Eleven web app. A green CI run proves the code; this proves the site a judge opens.
  *
  *   cd scripts && npm ci && npx playwright install chromium
- *   DEPLOYED_URL=https://neurolingo-web.vercel.app npm run smoke     (the default address; CI runs it hourly)
+ *   DEPLOYED_URL=https://eleven-calhacks.vercel.app npm run smoke     (the default address; CI runs it hourly)
  *
  * Every check prints one line, PASS or FAIL, and the run exits 1 if any check failed.
  *
@@ -21,7 +21,7 @@
  */
 import { chromium } from 'playwright';
 
-const BASE_URL = baseUrl(process.env.DEPLOYED_URL || 'https://neurolingo-web.vercel.app');
+const BASE_URL = baseUrl(process.env.DEPLOYED_URL || 'https://eleven-calhacks.vercel.app');
 const MAINCLOUD_URL = 'https://maincloud.spacetimedb.com';
 /** The databases the judge page links (web/components/judge/model.ts JUDGE_DATABASES). */
 const STATS_DATABASES = ['say-when-demo', 'say-when-dev'];
