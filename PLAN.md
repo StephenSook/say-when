@@ -27,7 +27,7 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⛔ blocked
 | 3.3 | Moss retrieval over Apify results and memory | `moss/` | Stephen | 🟡 | 3.2 | Stephen, since Oct 23 9:30pm PT. Research landed; Claude implementing |
 | 3.4 | Option planner (Claude, up to four options) | `agent/` | Shashank | ⬜ | 3.2, 3.3 | Skip the web search when no outside facts are needed. See D8 |
 | 3.5 | Earpiece voice (Cartesia Sonic, pronunciation dictionary) | `cartesia/` | Stephen | 🟡 | 3.4 | Stephen, since Oct 23 9:30pm PT. Claude implementing |
-| 4.1 | Form-errand Apify Actor: preview, read back, submit | `apify/form-errand/` | Stephen | 🟡 | - | Stephen, since Oct 23 8:45pm PT. Built, 40 tests green in CI. Next: `apify login`, `apify push`, publish to Store |
+| 4.1 | Form-errand Apify Actor: preview, read back, submit | `apify/form-errand/` | Stephen | 🟡 | - | Stephen, since Oct 23 8:45pm PT. Live on Apify as stephensookra/confirm-gated-form-errand (build 0.1.1); preview and submit verified on the platform. Next: publish to Store |
 | 4.2 | Errand wiring: ERRAND, read-back, confirm_errand, submit | `agent/` | Shashank | ⬜ | 1.1, 4.1 | |
 | 4.3 | Care team request form (demo target) | external | Leon | ⬜ | - | Owned by the consenting caregiver |
 | 4.4 | Outbound call agent (Cartesia Managed Agents) | `cartesia/` | Stephen | 🟡 | 1.1, 4.2 | Stephen, since Oct 23 9:30pm PT. Consenting number only. Claude implementing |
