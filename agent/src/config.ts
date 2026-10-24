@@ -8,9 +8,15 @@ import { dirname, join } from 'node:path';
 import { parseEnv } from 'node:util';
 
 import { DEFAULT_PLANNER_EFFORT, DEFAULT_PLANNER_MODEL, DEFAULT_PLANNER_TIMEOUT_MS, type Effort } from './planner/claude.js';
+import { isSandboxDatabase, SANDBOX_LIMIT_DEFAULTS, type SandboxLimits } from './sandbox.js';
 
 export interface AgentConfig {
-    spacetime: { uri: string; database: string; tokenFile: string };
+    /** `token`: the identity token from AGENT_TOKEN (a host with no lasting disk), used instead of the token file. */
+    spacetime: { uri: string; database: string; tokenFile: string; token: string | null };
+    /** The judge try sandbox's caps (AGENT_TRY=on), or null when it is off. */
+    sandbox: SandboxLimits | null;
+    /** PORT: the health endpoint's port (a web service host sets it), or null for none. */
+    port: number | null;
     planner: { model: string; effort: Effort; timeoutMs: number };
     search: { enabled: boolean; timeoutMs: number; placesNear: { lat: number; lng: number } | null };
     errands: { enabled: boolean };
@@ -204,9 +210,36 @@ export function readConfig(env: Env, tokenFileDefault: string, hasAnthropicProfi
     const yesNoFast = flag(env, 'AGENT_YES_NO_FAST', true, checks, problems, 'stock Yes and No at once for a clear yes or no question');
     const draftFirst = flag(env, 'AGENT_DRAFT_FIRST', false, checks, problems, 'options from memory while the web search runs');
 
+    // The judge try sandbox (src/sandbox.ts). It runs only against a try database, never with calls, and never in the
+    // demo's Moss memory; and a try database never runs without its caps.
+    const sandboxWanted = flag(env, 'AGENT_TRY', false, checks, problems, 'judge try sandbox: spending caps and sample notes');
+    let sandbox: SandboxLimits | null = null;
+    if (sandboxWanted) {
+        if (!isSandboxDatabase(database)) problems.push('AGENT_TRY is on, so SPACETIMEDB_DB must be say-when-try or say-when-try-dev.');
+        if (calls) problems.push('AGENT_TRY is on, so AGENT_CALLS must be off: the sandbox never places a call.');
+        const session = (env.MOSS_SESSION_NAME ?? '').trim();
+        if (mossWanted && mossReady && (session === '' || session === 'say-when')) {
+            problems.push('AGENT_TRY is on, so MOSS_SESSION_NAME must be set and must not be say-when: the sandbox keeps its own memory.');
+        }
+        const dailyCents = integer(env, 'AGENT_TRY_DAILY_CENTS', SANDBOX_LIMIT_DEFAULTS.dailyUsd * 100, 10, 10_000, checks, problems, 'daily spending ceiling in cents');
+        sandbox = {
+            ...SANDBOX_LIMIT_DEFAULTS,
+            dailyUsd: dailyCents / 100,
+            questionsPerPartnerPerHour: integer(env, 'AGENT_TRY_QUESTIONS_PER_HOUR', SANDBOX_LIMIT_DEFAULTS.questionsPerPartnerPerHour, 1, 100, checks, problems, 'questions per judge page per hour'),
+            partnersPerHour: integer(env, 'AGENT_TRY_PARTNERS_PER_HOUR', SANDBOX_LIMIT_DEFAULTS.partnersPerHour, 1, 200, checks, problems, 'judge pages per hour'),
+        };
+    } else if (isSandboxDatabase(database)) {
+        problems.push('SPACETIMEDB_DB is a try database, so AGENT_TRY must be on: its caps bound the spending.');
+    }
+    const token = (env.AGENT_TOKEN ?? '').trim() || null;
+    checks.push({ name: 'AGENT_TOKEN', state: token ? 'set' : 'not set', note: token ? 'identity token from the environment; the token file is not used' : 'identity token from AGENT_TOKEN_FILE' });
+    const port = has(env, 'PORT') ? integer(env, 'PORT', 0, 1, 65_535, checks, problems, 'health endpoint port') : null;
+
     return {
         config: {
-            spacetime: { uri, database, tokenFile },
+            spacetime: { uri, database, tokenFile, token },
+            sandbox,
+            port,
             planner: { model, effort, timeoutMs: plannerTimeout },
             search: { enabled: apify, timeoutMs: searchTimeoutMs, placesNear },
             errands: { enabled: apify && formErrand },

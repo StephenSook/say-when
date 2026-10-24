@@ -24,6 +24,7 @@ import { ErrandRunner } from './errands.js';
 import { ConversationLog, PreviewBook, type JobDeps } from './jobs.js';
 import { consoleLogger, type Logger } from './log.js';
 import { Orchestrator } from './orchestrator.js';
+import { SandboxMeter, startHealthServer } from './sandbox.js';
 import { errorTag, startupFailureLine, StartupError } from './startup.js';
 import { askSidecar, checkVoiceToken, formatWarm, newNonce, removeQuietly, wakeStandby, WarmFileError, warmFiles, warmMoss, writePidFile, writeWarmStatus } from './warm.js';
 import { classifyQuestion, wire } from './wiring.js';
@@ -53,14 +54,17 @@ function saveToken(path: string, log: Logger): (token: string) => void {
 async function connect(result: ConfigResult, log: Logger): Promise<SpacetimeAgentDb> {
     const builder = await loadBuilder();
     if (!builder) throw new StartupError('The generated SpacetimeDB bindings are not in spacetime/bindings/agent. Generate them (docs/spacetime.md 7.1) and start again.');
-    const { uri, database, tokenFile } = result.config.spacetime;
-    let token: string | undefined;
-    try {
-        token = readToken(tokenFile);
-    } catch (error) {
-        throw new StartupError(`Could not read AGENT_TOKEN_FILE (${errorTag(error)}).`);
+    const { uri, database, tokenFile, token: envToken } = result.config.spacetime;
+    let token: string | undefined = envToken ?? undefined;
+    if (!envToken) {
+        try {
+            token = readToken(tokenFile);
+        } catch (error) {
+            throw new StartupError(`Could not read AGENT_TOKEN_FILE (${errorTag(error)}).`);
+        }
     }
-    const db = new SpacetimeAgentDb({ builder, uri, database, token, saveToken: saveToken(tokenFile, log), log });
+    // A token from AGENT_TOKEN is the host's to keep: nothing is written to disk.
+    const db = new SpacetimeAgentDb({ builder, uri, database, token, saveToken: envToken ? () => {} : saveToken(tokenFile, log), log });
     try {
         await db.connect();
     } catch (error) {
@@ -177,8 +181,20 @@ async function run(result: ConfigResult, log: Logger): Promise<number> {
     };
     calls = new CallRunner({ db, dialer: wired.dialer, log, clock: () => performance.now(), now: Date.now });
     const errands = new ErrandRunner({ db, errands: wired.errands, previews, log, clock: () => performance.now() });
-    const orchestrator = new Orchestrator(deps, { errands, calls }, { maxJobs: config.maxJobs });
+    const meter = config.sandbox ? new SandboxMeter(config.sandbox) : null;
+    if (meter) log.info('judge try sandbox caps are on', { dailyCents: Math.round(meter.limits.dailyUsd * 100), partnersPerHour: meter.limits.partnersPerHour });
+    const orchestrator = new Orchestrator(deps, { errands, calls }, { maxJobs: config.maxJobs, ...(meter ? { admit: (row) => meter.admit(row) } : {}) });
     orchestrator.start();
+    const health =
+        config.port !== null
+            ? startHealthServer(config.port, {
+                  database: config.spacetime.database,
+                  connected: () => db.isCurrent(),
+                  paired: () => db.isPairedAgent(),
+                  usage: () => meter?.usage() ?? null,
+              })
+            : null;
+    if (health) log.info('health endpoint is up', { port: config.port, path: '/healthz' });
     log.info('the sidecar is running; press Ctrl-C to stop');
 
     // `npm run warm` finds this process by its pid file and sends SIGUSR2: Moss opens here (or its idle clock starts
@@ -221,6 +237,7 @@ async function run(result: ConfigResult, log: Logger): Promise<number> {
                 await orchestrator.stop(20_000);
                 await wired.moss?.close('signal');
                 db.close();
+                health?.close();
                 resolve(0);
             })();
         };
