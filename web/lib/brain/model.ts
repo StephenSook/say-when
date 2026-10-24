@@ -144,13 +144,15 @@ export function sceneFailedText(source: VizMeta['source'] | null): string {
 
 /**
  * The page connects to the local decoder by itself only where a decoder can be: on the EEG laptop's own server
- * (localhost, 127.0.0.1, ::1) or when asked with ?bridge=1. On the public site it waits for a click, so a judge's
- * laptop never retries a missing decoder or meets Chrome's local-network prompt unasked.
+ * (localhost, 127.0.0.1, ::1) or when asked with ?bridge=1 (or /stage's ?brain=1, which mounts this view on purpose).
+ * On the public site it waits for a click, so a judge's laptop never retries a missing decoder or meets Chrome's
+ * local-network prompt unasked.
  */
 export function shouldAutoConnect(hostname: string, search: string): boolean {
   const host = hostname.toLowerCase();
   if (host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1' || host.endsWith('.localhost')) return true;
-  return new URLSearchParams(search).get('bridge') === '1';
+  const params = new URLSearchParams(search);
+  return params.get('bridge') === '1' || params.get('brain') === '1';
 }
 
 export function caption(wearer: string | null): string {

@@ -234,6 +234,7 @@ describe('connecting and labels by source', () => {
     for (const host of ['eleven-calhacks.vercel.app', 'neurolingo-web.vercel.app', '192.168.1.5', 'example.com']) assert.equal(shouldAutoConnect(host, ''), false, host);
     assert.equal(shouldAutoConnect('eleven-calhacks.vercel.app', '?bridge=1'), true);
     assert.equal(shouldAutoConnect('eleven-calhacks.vercel.app', '?bridge=0'), false);
+    assert.equal(shouldAutoConnect('eleven-calhacks.vercel.app', '?brain=1'), true, "/stage's opt-in");
   });
 
   test('before Connect the stage says the decoder is not connected and offers Connect, with nothing glowing', () => {
