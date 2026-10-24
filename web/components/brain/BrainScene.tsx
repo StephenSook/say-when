@@ -18,7 +18,7 @@ import { Component, Suspense, useEffect, useMemo, useRef, type MutableRefObject,
 import { Box3, BufferGeometry, DoubleSide, Mesh, Raycaster, Vector3, type Group, type MeshBasicMaterial, type Object3D } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { AMBER, CAMERA_POSITION, CYAN, ELECTRODES, LABELS, PULSE_MS, electrodeDirection, patchTargets, pulseSide, type Vec3 } from '@/lib/brain/model';
-import type { VizStream } from '@/lib/brain/stream';
+import { brainInputOf, type VizStream } from '@/lib/brain/stream';
 import { makeBrainMaterial } from './brainShader';
 import styles from './BrainScene.module.css';
 
@@ -118,8 +118,7 @@ function BrainModel({ stream, channels, c3Text, c4Text, reducedMotion }: Pick<Br
   const current = useRef({ c3: 0, c4: 0 });
 
   useFrame((_, dt) => {
-    const s = stream.state;
-    const target = patchTargets({ connected: s.connected, meta: s.meta, mi: s.mi, miAt: s.miAt, lastAt: s.lastAt, now: performance.now() });
+    const target = patchTargets(brainInputOf(stream.state, performance.now()));
     const k = reducedMotion ? 1 : 1 - Math.exp(-Math.min(dt, 0.25) / EASE_S);
     current.current.c3 += (target.c3 - current.current.c3) * k;
     current.current.c4 += (target.c4 - current.current.c4) * k;

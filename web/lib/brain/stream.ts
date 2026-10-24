@@ -6,7 +6,7 @@
  *
  * The WebSocket constructor and the timers are injectable, so tests run without a browser.
  */
-import { nextBackoff } from './model';
+import { headsetOffNow, nextBackoff, type BrainInput } from './model';
 import {
   BASELINE_COMMAND,
   DEFAULT_VIZ_URL,
@@ -151,6 +151,21 @@ export function emptyState(): VizState {
     markerAt: [],
     history: new MiHistory(),
     version: 0,
+  };
+}
+
+/** What the screen rules need from the stream, at browser time `now` (ms). One place, so the words and the 3D scene agree. */
+export function brainInputOf(state: VizState, now: number): BrainInput {
+  const contact = state.quality?.contact ?? null;
+  return {
+    connected: state.connected,
+    meta: state.meta,
+    mi: state.mi,
+    miAt: state.miAt,
+    lastAt: state.lastAt,
+    now,
+    contact,
+    headsetOff: headsetOffNow(state.markers, state.markerAt, contact, now),
   };
 }
 

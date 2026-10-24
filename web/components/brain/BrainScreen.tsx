@@ -14,6 +14,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Chip, CrossIcon, Dialog, ReplayIcon, StatusMark, TextLink } from '@/components/ui';
 import { cx } from '@/lib/cx';
 import { GUESS_SHOW_MS, LABELS, buildBrainView, caption, guessText, isJawCommand, sourceText } from '@/lib/brain/model';
+import { brainInputOf } from '@/lib/brain/stream';
 import { useVizStream } from '@/lib/brain/useVizStream';
 import { BandStrip } from './BandStrip';
 import BrainScene from './BrainScene';
@@ -56,7 +57,7 @@ export default function BrainScreen() {
   const onTurned = useCallback(() => setTurned(true), []);
 
   const s = stream.state;
-  const view = buildBrainView({ connected: s.connected, meta: s.meta, mi: s.mi, miAt: s.miAt, lastAt: s.lastAt, now });
+  const view = buildBrainView(brainInputOf(s, now));
 
   const last = s.markers.length - 1;
   const marker = last >= 0 && now - s.markerAt[last] < GUESS_SHOW_MS && !isJawCommand(s.markers[last].command) && s.markers[last].command !== 'HEADSET_OFF' ? s.markers[last] : null;

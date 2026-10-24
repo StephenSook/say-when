@@ -4,7 +4,7 @@
  * rest baseline). The decoder's guess is a separate event, and the jaw clench is a muscle signal that never touches
  * the brain. The brain has no yes area: we chose right fist = YES.
  */
-import { glowErd, type BaselineState, type DecoderCommand, type VizMarker, type VizMeta, type VizMi } from './protocol';
+import { glowErd, type BaselineState, type Contact, type DecoderCommand, type VizMarker, type VizMeta, type VizMi } from './protocol';
 
 /* ---------- Colors: hue says which hand, brightness says how much ---------- */
 
@@ -128,6 +128,7 @@ export const LABELS = {
     'Cyan: right-fist imagery (YES). Amber: left-fist imagery (NO). Glow = 8-12 Hz rhythm quieting vs rest. No yes area in the brain. Jaw lane = muscle, not brain.',
   jawLane: 'Jaw muscle, not brain',
   muscle: 'Muscle detected. Brain readings paused.',
+  headsetOff: 'Headset off. Nothing will be sent.',
   testFailed: 'Brain test failed. YES is a jaw clench today.',
   sceneFailed: '3D view unavailable. Readings below are live.',
 } as const;
@@ -221,7 +222,7 @@ export function eventPillText(marker: VizMarker): string {
 
 /* ---------- The screen state ---------- */
 
-export type ScreenState = 'waiting' | 'no_signal' | 'baseline' | 'muscle' | 'measuring';
+export type ScreenState = 'waiting' | 'no_signal' | 'headset_off' | 'baseline' | 'muscle' | 'measuring';
 
 /** The one line on the stage, shown only when something needs attention. `status` picks the shared StatusMark. */
 export interface StateLine {
@@ -260,9 +261,27 @@ export interface BrainInput {
   /** Browser clock (ms) when any message last arrived. */
   lastAt: number | null;
   now: number;
+  /** viz.quality contact per electrode; an electrode that is off never glows. */
+  contact?: Record<string, Contact> | null;
+  /** The decoder said HEADSET_OFF (headsetOffNow). */
+  headsetOff?: boolean;
 }
 
 const NO_READING: PatchView = { intensity: 0, value: null, valueText: 'no reading' };
+const NO_CONTACT: PatchView = { intensity: 0, value: null, valueText: 'no contact' };
+
+/** How long a HEADSET_OFF marker holds the screen while frames keep coming and contact does not say off. */
+export const HEADSET_OFF_HOLD_MS = 10_000;
+
+/**
+ * The headset is off when the decoder's newest command was HEADSET_OFF and it is recent, or when both C3 and C4
+ * report no contact. Frames that keep arriving do not hide it.
+ */
+export function headsetOffNow(markers: readonly VizMarker[], markerAt: readonly number[], contact: Record<string, Contact> | null | undefined, now: number): boolean {
+  const last = markers.length - 1;
+  if (last >= 0 && markers[last].command === 'HEADSET_OFF' && now - markerAt[last] < HEADSET_OFF_HOLD_MS) return true;
+  return contact?.C3 === 'off' && contact?.C4 === 'off';
+}
 
 /**
  * Which state the screen is in and how much of the measured glow may show. One rule, used by the words
@@ -274,6 +293,7 @@ export function classify(input: BrainInput): { state: ScreenState; scale: number
   const ageMs = miAt === null ? null : now - miAt;
   if (!input.connected || !meta) return { state: 'waiting', scale: 0, ageMs };
   if (!mi || ageMs === null || ageMs > STALE_MS) return { state: 'no_signal', scale: 0, ageMs };
+  if (input.headsetOff) return { state: 'headset_off', scale: 0, ageMs };
   if (meta.baseline.state !== 'set') return { state: 'baseline', scale: 0, ageMs };
   if (mi.emgGate) return { state: 'muscle', scale: 0, ageMs };
   return { state: 'measuring', scale: meta.brainTest.state === 'failed' ? FAILED_TEST_DIM : 1, ageMs };
@@ -283,13 +303,15 @@ export function classify(input: BrainInput): { state: ScreenState; scale: number
 export function patchTargets(input: BrainInput): { c3: number; c4: number } {
   const { state, scale } = classify(input);
   if (state !== 'measuring' || !input.mi) return { c3: 0, c4: 0 };
+  const off = (side: 'C3' | 'C4') => input.contact?.[side] === 'off';
   return {
-    c3: patchIntensity(glowErd(input.mi, input.meta, 'c3')) * scale,
-    c4: patchIntensity(glowErd(input.mi, input.meta, 'c4')) * scale,
+    c3: off('C3') ? 0 : patchIntensity(glowErd(input.mi, input.meta, 'c3')) * scale,
+    c4: off('C4') ? 0 : patchIntensity(glowErd(input.mi, input.meta, 'c4')) * scale,
   };
 }
 
-function patch(value: number, scale: number): PatchView {
+function patch(value: number, scale: number, contact: Contact | undefined): PatchView {
+  if (contact === 'off') return NO_CONTACT;
   return { intensity: patchIntensity(value) * scale, value, valueText: pctText(value) };
 }
 
@@ -310,6 +332,7 @@ export function buildBrainView(input: BrainInput): BrainView {
     let stateLine: StateLine;
     if (state === 'waiting') stateLine = { status: 'working', text: 'Waiting for the headset' };
     else if (state === 'no_signal') stateLine = { status: 'failed', text: 'No signal', detail: ageMs === null ? 'No data yet' : `No data for ${Math.round(ageMs)} ms` };
+    else if (state === 'headset_off') stateLine = { status: 'failed', text: LABELS.headsetOff };
     else if (state === 'baseline')
       stateLine = meta?.baseline.state === 'recording' ? { status: 'working', text: 'Recording rest baseline' } : { status: 'stopped', text: 'No rest baseline' };
     else stateLine = { status: 'stopped', text: LABELS.muscle };
@@ -318,8 +341,8 @@ export function buildBrainView(input: BrainInput): BrainView {
   return {
     ...base,
     stateLine: testFailed ? { status: 'refused', text: LABELS.testFailed } : null,
-    c3: patch(glowErd(mi, meta, 'c3'), scale),
-    c4: patch(glowErd(mi, meta, 'c4'), scale),
+    c3: patch(glowErd(mi, meta, 'c3'), scale, input.contact?.C3),
+    c4: patch(glowErd(mi, meta, 'c4'), scale, input.contact?.C4),
   };
 }
 

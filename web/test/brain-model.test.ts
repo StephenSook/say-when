@@ -7,12 +7,14 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import {
   FAILED_TEST_DIM,
+  HEADSET_OFF_HOLD_MS,
   LABELS,
   baselineText,
   buildBrainView,
   caption,
   eventPillText,
   guessText,
+  headsetOffNow,
   modeBadge,
   nextBackoff,
   patchIntensity,
@@ -194,5 +196,32 @@ describe('words', () => {
     let d: number | null = null;
     for (let i = 0; i < 6; i++) seq.push((d = nextBackoff(d)));
     assert.deepEqual(seq, [250, 500, 1000, 2000, 2000, 2000]);
+  });
+});
+
+describe('headset and contact', () => {
+  test('HEADSET_OFF from the decoder shows even while frames keep coming, and nothing glows', () => {
+    const view = buildBrainView(input({ headsetOff: true }));
+    assert.equal(view.state, 'headset_off');
+    assert.deepEqual(view.stateLine, { status: 'failed', text: 'Headset off. Nothing will be sent.' });
+    assert.deepEqual(patchTargets(input({ headsetOff: true })), { c3: 0, c4: 0 });
+  });
+
+  test('headsetOffNow: a recent HEADSET_OFF marker, or both C3 and C4 off', () => {
+    const off: VizMarker = { type: 'viz.marker', t: 0, id: 'h', command: 'HEADSET_OFF', confidence: null, source: 'jaw' };
+    const yes: VizMarker = { ...off, id: 'y', command: 'YES', source: 'imagery', confidence: 0.8 };
+    assert.equal(headsetOffNow([off], [1_000], null, 2_000), true);
+    assert.equal(headsetOffNow([off], [1_000], null, 1_000 + HEADSET_OFF_HOLD_MS + 1), false);
+    assert.equal(headsetOffNow([off, yes], [1_000, 1_500], null, 2_000), false, 'a newer command means it is back');
+    assert.equal(headsetOffNow([], [], { C3: 'off', C4: 'off' }, 0), true);
+    assert.equal(headsetOffNow([], [], { C3: 'off', C4: 'good' }, 0), false);
+  });
+
+  test('an electrode with no contact never glows and says so', () => {
+    const view = buildBrainView(input({ contact: { C3: 'off', C4: 'good' } }));
+    assert.equal(view.c3.valueText, 'no contact');
+    assert.equal(view.c3.intensity, 0);
+    assert.equal(view.c4.value, -2);
+    assert.equal(patchTargets(input({ contact: { C3: 'off', C4: 'good' } })).c3, 0);
   });
 });
