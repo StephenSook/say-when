@@ -17,7 +17,7 @@ import { Bloom, EffectComposer } from '@react-three/postprocessing';
 import { Component, Suspense, useEffect, useMemo, useRef, type MutableRefObject, type ReactNode } from 'react';
 import { Box3, BufferGeometry, DoubleSide, Mesh, Raycaster, Vector3, type Group, type MeshBasicMaterial, type Object3D } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { AMBER, CAMERA_POSITION, CYAN, ELECTRODES, LABELS, PULSE_MS, electrodeDirection, patchTargets, pulseSide, type Vec3 } from '@/lib/brain/model';
+import { AMBER, CAMERA_POSITION, CYAN, ELECTRODES, PULSE_MS, electrodeDirection, patchTargets, pulseSide, type Vec3 } from '@/lib/brain/model';
 import { brainInputOf, type VizStream } from '@/lib/brain/stream';
 import { makeBrainMaterial } from './brainShader';
 import styles from './BrainScene.module.css';
@@ -105,6 +105,8 @@ export interface BrainSceneProps {
   onTurned: () => void;
   /** Filled with a function that puts the camera back. */
   resetRef: MutableRefObject<(() => void) | null>;
+  /** What to say if the 3D view cannot load: where the readings below come from (sceneFailedText). */
+  failedText: string;
 }
 
 function BrainModel({ stream, channels, c3Text, c4Text, reducedMotion }: Pick<BrainSceneProps, 'stream' | 'channels' | 'c3Text' | 'c4Text' | 'reducedMotion'>) {
@@ -149,13 +151,31 @@ function BrainModel({ stream, channels, c3Text, c4Text, reducedMotion }: Pick<Br
   );
 }
 
-/** A small "Front" mark past the frontal pole, so the top view reads like a 10-20 diagram (nose up). */
+/**
+ * Small "Front", "L" and "R" marks around the head, so the top view reads like a 10-20 diagram (nose up, the
+ * subject's left on the left) and a turned view still says which side is which.
+ */
 function FrontMarker({ prepared }: { prepared: Prepared }) {
-  const at = useMemo(() => new Vector3(0, 0.1, -prepared.half[2] - 0.16), [prepared]);
+  const { front, left, right } = useMemo(() => {
+    const [hx, , hz] = prepared.half;
+    return {
+      front: new Vector3(0, 0.1, -hz - 0.16),
+      left: new Vector3(-hx - 0.14, -0.1, 0.45),
+      right: new Vector3(hx + 0.14, -0.1, 0.45),
+    };
+  }, [prepared]);
   return (
-    <Html position={at} center zIndexRange={[5, 0]} className={styles.labelWrap}>
-      <span className={styles.front}>Front</span>
-    </Html>
+    <>
+      <Html position={front} center zIndexRange={[5, 0]} className={styles.labelWrap}>
+        <span className={styles.front}>Front</span>
+      </Html>
+      <Html position={left} center zIndexRange={[5, 0]} className={styles.labelWrap}>
+        <span className={styles.front} title="The subject's left">L</span>
+      </Html>
+      <Html position={right} center zIndexRange={[5, 0]} className={styles.labelWrap}>
+        <span className={styles.front} title="The subject's right">R</span>
+      </Html>
+    </>
   );
 }
 
@@ -221,72 +241,98 @@ function DecoderPulse({ stream, c3, c4 }: { stream: VizStream; c3: Site; c4: Sit
   );
 }
 
+type ControlsLike = {
+  reset?: () => void;
+  update?: () => void;
+  saveState?: () => void;
+  target?: Vector3;
+  addEventListener?: (type: string, fn: () => void) => void;
+  removeEventListener?: (type: string, fn: () => void) => void;
+} | null;
+
+/** The home view's distance: the whole brain, "Front" and the two side labels fit at this stage size. */
+function homeDistance(fovDeg: number, width: number, height: number): number {
+  const fovV = (fovDeg * Math.PI) / 180;
+  const fovH = 2 * Math.atan(Math.tan(fovV / 2) * (width / Math.max(1, height)));
+  // About 1.2 units up and down from the center in the top view (the brain's length plus "Front"), and 1.75
+  // sideways with the labels.
+  return Math.max(1.2 / Math.tan(fovV / 2), 1.75 / Math.tan(fovH / 2));
+}
+
 /**
- * Keeps the whole brain and its two side labels in view at any stage size: the camera stays on the same line from
- * above and in front of the face, and only its distance changes. A turn the person made is kept.
+ * Keeps the whole brain and its labels in view at any stage size. The home pose is always the standard top view along
+ * CAMERA_POSITION at the fitted distance; that is what the controls save, so "Reset view" and a double-click always
+ * come back to it, never to a turned view. A turn the person made is kept across a resize, only its distance changes.
  */
-function FitCamera() {
+function FitCamera({ turnedRef }: { turnedRef: MutableRefObject<boolean> }) {
   const camera = useThree((s) => s.camera);
   const size = useThree((s) => s.size);
-  const controls = useThree((s) => s.controls) as unknown as (ControlsLike & { update?: () => void; saveState?: () => void }) | null;
+  const controls = useThree((s) => s.controls) as unknown as ControlsLike;
   useEffect(() => {
     if (!('fov' in camera)) return;
-    const fovV = ((camera as { fov: number }).fov * Math.PI) / 180;
-    const aspect = size.width / Math.max(1, size.height);
-    const fovH = 2 * Math.atan(Math.tan(fovV / 2) * aspect);
-    // About 1.2 units up and down from the center in the top view (the brain's length plus "Front"), and 1.75
-    // sideways with the labels.
-    const distance = Math.max(1.2 / Math.tan(fovV / 2), 1.75 / Math.tan(fovH / 2));
-    const dir = camera.position.clone().normalize();
-    camera.position.copy(dir.multiplyScalar(distance));
-    camera.updateProjectionMatrix();
+    const distance = homeDistance((camera as { fov: number }).fov, size.width, size.height);
+    const turnedTo = camera.position.clone();
+    camera.position.copy(toVector(CAMERA_POSITION).normalize().multiplyScalar(distance));
+    controls?.target?.set(0, 0, 0);
+    camera.lookAt(0, 0, 0);
     controls?.update?.();
     controls?.saveState?.();
-  }, [camera, size.width, size.height, controls]);
+    if (turnedRef.current) {
+      camera.position.copy(turnedTo.setLength(distance));
+      controls?.update?.();
+    }
+    camera.updateProjectionMatrix();
+  }, [camera, size.width, size.height, controls, turnedRef]);
   return null;
 }
 
-type ControlsLike = { reset?: () => void; addEventListener?: (type: string, fn: () => void) => void; removeEventListener?: (type: string, fn: () => void) => void } | null;
-
-/** Wires "Reset view" and the double-click to the controls, and tells the page once the brain was turned. */
-function ViewReset({ onTurned, resetRef }: Pick<BrainSceneProps, 'onTurned' | 'resetRef'>) {
+/** Wires "Reset view" and the double-click to the saved home view, and tells the page once the brain was turned. */
+function ViewReset({ onTurned, resetRef, turnedRef }: Pick<BrainSceneProps, 'onTurned' | 'resetRef'> & { turnedRef: MutableRefObject<boolean> }) {
   const controls = useThree((s) => s.controls) as unknown as ControlsLike;
   const gl = useThree((s) => s.gl);
   useEffect(() => {
-    const reset = () => controls?.reset?.();
+    const reset = () => {
+      turnedRef.current = false;
+      controls?.reset?.();
+    };
+    const turned = () => {
+      turnedRef.current = true;
+      onTurned();
+    };
     resetRef.current = reset;
     const el = gl.domElement;
     el.addEventListener('dblclick', reset);
-    controls?.addEventListener?.('start', onTurned);
+    controls?.addEventListener?.('start', turned);
     return () => {
       el.removeEventListener('dblclick', reset);
-      controls?.removeEventListener?.('start', onTurned);
+      controls?.removeEventListener?.('start', turned);
       resetRef.current = null;
     };
-  }, [controls, gl, onTurned, resetRef]);
+  }, [controls, gl, onTurned, resetRef, turnedRef]);
   return null;
 }
 
-class SceneBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+class SceneBoundary extends Component<{ children: ReactNode; failedText: string }, { failed: boolean }> {
   state = { failed: false };
   static getDerivedStateFromError() {
     return { failed: true };
   }
   render() {
-    if (this.state.failed) return <p className={styles.failed}>{LABELS.sceneFailed}</p>;
+    if (this.state.failed) return <p className={styles.failed}>{this.props.failedText}</p>;
     return this.props.children;
   }
 }
 
 export default function BrainScene(props: BrainSceneProps) {
-  const { bloom, onTurned, resetRef, ...model } = props;
+  const { bloom, onTurned, resetRef, failedText, ...model } = props;
+  const turnedRef = useRef(false);
   return (
-    <SceneBoundary>
+    <SceneBoundary failedText={failedText}>
       <Canvas className={styles.canvas} dpr={[1, 1.5]} camera={{ position: CAMERA_POSITION, fov: 28, near: 0.1, far: 50 }} gl={{ antialias: true, powerPreference: 'high-performance' }} aria-hidden="true">
         <color attach="background" args={['#050505']} />
-        <OrbitControls makeDefault enablePan={false} enableZoom={false} enableDamping dampingFactor={0.08} target={[0, 0, 0]} onUpdate={(controls) => controls.saveState()} />
-        <ViewReset onTurned={onTurned} resetRef={resetRef} />
-        <FitCamera />
+        <OrbitControls makeDefault enablePan={false} enableZoom={false} enableDamping dampingFactor={0.08} target={[0, 0, 0]} />
+        <ViewReset onTurned={onTurned} resetRef={resetRef} turnedRef={turnedRef} />
+        <FitCamera turnedRef={turnedRef} />
         <Suspense fallback={null}>
           <BrainModel {...model} />
         </Suspense>

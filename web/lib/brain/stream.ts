@@ -155,7 +155,7 @@ export function emptyState(): VizState {
 }
 
 /** What the screen rules need from the stream, at browser time `now` (ms). One place, so the words and the 3D scene agree. */
-export function brainInputOf(state: VizState, now: number): BrainInput {
+export function brainInputOf(state: VizState, now: number, idle = false): BrainInput {
   const contact = state.quality?.contact ?? null;
   return {
     connected: state.connected,
@@ -166,6 +166,7 @@ export function brainInputOf(state: VizState, now: number): BrainInput {
     now,
     contact,
     headsetOff: headsetOffNow(state.markers, state.markerAt, contact, now),
+    idle,
   };
 }
 

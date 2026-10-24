@@ -60,8 +60,9 @@ function rowsFor(state: VizState): Row[] {
     // The slow potential is a different kind of feature: it goes last, after a gap.
     return [...rows.filter((r) => !r.apart), ...rows.filter((r) => r.apart)];
   }
-  const mu = state.meta?.bands.alphaMu ?? [8, 13];
-  const beta = state.meta?.bands.beta ?? [13, 30];
+  // Before any meta, the decoder's own edges: mu 8-12 Hz, beta 12-30 Hz.
+  const mu = state.meta?.bands.alphaMu ?? [8, 12];
+  const beta = state.meta?.bands.beta ?? [12, 30];
   return [
     {
       key: 'mu',
