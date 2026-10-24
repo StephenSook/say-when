@@ -8,6 +8,8 @@
  *   there (the EEG laptop has 8 GB and should not run the board mapping it never shows).
  * - Everything else is a dashboard. The judge page (/judge) keeps the dashboard header but is a reading page: it renders
  *   without the connection gate, so it shows even when the live data cannot connect.
+ * - The brain (/brain, Screen 1) frames like the judge page: it reads only the local EEG bridge on 127.0.0.1:8766, never
+ *   SpacetimeDB, so the live-data gate and the safety banner do not apply to it.
  */
 
 function isRoute(pathname: string | null, route: string): boolean {
@@ -27,4 +29,9 @@ export function isRolePageRoute(pathname: string | null): boolean {
 /** /judge: the dashboard header, no connection gate, no safety banner (PLAN 5.8). */
 export function isJudgeRoute(pathname: string | null): boolean {
   return isRoute(pathname, '/judge');
+}
+
+/** /brain: Screen 1, the live brain. Framed like /judge: no connection gate, no safety banner. */
+export function isBrainRoute(pathname: string | null): boolean {
+  return isRoute(pathname, '/brain');
 }

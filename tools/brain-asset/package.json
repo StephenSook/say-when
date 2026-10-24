@@ -1,0 +1,19 @@
+{
+  "name": "say-when-brain-asset",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Prepares web/public/models/brain.glb from the Human Reference Atlas male brain GLB.",
+  "scripts": {
+    "prepare-brain": "node prepare-brain.mjs"
+  },
+  "dependencies": {
+    "@gltf-transform/core": "4.5.1",
+    "@gltf-transform/extensions": "4.5.1",
+    "@gltf-transform/functions": "4.5.1",
+    "meshoptimizer": "1.3.0"
+  },
+  "devDependencies": {
+    "@gltf-transform/cli": "4.5.1"
+  }
+}

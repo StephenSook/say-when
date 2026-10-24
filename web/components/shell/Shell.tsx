@@ -8,7 +8,8 @@
  * connection, and the board source never starts there (lib/routes.ts, docs/station.md 1.6).
  * The judge page (/judge, PLAN 5.8) keeps the dashboard header but is a reading page: no connection
  * gate, no dimming, no safety banner or connection line, so it shows even when the live data cannot
- * connect. A quiet "For judges" link sits at the end of the tabs row on every dashboard.
+ * connect. The brain (/brain, Screen 1) is framed the same way, because it reads the local EEG bridge and never the live
+ * data. A quiet "For judges" link sits at the end of the tabs row on every dashboard.
  *
  * Every frame renders the page's <main id="main">, so a screen must not render another <main>.
  */
@@ -17,7 +18,7 @@ import { useEffect, type ReactNode } from 'react';
 import { cx } from '@/lib/cx';
 import { useConnection, useReplayParam } from '@/lib/data/provider';
 import { withReplayParam } from '@/lib/data/source-mode';
-import { isJudgeRoute, isPhoneRoute, isRolePageRoute } from '@/lib/routes';
+import { isBrainRoute, isJudgeRoute, isPhoneRoute, isRolePageRoute } from '@/lib/routes';
 import { ConnectionChip } from './ConnectionChip';
 import { ConnectionGate, ConnectionLine } from './ConnectionLine';
 import { HeadsetChip } from './HeadsetChip';
@@ -37,7 +38,7 @@ export function Shell({ children }: { children: ReactNode }) {
 }
 
 /**
- * The station and the speaker: no tabs, no screen keys (a stray 1, 2 or 3 must never leave a running station), no
+ * The station and the speaker: no tabs, no screen keys (a stray screen key must never leave a running station), no
  * headset chip, no replay banner and no connection gate (the board connection is not opened here). The dashboard's
  * side padding stays.
  */
@@ -53,8 +54,9 @@ function DashboardFrame({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const conn = useConnection();
   useScreenKeys();
-  // The judge page reads the same with or without a connection, so it is never gated or dimmed.
-  const readingPage = isJudgeRoute(pathname);
+  // The judge page reads the same with or without a connection, so it is never gated or dimmed. The brain does not use
+  // the live data at all.
+  const readingPage = isJudgeRoute(pathname) || isBrainRoute(pathname);
   return (
     <>
       <a className={styles.skip} href="#main">
@@ -67,10 +69,13 @@ function DashboardFrame({ children }: { children: ReactNode }) {
           <Tabs className={styles.tabs} />
           <JudgeLink className={styles.judgeLink} />
         </div>
-        <div className={styles.chips}>
-          <ConnectionChip />
-          <HeadsetChip />
-        </div>
+        {/* The brain reads the local headset stream, not the live data, so the live-data chips would only confuse. */}
+        {isBrainRoute(pathname) ? null : (
+          <div className={styles.chips}>
+            <ConnectionChip />
+            <HeadsetChip />
+          </div>
+        )}
       </header>
       {readingPage ? null : <SafetyBanner />}
       {readingPage ? null : <ConnectionLine />}
@@ -93,7 +98,7 @@ function PhoneFrame({ children }: { children: ReactNode }) {
   );
 }
 
-/** Keys 1, 2 and 3 switch screens, unless the person is typing or a dialog is open. */
+/** Keys 1 to 4 switch screens, unless the person is typing or a dialog is open. */
 function useScreenKeys() {
   const router = useRouter();
   const replayParam = useReplayParam();

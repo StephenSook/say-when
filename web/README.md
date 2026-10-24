@@ -17,7 +17,7 @@ npm run bindings    # after every spacetime generate: copies spacetime/bindings/
 npm run cartesia    # after any change in cartesia/src: copies the browser code into lib/cartesia
 ```
 
-Routes: `/live`, `/agents`, `/conversation` (also `/`), and `/partner` for the phone. Keys 1, 2 and 3 switch the dashboard screens.
+Routes: `/live`, `/agents`, `/conversation` (also `/`), `/brain` (Screen 1, the live brain), and `/partner` for the phone. Keys 1 to 4 switch the dashboard screens.
 
 ### Against the live database
 
@@ -146,6 +146,16 @@ No token is ever put in a page address, a link, a log line, an error message or 
 `lib/cartesia` drops the `.js` ending of each relative import (`stripJsSpecifiers` in `scripts/cartesia-files.json`): `next build` (Turbopack) does not resolve `./tts.js` to `tts.ts`, and `test/cartesia-copy.test.ts` applies the same rewrite before comparing.
 
 The decoder runs on `ws://127.0.0.1:8765`. From an https page, Chrome 156 holds that socket in "connecting", with no error, until someone answers its local network permission prompt (checked Oct 24 in a Playwright Chrome on a Mac; `docs/station.md` 5.1); after 3 s the station says to click Allow. From `http://localhost` no prompt is needed.
+
+## Screen 1, the live brain (`/brain`)
+
+A template brain with two soft patches under the C3 and C4 electrodes. Each patch glows only as the 8 to 13 Hz (mu) rhythm at that electrode quiets against the wearer's own rest baseline: cyan on the C3 side (right-fist imagery, which Eleven maps to YES), amber on the C4 side (left-fist imagery, mapped to NO). The brain has no yes area. The decoder's guess is a separate card and ring pulse; the jaw clench is a muscle lane under the brain and never touches it. Below the brain: mu and beta change over 20 s, a 2 to 35 Hz spectrum per side, contact and the decoder event log.
+
+- Data: only the local bridge on `ws://127.0.0.1:8766` (`tools/VIZ_PROTOCOL.md`). It never opens the station channel on 8765 and never touches SpacetimeDB, so no EEG leaves the EEG laptop. Open `/brain` on that laptop and mirror it to the projector.
+- Without the headset: run the synthetic bridge in `tools/` (it labels itself, and the page shows SYNTHETIC TEST SIGNAL). See `tools/VIZ_PROTOCOL.md`.
+- Options: `?wearer=Name` puts the wearer's name in the caption; `?bloom=0` turns the glow pass off on a slow laptop.
+- Code: rules and words in `lib/brain/model.ts`, message checks in `lib/brain/protocol.ts`, the client in `lib/brain/stream.ts`, the scene in `components/brain/`. Tests: `test/brain-*.test.ts`, including the left and right check.
+- The brain model is the Human Reference Atlas "Brain, Male" v1.3, licensed CC BY 4.0, credited on screen; how it was prepared is in `tools/brain-asset/README.md`.
 
 ## Checks
 

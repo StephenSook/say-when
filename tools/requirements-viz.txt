@@ -1,0 +1,8 @@
+# tools/viz_bridge_synthetic.py and tools/check_viz_bridge.py (Python 3.12).
+# Exact pins, installed and tested together on macOS arm64, Oct 24 2026.
+brainflow==5.23.0
+websockets==17.3
+scipy==1.18.1
+numpy==2.5.4
+# brainflow requires setuptools; pinned so the install is repeatable.
+setuptools==84.2.1
