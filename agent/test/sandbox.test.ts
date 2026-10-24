@@ -87,11 +87,27 @@ describe('the sandbox meter', () => {
         assert.equal(m.admit(a).ok, true);
     });
 
-    it('never refuses a remember job, and never counts a menu turn against a partner', () => {
+    it('never refuses a remember job', () => {
         const { m } = meter({ dailyUsd: 0.1, questionsPerPartnerPerHour: 1 });
         assert.equal(m.admit(row()).ok, true);
         assert.equal(m.admit(row({ kind: 'remember' })).ok, true);
-        assert.equal(m.admit(row({ origin: 'menu', webSearchAllowed: false })).ok, true);
+    });
+
+    it('caps every options job by who asked, menu turns included', () => {
+        const { m } = meter({ questionsPerPartnerPerHour: 1, partnersPerHour: 1 });
+        const station = 'c'.repeat(64);
+        assert.equal(m.admit(row({ origin: 'menu', menuItem: 'need', askedBy: station })).ok, true);
+        const again = m.admit(row({ origin: 'menu', menuItem: 'need', askedBy: station }));
+        assert.ok(!again.ok && again.why === 'partner');
+        const other = m.admit(row({ origin: 'menu', menuItem: 'say', askedBy: 'd'.repeat(64) }));
+        assert.ok(!other.ok && other.why === 'partners');
+    });
+
+    it('charges the search whenever the job may search (jobs.ts: only a real menu item skips it)', () => {
+        const { m } = meter({ usdPerPlan: 0.02, usdPerSearch: 0.03 });
+        assert.equal(m.estimate(row({ origin: 'menu', menuItem: 'none' })), 0.05);
+        assert.equal(m.estimate(row({ origin: 'menu', menuItem: 'need' })), 0.02);
+        assert.equal(m.estimate(row({ origin: 'partner', webSearchAllowed: false })), 0.02);
     });
 });
 

@@ -81,7 +81,9 @@ export class SandboxMeter {
 
     /** The estimate for one job, before it runs. */
     estimate(row: AgentQueueRow): number {
-        if (row.kind === 'options') return this.limits.usdPerPlan + (row.webSearchAllowed && row.origin === 'partner' ? this.limits.usdPerSearch : 0);
+        // The same rule jobs.ts uses: only a real menu item skips the classifier and so never searches.
+        const isMenu = row.origin === 'menu' && row.menuItem !== 'none';
+        if (row.kind === 'options') return this.limits.usdPerPlan + (row.webSearchAllowed && !isMenu ? this.limits.usdPerSearch : 0);
         if (row.kind === 'errand_preview') return this.limits.usdPerErrand;
         return 0;
     }
@@ -93,7 +95,8 @@ export class SandboxMeter {
         if (row.kind === 'remember') return { ok: true, usd: 0 };
         const usd = this.estimate(row);
         if (this.spentUsd + usd > this.limits.dailyUsd + 1e-9) return this.refuse('spend');
-        if (row.kind === 'options' && row.origin === 'partner') {
+        // Every options job counts against whoever asked (a menu turn's asker is the station), so no origin skips it.
+        if (row.kind === 'options') {
             const who = row.askedBy || 'unknown';
             const recent = (this.asks.get(who) ?? []).filter((at) => now - at < HOUR_MS);
             if (recent.length >= this.limits.questionsPerPartnerPerHour) return this.refuse('partner');
