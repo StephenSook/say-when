@@ -26,7 +26,7 @@ export interface OptionListProps {
 }
 
 export function OptionList({ view, live }: OptionListProps) {
-  const { options, cursor, picked, vetoing, agent, yesNo, menu, followUp, paused } = view;
+  const { options, cursor, picked, vetoing, agent, yesNo, menu, followUp, pausedWord } = view;
   const label = yesNo ? 'Answers: YES picks the first, NO picks the second' : menu ? "The person's menu, read one item at a time" : 'Options, read one at a time';
   return (
     <div key={view.listKey} className={styles.wrap}>
@@ -42,13 +42,13 @@ export function OptionList({ view, live }: OptionListProps) {
             vetoing={vetoing}
             agent={agent}
             live={live}
-            paused={paused}
+            pausedWord={pausedWord}
           />
         ))}
       </ol>
       {yesNo && cursor !== null && cursor.optionId === null ? (
         <div className={cx(styles.prompt, cursor.phase === 'stopped' ? styles.halted : styles.current)}>
-          <EarLine cursor={cursor} live={live} paused={paused} prompt={YES_NO_PROMPT} />
+          <EarLine cursor={cursor} live={live} pausedWord={pausedWord} prompt={YES_NO_PROMPT} />
         </div>
       ) : null}
     </div>
@@ -64,10 +64,10 @@ interface OptionRowProps {
   vetoing: boolean;
   agent: AgentStatus | null;
   live: boolean;
-  paused: 'paused' | 'headset_off' | null;
+  pausedWord: string | null;
 }
 
-function OptionRow({ option, yesNo, cursor, picked, vetoing, agent, live, paused }: OptionRowProps) {
+function OptionRow({ option, yesNo, cursor, picked, vetoing, agent, live, pausedWord }: OptionRowProps) {
   const text = screenText(option.text) ?? '';
   const kind = KIND_WORDS[option.kind];
   const tone = toneWord(option.tone);
@@ -96,7 +96,7 @@ function OptionRow({ option, yesNo, cursor, picked, vetoing, agent, live, paused
         </span>
       ) : null}
       <div className={styles.slot}>
-        {cursor !== null ? <EarLine cursor={cursor} live={live} paused={paused} /> : null}
+        {cursor !== null ? <EarLine cursor={cursor} live={live} pausedWord={pausedWord} /> : null}
         {picked ? <PickedLine vetoing={vetoing} agent={agent} /> : null}
       </div>
     </li>

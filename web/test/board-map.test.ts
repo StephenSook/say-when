@@ -34,6 +34,7 @@ function conversationOf(rows: DataRows) {
     errands: rows.errands,
     calls: rows.calls,
     safety: rows.safety,
+    input: rows.input,
     hasReply: spokenReply(q) !== null,
   });
 }
@@ -48,6 +49,7 @@ function partnerOf(rows: DataRows) {
     calls: rows.calls,
     scan: rows.scan,
     safety: rows.safety,
+    input: rows.input,
     canType: false,
   });
 }
@@ -64,6 +66,7 @@ function liveOf(rows: DataRows) {
     calls: rows.calls,
     scan: rows.scan,
     safety: rows.safety,
+    input: rows.input,
     freezeAt: null,
   });
 }
@@ -318,7 +321,7 @@ describe('boardRows: the live SpacetimeDB board as the dashboard rows', () => {
     const rows = boardRows(midScan({ errands: [errand()] }));
     const e = rows.errands[0]!;
     assert.equal(e.status, 'awaiting_confirm');
-    assert.equal(errandHeadline(e, rows.safety.state).text, 'Waiting for the person to confirm. Nothing has been sent.');
+    assert.equal(errandHeadline(e, rows.safety.state, rows.input).text, 'Waiting for the person to confirm. Nothing has been sent.');
   });
 
   test('rows written before module v2: a select step that names no option is dropped, and an errand without an option id gets the pick', () => {

@@ -4,7 +4,7 @@
  * The line under the option in the earpiece: "In the earpiece now", then the phase. While the clip
  * plays it says "Reading"; once the audio ends the response window opens and a time-left bar runs
  * (docs/ui.md: never advance before the audio ends, and show reading and the window as two phases).
- * Paused or headset off, the cursor stops here and no clock runs. While the connection is down the
+ * Paused or the input off, the cursor stops here and no clock runs. While the connection is down the
  * rows may be stale, so it says "at the last update" instead of counting.
  */
 import { Bar } from '@/components/ui/Bar';
@@ -19,16 +19,17 @@ export interface EarLineProps {
   cursor: CursorView;
   /** false while the connection is down: no clock runs on stale rows. */
   live: boolean;
-  paused: 'paused' | 'headset_off' | null;
+  /** "Paused", "Headset off" or "Input off" while the cursor is stopped (ConversationView.pausedWord). */
+  pausedWord: string | null;
   /** What plays when it is not an option, such as the yes or no prompt. */
   prompt?: string;
 }
 
-export function EarLine({ cursor, live, paused, prompt }: EarLineProps) {
+export function EarLine({ cursor, live, pausedWord, prompt }: EarLineProps) {
   if (cursor.phase === 'stopped') {
     return (
       <div className={styles.ear}>
-        <StatusMark status="stopped" word={paused === 'headset_off' ? 'Headset off. The cursor stopped here.' : 'Paused. The cursor stopped here.'} />
+        <StatusMark status="stopped" word={`${pausedWord ?? 'Paused'}. The cursor stopped here.`} />
       </div>
     );
   }

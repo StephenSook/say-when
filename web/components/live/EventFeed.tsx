@@ -2,13 +2,13 @@
 
 /**
  * The raw event feed, newest first, with Pause (docs/ui.md "Screen 1", after the Supabase Realtime
- * Inspector). Pipeline rows and headset command events share one list, ignored repeats included,
+ * Inspector). Pipeline rows and command events share one list, ignored repeats included,
  * so the room can see the debounce working. Not a live region: it changes too often to read out.
  */
 import { useId, useMemo, useState } from 'react';
 import { TextLink } from '@/components/ui/TextLink';
 import { cx } from '@/lib/cx';
-import { useCalls, useCommands, useErrands, usePipelineEvents } from '@/lib/data/provider';
+import { useCalls, useCommands, useErrands, useInput, usePipelineEvents } from '@/lib/data/provider';
 import { formatClock, formatCount } from '@/lib/format';
 import { countNewer, feedItems, type FeedItem } from './model';
 import styles from './EventFeed.module.css';
@@ -26,7 +26,8 @@ export function EventFeed() {
   const commands = useCommands();
   const errands = useErrands();
   const calls = useCalls();
-  const live = useMemo(() => feedItems(events, commands, errands, calls, FEED_LIMIT), [events, commands, errands, calls]);
+  const input = useInput();
+  const live = useMemo(() => feedItems(events, commands, errands, calls, FEED_LIMIT, input), [events, commands, errands, calls, input]);
   const [frozen, setFrozen] = useState<Frozen | null>(null);
 
   const shown = frozen?.items ?? live;

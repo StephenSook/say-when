@@ -16,11 +16,13 @@
  * - Free text (the question, the options) goes through maskPhoneNumbers: a projected screen never
  *   shows a phone number.
  */
+import { offWord, withSignal } from '../../lib/commands';
 import { latestOfStage, latestQuestion, optionUnderCursor, pickedOption, wordIndexAt } from '../../lib/data/derive';
 import type {
   AnswerOption,
   CallRequest,
   Errand,
+  InputKind,
   OptionKind,
   PipelineEvent,
   Question,
@@ -158,6 +160,8 @@ export interface ConversationView {
   legend: string | null;
   /** The shell banner's state. The list drops to 40% and the cursor stops. */
   paused: 'paused' | 'headset_off' | null;
+  /** That state in words for the stopped cursor: "Paused", "Headset off", or "Input off" for keys or a switch. */
+  pausedWord: string | null;
   /** For a polite live region: the pick, or how the turn ended. Never the list itself. */
   announcement: string;
 }
@@ -172,6 +176,8 @@ export interface ViewInput {
   errands: readonly Errand[];
   calls: readonly CallRequest[];
   safety: SafetyState;
+  /** The session's input, so a key press never reads as a jaw clench. */
+  input: InputKind;
   /** A reply was already said out loud for this question, so a later "nothing" means nothing more. */
   hasReply: boolean;
 }
@@ -248,7 +254,7 @@ function rowFor<T extends { optionId: string | null; questionId: string | null }
 }
 
 /** One line for a picked errand option. Nothing leaves without CONFIRM, so the line says so until it is sent. */
-export function errandStatus(errand: Errand | null): AgentStatus {
+export function errandStatus(errand: Errand | null, input: InputKind): AgentStatus {
   if (errand === null) return { kind: 'errand', status: 'working', sentence: 'Starting the errand. Nothing is sent yet.' };
   const status = statusFromErrand(errand.status);
   const reason = asSentence(screenText(errand.reason));
@@ -262,7 +268,7 @@ export function errandStatus(errand: Errand | null): AgentStatus {
       sentence = 'Reading it back to the person. Nothing is sent yet.';
       break;
     case 'awaiting_confirm':
-      sentence = 'Waiting for CONFIRM, a double jaw clench. Nothing is sent yet.';
+      sentence = `Waiting for ${withSignal('CONFIRM', input)}. Nothing is sent yet.`;
       break;
     case 'confirmed':
     case 'submitting':
@@ -289,7 +295,7 @@ export function errandStatus(errand: Errand | null): AgentStatus {
 }
 
 /** One line for a picked call option. Names only, never a number. */
-export function callStatus(call: CallRequest | null): AgentStatus {
+export function callStatus(call: CallRequest | null, input: InputKind): AgentStatus {
   if (call === null) return { kind: 'call', status: 'working', sentence: 'Preparing the call. No call yet.' };
   const status = statusFromCall(call.status);
   const name = screenText(call.contactName) ?? 'the contact';
@@ -303,7 +309,7 @@ export function callStatus(call: CallRequest | null): AgentStatus {
       sentence = 'Reading the call back to the person. No call yet.';
       break;
     case 'awaiting_confirm':
-      sentence = 'Waiting for CONFIRM, a double jaw clench. No call yet.';
+      sentence = `Waiting for ${withSignal('CONFIRM', input)}. No call yet.`;
       break;
     case 'confirmed':
       sentence = 'Confirmed. Starting the call.';
@@ -371,7 +377,7 @@ function cursorFor(
 }
 
 /** Everything the screen draws for one question. */
-export function buildConversationView({ question, scan, options, events, errands, calls, safety, hasReply }: ViewInput): ConversationView {
+export function buildConversationView({ question, scan, options, events, errands, calls, safety, input, hasReply }: ViewInput): ConversationView {
   const here = scan !== null && scan.questionId === question.id ? scan : null;
   /** The scan on this turn, while it still runs. */
   const run = here !== null && here.outcome === null ? here : null;
@@ -411,8 +417,8 @@ export function buildConversationView({ question, scan, options, events, errands
 
   let agent: AgentStatus | null = null;
   if (picked !== null && !vetoing) {
-    if (picked.kind === 'errand') agent = errandStatus(rowFor(errands, picked.id, question.id));
-    if (picked.kind === 'call') agent = callStatus(rowFor(calls, picked.id, question.id));
+    if (picked.kind === 'errand') agent = errandStatus(rowFor(errands, picked.id, question.id), input);
+    if (picked.kind === 'call') agent = callStatus(rowFor(calls, picked.id, question.id), input);
   }
 
   const ending = outcome !== null && outcome !== 'picked' ? endingFor(outcome, menu, hasReply || followUp) : null;
@@ -467,6 +473,7 @@ export function buildConversationView({ question, scan, options, events, errands
     pass,
     legend,
     paused,
+    pausedWord: paused === 'headset_off' ? offWord(input) : paused === 'paused' ? 'Paused' : null,
     announcement,
   };
 }

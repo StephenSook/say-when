@@ -177,14 +177,14 @@ describe('the D11 command map', () => {
   });
 
   test('chip labels and feed words', () => {
-    assert.deepEqual(PERSON_COMMANDS.map(commandChipLabel), [
+    assert.deepEqual(PERSON_COMMANDS.map((name) => commandChipLabel(name, 'headset')), [
       'YES, imagined right fist',
       'NO, imagined left fist',
       'CONFIRM, double jaw clench',
       'STOP, long jaw clench',
     ]);
-    assert.equal(commandWord('HEADSET_OFF'), 'Headset off');
-    assert.equal(commandWord('CONFIRM'), 'CONFIRM');
+    assert.equal(commandWord('HEADSET_OFF', 'headset'), 'Headset off');
+    assert.equal(commandWord('CONFIRM', 'headset'), 'CONFIRM');
   });
 
   test('the mapping accepts only the D11 names', () => {

@@ -149,5 +149,6 @@ export function shiftRows(rows: DataRows, delta: number): DataRows {
     commands: rows.commands.map((command) => ({ ...command, at: move(command.at, delta) })),
     scan: rows.scan === null ? null : { ...rows.scan, stepStartedAt: move(rows.scan.stepStartedAt, delta), stepEndsAt: move(rows.scan.stepEndsAt, delta) },
     safety: { ...rows.safety, since: moveOrNull(rows.safety.since, delta) },
+    input: rows.input,
   };
 }

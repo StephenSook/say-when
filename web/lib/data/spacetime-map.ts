@@ -39,6 +39,7 @@ import {
   type DataRows,
   type Errand,
   type ErrandStatus,
+  type InputKind,
   type OptionKind,
   type PipelineEvent,
   type PipelineEventOf,
@@ -627,11 +628,16 @@ function callFromBoard(row: BoardCall, question: BoardQuestion | undefined): Cal
   };
 }
 
+/** An ignored command's reason in words. `no_contact` names the headset only in a headset session. */
+function ignoredWords(code: string, input: InputKind): string {
+  return code.trim() === 'no_contact' && input !== 'headset' ? 'The input was not ready' : ignoredReasonWords(code);
+}
+
 /**
  * The ledger's gesture rows as command events, ignored ones included so the feed shows the debounce. The ledger has
  * no decoder confidence, so it is null.
  */
-function commandsFromLedger(ledger: readonly BoardLedgerRow[]): CommandEvent[] {
+function commandsFromLedger(ledger: readonly BoardLedgerRow[], input: InputKind): CommandEvent[] {
   const commands: CommandEvent[] = [];
   for (const row of ledger) {
     if (row.kind !== 'gesture' || !isCommand(row.command)) continue;
@@ -641,7 +647,7 @@ function commandsFromLedger(ledger: readonly BoardLedgerRow[]): CommandEvent[] {
       command: row.command,
       at: millis(row.at),
       accepted,
-      ignoredReason: accepted ? null : ignoredReasonWords(row.reason || row.outcome.replace(/^ignored:/, '')),
+      ignoredReason: accepted ? null : ignoredWords(row.reason || row.outcome.replace(/^ignored:/, ''), input),
       confidence: null,
       questionId: optionalId(row.questionId),
       optionId: optionalId(row.optionId),
@@ -699,6 +705,31 @@ function safetyFromBoard(scan: BoardScanRow | undefined, devices: readonly Board
   return { state: 'ok', since };
 }
 
+/** A session label's input mode: `headset`, `keyboard` or `switch` as the whole label or before its first hyphen. */
+const LABEL_INPUT = /^(headset|keyboard|switch)(?:-|$)/;
+
+/**
+ * The input mode a session label names (docs/station.md 2.3: the station starts a session with `<mode>-<purpose>`,
+ * such as `keyboard-test` or `headset-demo`). Any other label, or none, is 'unknown'.
+ */
+export function inputFromLabel(label: string | null | undefined): InputKind {
+  const match = LABEL_INPUT.exec(label?.trim() ?? '');
+  return match ? (match[1] as Exclude<InputKind, 'unknown'>) : 'unknown';
+}
+
+/**
+ * The board session's input mode, from its ledger: the module writes the session label as the `session_start` row's
+ * outcome (`startSession`, docs/station.md 2.3). The ledger is public and content-free; it has no source per command
+ * (request R1), so the whole session is labelled by its mode. Rows oldest first; the newest `session_start` wins.
+ */
+export function inputFromLedger(ledger: readonly BoardLedgerRow[]): InputKind {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const row = ledger[i];
+    if (row && row.kind === 'session_start') return inputFromLabel(row.outcome);
+  }
+  return 'unknown';
+}
+
 /**
  * A select step is the pick itself, and the module says so explicitly: since module v2 it writes a select step only
  * for a pick, with the option's id, rank and pass in the counts even while sharing is off (docs/spacetime.md 14);
@@ -741,6 +772,7 @@ export function boardRows(board: BoardSnapshot): DataRows {
   const questions = byTime(ofSession(board.questions), (row) => row.askedAt, (row) => row.questionId);
   const questionById = new Map(questions.map((row) => [row.questionId, row] as const));
   const ledger = byTime(ofSession(board.ledger), (row) => row.at, (row) => row.id);
+  const input = inputFromLedger(ledger);
   const scan = board.scanStates.find((row) => row.sessionId === sessionId);
   const payloads = new Map<bigint, string>();
   for (const row of board.payloads) payloads.set(row.eventId, row.payloadJson);
@@ -773,8 +805,9 @@ export function boardRows(board: BoardSnapshot): DataRows {
     options: questions.flatMap(optionsFromBoard),
     errands: byTime(ofSession(board.errands), (row) => row.createdAt, (row) => row.errandId).map((row) => errandFromBoard(row, questionById.get(row.questionId))),
     calls: byTime(ofSession(board.calls), (row) => row.createdAt, (row) => row.callId).map((row) => callFromBoard(row, questionById.get(row.questionId))),
-    commands: commandsFromLedger(ledger),
+    commands: commandsFromLedger(ledger, input),
     scan: scan ? scanFromBoard(scan, questions) : null,
     safety: safetyFromBoard(scan, board.devices, ledger),
+    input,
   };
 }

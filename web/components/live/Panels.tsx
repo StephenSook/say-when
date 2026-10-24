@@ -1,7 +1,8 @@
 'use client';
 
 /**
- * The full rows behind three steps: what Apify found, what Moss recalled and what Claude drafted.
+ * The full rows behind three steps: what Apify found, what Moss recalled and what Claude drafted ("Drafted" when the
+ * rows do not say Claude ran, such as a stand-in agent).
  * Every web row shows its source and fetch time, and every Moss hit says whether it came from
  * memory or the web, which answers a judge's first trust question: where did this come from, and
  * how fresh is it? (docs/ui.md "Screen 1"). Memory text shows only through hitDisplay.
@@ -186,7 +187,7 @@ function RecallView({ panel }: { panel: RecallPanel }) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Claude drafted
+// Claude drafted (or "Drafted")
 
 const KIND_WORDS: Readonly<Record<OptionKind, string>> = {
   reply: 'Reply',
@@ -222,19 +223,21 @@ function DraftView({ panel }: { panel: DraftPanel }) {
   // A failed or stopped draft keeps the earlier options on screen, under the sentence that says why.
   const showNote = !drafting && (card.status === 'failed' || card.status === 'stopped' || options.length === 0);
   const ms = finalMs(card);
+  // The Drafting card names Claude only when the agent's own row says so (components/live/model.ts draftCard).
+  const claude = card.tool === 'Claude';
   let meta: string | null = null;
   if (card.status === 'done' && options.length > 0) {
     const count = formatCount(options.length, panel.followUp ? 'follow-up option' : 'option');
     meta = ms === null ? count : `${count} in ${formatSeconds(ms)}`;
   }
   return (
-    <Panel title="Claude drafted" meta={meta}>
+    <Panel title={claude ? 'Claude drafted' : 'Drafted'} meta={meta}>
       {drafting ? (
         <StatusLine
           messages={
             options.length > 0
-              ? ['Drafting new options', 'Still drafting', 'Still drafting. Claude can take a few seconds.']
-              : ['Drafting options', 'Still drafting', 'Still drafting. Claude can take a few seconds.']
+              ? ['Drafting new options', 'Still drafting', claude ? 'Still drafting. Claude can take a few seconds.' : 'Still drafting.']
+              : ['Drafting options', 'Still drafting', claude ? 'Still drafting. Claude can take a few seconds.' : 'Still drafting.']
           }
           resetKey={card.eventId ?? undefined}
           align="start"

@@ -530,6 +530,14 @@ export interface SafetyState {
   since: number | null;
 }
 
+/**
+ * Where the board session's commands come from (docs/station.md 2.3, request W1): the station's input mode, read from
+ * the session label (`headset-demo`, `keyboard-test`, `switch-demo`, ...). Keyboard and switch commands are key and
+ * switch presses, never headset signals, so the screens name the true input. 'unknown' when no label says it (no
+ * session yet, or a label without a mode): then no screen names a brain or jaw signal.
+ */
+export type InputKind = 'headset' | 'keyboard' | 'switch' | 'unknown';
+
 /** Every row the screens read, sorted oldest first. */
 export interface DataRows {
   questions: readonly Question[];
@@ -540,6 +548,8 @@ export interface DataRows {
   commands: readonly CommandEvent[];
   scan: ScanState | null;
   safety: SafetyState;
+  /** The board session's input mode, from its label. */
+  input: InputKind;
 }
 
 /** What a data source reports: its mode, the connection, and the rows. */
@@ -565,4 +575,5 @@ export const EMPTY_ROWS: DataRows = Object.freeze({
   commands: [],
   scan: null,
   safety: Object.freeze({ state: 'unknown', since: null }),
+  input: 'unknown',
 }) as DataRows;

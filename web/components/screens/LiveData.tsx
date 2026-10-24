@@ -13,8 +13,9 @@
  *   later steps stay Not started, and the sentence goes to a role="alert" region.
  * - Reconnecting or offline with rows: the shell dims the screen; here every clock stops at the
  *   moment the connection dropped, so nothing counts up on stale rows.
- * - Paused or headset off: the shell shows the banner; a step that was reading or waiting on the
- *   pick reads "Paused" or "Headset off" with the time it ran, and the commands show in the feed.
+ * - Paused or the input off: the shell shows the banner; a step that was reading or waiting on the
+ *   pick reads "Paused" or "Headset off" ("Input off" for keys or a switch) with the time it ran,
+ *   and the commands show in the feed.
  *
  * Left and Right arrows step through earlier questions; "Back to live" returns to the newest.
  * The rules for reading the rows live in components/live/model.ts.
@@ -31,6 +32,7 @@ import {
   useCommands,
   useConnection,
   useErrands,
+  useInput,
   usePipelineEvents,
   useQuestionEvents,
   useQuestions,
@@ -48,6 +50,7 @@ export function LiveData() {
   const calls = useCalls();
   const scan = useScanState();
   const safety = useSafety();
+  const input = useInput();
   const allEvents = usePipelineEvents();
   const commands = useCommands();
 
@@ -69,9 +72,9 @@ export function LiveData() {
   const view = useMemo(
     () =>
       question
-        ? buildLiveView({ question, nextQuestion, events, options: rows.options, errands, calls, scan, safety, freezeAt })
+        ? buildLiveView({ question, nextQuestion, events, options: rows.options, errands, calls, scan, safety, input, freezeAt })
         : null,
-    [question, nextQuestion, events, rows.options, errands, calls, scan, safety, freezeAt],
+    [question, nextQuestion, events, rows.options, errands, calls, scan, safety, input, freezeAt],
   );
 
   const goEarlier = () => {

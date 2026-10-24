@@ -7,7 +7,7 @@
  * If the imagined squeezes fail the pre-registered test (PLAN D9, docs/brain-mode-test.md), YES
  * becomes a single short jaw clench and NO becomes silence; change `signal` and `short` here only.
  */
-import type { CommandName, PersonCommand } from './data/types';
+import type { CommandName, InputKind, PersonCommand, SafetyState } from './data/types';
 
 export interface CommandInfo {
   name: CommandName;
@@ -59,12 +59,108 @@ export const COMMAND_INFO: Readonly<Record<CommandName, CommandInfo>> = {
   },
 };
 
-/** The command strip label: "YES, imagined right fist" (docs/mockups/conversation.html). */
-export function commandChipLabel(name: PersonCommand): string {
-  return `${name}, ${COMMAND_INFO[name].short}`;
+// ---------------------------------------------------------------------------------------------
+// The true input (docs/station.md 2.3 and 2.5, request W1). The headset words above hold only for a headset session.
+// A keyboard session's commands are key presses (Y, N, C, S), and a switch session's are presses of one switch (a
+// short press is YES, two presses CONFIRM, a 1 s hold STOP; NO is not on the switch). When the input is unknown, no
+// screen names a brain or jaw signal.
+
+const KEYS: Readonly<Record<PersonCommand, string>> = { YES: 'key Y', NO: 'key N', CONFIRM: 'key C', STOP: 'key S' };
+
+const SWITCH_PRESSES: Readonly<Record<PersonCommand, string | null>> = {
+  YES: 'short switch press',
+  NO: null,
+  CONFIRM: 'double switch press',
+  STOP: 'long switch press',
+};
+
+/** What the person did for a command in this input, short: "imagined right fist", "key Y", "double switch press". null when unknown. */
+export function commandSignal(name: PersonCommand, input: InputKind): string | null {
+  switch (input) {
+    case 'headset':
+      return COMMAND_INFO[name].short;
+    case 'keyboard':
+      return KEYS[name];
+    case 'switch':
+      return SWITCH_PRESSES[name];
+    default:
+      return null;
+  }
 }
 
-/** The event feed name: "YES", "NO", "CONFIRM", "STOP", or "Headset off" for the system event. */
-export function commandWord(name: CommandName): string {
-  return name === 'HEADSET_OFF' ? 'Headset off' : name;
+/** The same for a sentence, with its article: "a double jaw clench", "key C", "a long switch press". null when unknown. */
+export function signalPhrase(name: PersonCommand, input: InputKind): string | null {
+  const signal = commandSignal(name, input);
+  if (signal === null || input === 'keyboard') return signal;
+  return `${/^[aeiou]/i.test(signal) ? 'an' : 'a'} ${signal}`;
+}
+
+/** "CONFIRM, a double jaw clench", "CONFIRM, key C", or "CONFIRM" alone when the input is unknown. */
+export function withSignal(name: PersonCommand, input: InputKind): string {
+  const phrase = signalPhrase(name, input);
+  return phrase === null ? name : `${name}, ${phrase}`;
+}
+
+/** The command strip label: "YES, imagined right fist", "YES, key Y", "NO, not on the switch", or "YES" alone. */
+export function commandChipLabel(name: PersonCommand, input: InputKind): string {
+  if (input === 'switch' && SWITCH_PRESSES[name] === null) return `${name}, not on the switch`;
+  const signal = commandSignal(name, input);
+  return signal === null ? name : `${name}, ${signal}`;
+}
+
+/** "Headset off" in a headset session; "Input off" for a key, a switch or an unknown input. */
+export function offWord(input: InputKind): string {
+  return input === 'headset' ? 'Headset off' : 'Input off';
+}
+
+/** The event feed name: "YES", "NO", "CONFIRM", "STOP", or "Headset off" ("Input off") for the system event. */
+export function commandWord(name: CommandName, input: InputKind): string {
+  return name === 'HEADSET_OFF' ? offWord(input) : name;
+}
+
+/** The header chip: the input, and whether it is on, off or paused (docs/ui.md "Headset chip"). */
+export interface InputChipView {
+  words: string;
+  tone: 'muted' | 'error';
+  lead: 'headset' | 'dot' | 'cross' | 'pause';
+  /** Not known to be on: no session, or the session ended. */
+  dashed: boolean;
+  /** The chip's accessible name. */
+  name: string;
+}
+
+const INPUT_NAMES: Readonly<Record<InputKind, string>> = {
+  headset: 'Headset',
+  keyboard: 'Keyboard input',
+  switch: 'Switch input',
+  unknown: 'Input',
+};
+
+/**
+ * A headset session keeps "Headset on", "Headset off" and "Paused". A keyboard or switch session says so on the chip
+ * ("Keyboard input", "Input off"), so key presses never pass as headset input; an unknown input says "Input on".
+ */
+export function inputChip(state: SafetyState['state'], input: InputKind): InputChipView {
+  const name = INPUT_NAMES[input];
+  if (state === 'paused') return { words: 'Paused', tone: 'error', lead: 'pause', dashed: false, name };
+  if (state === 'headset_off') return { words: offWord(input), tone: 'error', lead: 'cross', dashed: false, name };
+  const lead = input === 'headset' ? 'headset' : 'dot';
+  if (input === 'headset') {
+    return state === 'ok'
+      ? { words: 'Headset on', tone: 'muted', lead, dashed: false, name }
+      : { words: 'Headset unknown', tone: 'muted', lead, dashed: true, name };
+  }
+  if (input === 'unknown') {
+    return state === 'ok'
+      ? { words: 'Input on', tone: 'muted', lead, dashed: false, name }
+      : { words: 'Input unknown', tone: 'muted', lead, dashed: true, name };
+  }
+  return { words: name, tone: 'muted', lead, dashed: state !== 'ok', name };
+}
+
+/** The shell banner while paused or off: both cancel anything pending, so the room must see them. */
+export function safetySentence(state: SafetyState['state'], input: InputKind): string | null {
+  if (state === 'paused') return 'Paused. Nothing will be sent.';
+  if (state === 'headset_off') return `${offWord(input)}. Nothing will be sent.`;
+  return null;
 }

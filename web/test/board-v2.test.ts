@@ -34,6 +34,7 @@ function conversationOf(rows: DataRows) {
     errands: rows.errands,
     calls: rows.calls,
     safety: rows.safety,
+    input: rows.input,
     hasReply: spokenReply(q) !== null,
   });
 }
@@ -50,6 +51,7 @@ function liveOf(rows: DataRows) {
     calls: rows.calls,
     scan: rows.scan,
     safety: rows.safety,
+    input: rows.input,
     freezeAt: null,
   });
 }
@@ -105,8 +107,14 @@ describe('module v2 on the board (docs/spacetime.md 14)', () => {
     const card = speakCard(rows);
     assert.equal(card.status, 'working');
     assert.equal(card.payload, 'Option 2, warm voice', 'sharing is off, so the rank and the tone, no words');
-    assert.equal(card.passed, '2 played');
-    const feed = feedItems(rows.pipelineEvents, rows.commands, rows.errands, rows.calls, 10);
+    // Both reads are estimated with no word timings (no station made clips), so the card names no voice (W1).
+    assert.equal(card.tool, 'No voice clip reported');
+    assert.equal(card.passed, '2 scanned');
+    // Once the station's word timings for a read arrive, a clip played: the card names the voice again.
+    const voiced = speakCard(boardRows(reading({ wordTimings: [wordTiming(45, [0, 240], [220, 520])] })));
+    assert.equal(voiced.tool, 'Cartesia Sonic, into the earpiece');
+    assert.equal(voiced.passed, '2 played');
+    const feed = feedItems(rows.pipelineEvents, rows.commands, rows.errands, rows.calls, 10, rows.input);
     // Newest first, and rows of the same millisecond newest first too: the first read above its scan's start.
     assert.deepEqual(
       feed.filter((item) => item.name === 'speak').map((item) => item.detail),
@@ -134,7 +142,7 @@ describe('module v2 on the board (docs/spacetime.md 14)', () => {
     const card = speakCard(rows);
     assert.equal(card.status, 'done');
     assert.equal(card.payload, 'Option 4, warm voice, pass 2');
-    assert.equal(card.passed, '4 played');
+    assert.equal(card.passed, '4 scanned', 'every read estimated and untimed: no voice clip was reported');
     assert.equal(liveOf(rows).cards.find((c) => c.stage === 'select')?.word, 'No pick');
   });
 
@@ -286,7 +294,7 @@ describe('module v2 on the board (docs/spacetime.md 14)', () => {
     );
     assert.deepEqual(callBadge(c, rows.safety.state), { status: 'waiting', word: 'Waiting for confirm', countdownTo: ms(41_000) });
     assert.deepEqual(callPlan(c), { script: 'done', confirm: 'waiting', ring: 'not_started', talk: 'not_started', end: 'not_started' });
-    assert.equal(callHeadline(c, rows.safety.state).text, 'Waiting for the person to confirm the call. Nobody has been called.');
+    assert.equal(callHeadline(c, rows.safety.state, rows.input).text, 'Waiting for the person to confirm the call. Nobody has been called.');
   });
 
   test('what stopped a call: the STOP before the dial, the claim window, and the STOP that hung it up', () => {
@@ -303,14 +311,18 @@ describe('module v2 on the board (docs/spacetime.md 14)', () => {
     );
     const [beforeDial, expired, hungUp] = rows.calls;
     assert.equal(beforeDial?.stopCommandId, 'smoke-stop-1');
-    assert.equal(stopReason(beforeDial!, rows.commands), 'The person used STOP, a long jaw clench.');
+    // The fixture's session label is "smoke", which names no input, so the STOP is named without a signal (W1).
+    assert.equal(rows.input, 'unknown');
+    assert.equal(stopReason(beforeDial!, rows.commands, rows.input), 'The person used STOP.');
+    assert.equal(stopReason(beforeDial!, rows.commands, 'headset'), 'The person used STOP, a long jaw clench.');
     assert.equal(expired?.reasonCode, 'confirm_expired');
     assert.equal(expired?.confirmCommandId, 'smoke-confirm-9');
-    assert.equal(stopReason(expired!, rows.commands), 'Too much time passed after the confirm. No call was made.');
-    assert.equal(stopReason({ ...expired!, reason: null }, rows.commands), 'Too much time passed after the confirm.');
-    assert.equal(callEndReason(hungUp!, rows.commands), 'The person used STOP, a long jaw clench.');
-    assert.equal(callHeadline(hungUp!, rows.safety.state, rows.commands).text, 'The call ended. The person used STOP, a long jaw clench.');
-    assert.equal(callEndReason(hungUp!), 'The call was hung up.', 'without the command rows, the result');
+    assert.equal(stopReason(expired!, rows.commands, rows.input), 'Too much time passed after the confirm. No call was made.');
+    assert.equal(stopReason({ ...expired!, reason: null }, rows.commands, rows.input), 'Too much time passed after the confirm.');
+    assert.equal(callEndReason(hungUp!, rows.input, rows.commands), 'The person used STOP.');
+    assert.equal(callEndReason(hungUp!, 'headset', rows.commands), 'The person used STOP, a long jaw clench.');
+    assert.equal(callHeadline(hungUp!, rows.safety.state, rows.input, rows.commands).text, 'The call ended. The person used STOP.');
+    assert.equal(callEndReason(hungUp!, rows.input), 'The call was hung up.', 'without the command rows, the result');
 
     // Sharing on: the call agent reports Cartesia's end reason code and its own sentence; the STOP still says what ended it.
     const shared = boardRows(
@@ -320,7 +332,7 @@ describe('module v2 on the board (docs/spacetime.md 14)', () => {
       }),
     );
     assert.equal(shared.calls[0]?.endReason, null, 'a bare end reason code is not words');
-    assert.equal(callHeadline(shared.calls[0]!, shared.safety.state, shared.commands).text, 'The call ended. The person used STOP, a long jaw clench.');
+    assert.equal(callHeadline(shared.calls[0]!, shared.safety.state, 'headset', shared.commands).text, 'The call ended. The person used STOP, a long jaw clench.');
     const words = boardRows(midScan({ calls: [call({ textShared: true, endReason: 'No answer after 25 s' })] }));
     assert.equal(words.calls[0]?.endReason, 'No answer after 25 s', 'an end reason in words stays');
   });
@@ -333,16 +345,16 @@ describe('module v2 on the board (docs/spacetime.md 14)', () => {
     const off = held({ reasonCode: 'opt_out_hold', reason: 'Calls to this contact are on hold until someone checks.' });
     assert.equal(off.held, true);
     assert.equal(callHoldSentence(off), 'Calls to this contact are on hold until someone checks.');
-    assert.equal(callHeadline(off, 'unknown').text, 'The call ended. Calls to this contact are on hold until someone checks.', 'said once');
+    assert.equal(callHeadline(off, 'unknown', 'unknown').text, 'The call ended. Calls to this contact are on hold until someone checks.', 'said once');
 
     // Sharing on, and the stored reason does not carry the sentence: it is added with the name, and a number is hidden.
     const on = held({ status: { tag: 'Failed' }, result: 'failed', textShared: true, contactName: 'Demo caregiver 415 555 0100', reasonCode: 'call_failed', reason: '' });
     assert.equal(callHoldSentence(on), 'Calls to Demo caregiver [number hidden] are on hold until someone checks.');
-    assert.equal(callHeadline(on, 'unknown').text, 'The call failed. Calls to Demo caregiver [number hidden] are on hold until someone checks.');
+    assert.equal(callHeadline(on, 'unknown', 'unknown').text, 'The call failed. Calls to Demo caregiver [number hidden] are on hold until someone checks.');
 
     const notHeld = held({ held: false });
     assert.equal(callHoldSentence(notHeld), null);
-    assert.doesNotMatch(callHeadline(notHeld, 'unknown').text, /on hold/);
+    assert.doesNotMatch(callHeadline(notHeld, 'unknown', 'unknown').text, /on hold/);
   });
 
   test('the whole v2 board through every screen model: no broken value and no private words', () => {

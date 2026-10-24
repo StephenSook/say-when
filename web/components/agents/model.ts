@@ -4,9 +4,10 @@
  * No React here, so every rule sits in one place.
  *
  * Errands and calls are options (PLAN D11). YES picks one, the read-back plays in the earpiece, and
- * only a fresh CONFIRM (a double jaw clench) matched to the read-back digest sends it. Silence, NO,
- * STOP, the headset coming off and the idle auto-pause all mean nothing is sent
- * (docs/spacetime.md 4.2 to 4.4).
+ * only a fresh CONFIRM (a double jaw clench, or the key or switch press of a keyboard or switch session) matched to
+ * the read-back digest sends it. Silence, NO, STOP, the input coming off and the idle auto-pause all mean nothing is
+ * sent (docs/spacetime.md 4.2 to 4.4). Every sentence that names what the person did takes the session's input
+ * (lib/commands.ts), so a key press never reads as a jaw clench.
  *
  * Every piece of row text passes through maskPhoneNumbers before it reaches a screen.
  */
@@ -19,8 +20,10 @@ import type {
   CommandName,
   Errand,
   ErrandStatus,
+  InputKind,
   SafetyState,
 } from '@/lib/data/types';
+import { offWord, signalPhrase, withSignal } from '@/lib/commands';
 import { maskPhoneNumbers } from '@/lib/format';
 import { callStatusWord, statusFromCall, statusFromErrand, STATUS_WORDS, type RunStatus } from '@/lib/status';
 
@@ -35,6 +38,12 @@ export const AGENT_NAMES: Readonly<Record<AgentKind, string>> = {
   errand: 'Form errand',
   call: 'Phone call',
 };
+
+/** The empty state (docs/ui.md). It names the confirm in the session's input: a jaw clench only for the headset. */
+export function agentsEmptySentence(input: InputKind): string {
+  const confirm = signalPhrase('CONFIRM', input) ?? 'a CONFIRM';
+  return `No errand or call yet. Errands and calls are offered as options, or from the person's menu. Nothing is sent without ${confirm}.`;
+}
 
 /* ------------------------------------------------------------------------------------------------
  * Small text helpers
@@ -136,10 +145,10 @@ export function isPaused(safety: SafetyWord): boolean {
   return safety === 'paused' || safety === 'headset_off';
 }
 
-/** The first words of the shell banner: "Paused." or "Headset off." null when not paused. */
-export function pauseWords(safety: SafetyWord): string | null {
+/** The first words of the shell banner: "Paused." or "Headset off." ("Input off." for keys or a switch). null when not paused. */
+export function pauseWords(safety: SafetyWord, input: InputKind): string | null {
   if (safety === 'paused') return 'Paused.';
-  if (safety === 'headset_off') return 'Headset off.';
+  if (safety === 'headset_off') return `${offWord(input)}.`;
   return null;
 }
 
@@ -340,18 +349,33 @@ export function callPlan(call: CallRequest): CallPlan {
  * Reasons in plain words
  * ---------------------------------------------------------------------------------------------- */
 
-const commandStopSentences: Readonly<Partial<Record<CommandName, string>>> = {
-  NO: 'The person answered NO.',
-  STOP: 'The person used STOP, a long jaw clench.',
-  HEADSET_OFF: 'The headset lost contact.',
-};
+/** "STOP, a long jaw clench, hangs up.", "STOP, key S, hangs up.", or "STOP hangs up." when the input is unknown. */
+export function stopHangsUp(input: InputKind): string {
+  const phrase = signalPhrase('STOP', input);
+  return phrase ? `STOP, ${phrase}, hangs up.` : 'STOP hangs up.';
+}
 
-const reasonCodeSentences: ReadonlyMap<string, string> = new Map([
-  ['window_closed', 'The confirm window closed without a double jaw clench.'],
-  ['readback_not_finished', 'The read-back did not finish.'],
-  ['no_consent', 'There is no consent on file.'],
-  ['confirm_expired', 'Too much time passed after the confirm.'],
-]);
+function commandStopSentence(command: CommandName, input: InputKind): string | null {
+  if (command === 'NO') return 'The person answered NO.';
+  if (command === 'STOP') return `The person used ${withSignal('STOP', input)}.`;
+  if (command === 'HEADSET_OFF') return input === 'headset' ? 'The headset lost contact.' : 'The input went off.';
+  return null;
+}
+
+function reasonCodeSentence(code: string, input: InputKind): string | null {
+  switch (code) {
+    case 'window_closed':
+      return `The confirm window closed without ${signalPhrase('CONFIRM', input) ?? 'a CONFIRM'}.`;
+    case 'readback_not_finished':
+      return 'The read-back did not finish.';
+    case 'no_consent':
+      return 'There is no consent on file.';
+    case 'confirm_expired':
+      return 'Too much time passed after the confirm.';
+    default:
+      return null;
+  }
+}
 
 const NO_REASON = 'No reason was recorded.';
 
@@ -361,9 +385,9 @@ export interface ReasonFields {
   reasonCode?: string | null;
 }
 
-function reasonFromCode(code: string | null | undefined): string | null {
+function reasonFromCode(code: string | null | undefined, input: InputKind): string | null {
   const trimmed = code?.trim();
-  return trimmed ? (reasonCodeSentences.get(trimmed) ?? null) : null;
+  return trimmed ? reasonCodeSentence(trimmed, input) : null;
 }
 
 /**
@@ -371,22 +395,22 @@ function reasonFromCode(code: string | null | undefined): string | null {
  * (`stop_gesture_id`), and the command rows say which command it was. null when the row names none (a timer, a pause
  * or a new question stopped it) or the command is not on screen.
  */
-export function stopCommandSentence(row: { stopCommandId: string | null }, commands: readonly CommandEvent[]): string | null {
+export function stopCommandSentence(row: { stopCommandId: string | null }, commands: readonly CommandEvent[], input: InputKind): string | null {
   if (row.stopCommandId === null) return null;
   const command = commands.find((event) => event.id === row.stopCommandId);
-  return command ? (commandStopSentences[command.command] ?? null) : null;
+  return command ? commandStopSentence(command.command, input) : null;
 }
 
 /** Why an errand or call was stopped: the row's sentence, else the command that stopped it, else its code. */
-export function stopReason(row: ReasonFields, commands: readonly CommandEvent[]): string {
+export function stopReason(row: ReasonFields, commands: readonly CommandEvent[], input: InputKind): string {
   const own = screenSentence(row.reason);
   if (own) return own;
-  return stopCommandSentence(row, commands) ?? reasonFromCode(row.reasonCode) ?? NO_REASON;
+  return stopCommandSentence(row, commands, input) ?? reasonFromCode(row.reasonCode, input) ?? NO_REASON;
 }
 
 /** Why it was refused or failed, as one sentence. */
-export function rowReason(row: { reason: string | null; reasonCode?: string | null }): string {
-  return screenSentence(row.reason) ?? reasonFromCode(row.reasonCode) ?? NO_REASON;
+export function rowReason(row: { reason: string | null; reasonCode?: string | null }, input: InputKind): string {
+  return screenSentence(row.reason) ?? reasonFromCode(row.reasonCode, input) ?? NO_REASON;
 }
 
 /** The row's own end reason, for example "The person hung up with STOP." null when it has none. */
@@ -408,8 +432,8 @@ const callResultSentences: Readonly<Partial<Record<CallResult, string>>> = {
  * How the call ended, in plain words: the command that hung it up when the row names one (`stop_gesture_id`, since
  * module v2), else its own reason, else its result. null for a plain answered call.
  */
-export function callEndReason(call: CallRequest, commands: readonly CommandEvent[] = []): string | null {
-  return stopCommandSentence(call, commands) ?? callOwnReason(call) ?? (call.result ? (callResultSentences[call.result] ?? null) : null);
+export function callEndReason(call: CallRequest, input: InputKind, commands: readonly CommandEvent[] = []): string | null {
+  return stopCommandSentence(call, commands, input) ?? callOwnReason(call) ?? (call.result ? (callResultSentences[call.result] ?? null) : null);
 }
 
 /** docs/ui.md "Error": "The call ended: <reason>." */
@@ -448,8 +472,9 @@ export interface Headline {
 }
 
 /** No time or count in here: the sentence is a live region, so it must not change every second. */
-export function errandHeadline(errand: Errand, safety: SafetyWord): Headline {
-  const paused = pauseWords(safety);
+export function errandHeadline(errand: Errand, safety: SafetyWord, input: InputKind): Headline {
+  const paused = pauseWords(safety, input);
+  const confirmed = signalPhrase('CONFIRM', input);
   if (paused && errandStoppedByPause.has(errand.status)) return { status: 'stopped', text: `${paused} Nothing will be sent.` };
   switch (errand.status) {
     case 'preparing':
@@ -464,9 +489,9 @@ export function errandHeadline(errand: Errand, safety: SafetyWord): Headline {
       // A pause does not stop a send that already started (docs/spacetime.md 4.2).
       return paused
         ? { status: 'working', text: `${paused} The confirmed form is still being sent.` }
-        : { status: 'working', text: 'Confirmed with a double jaw clench. Sending the form.' };
+        : { status: 'working', text: confirmed ? `Confirmed with ${confirmed}. Sending the form.` : 'Confirmed. Sending the form.' };
     case 'sent':
-      return { status: 'done', text: 'Sent after the person confirmed with a double jaw clench.' };
+      return { status: 'done', text: confirmed ? `Sent after the person confirmed with ${confirmed}.` : 'Sent after the person confirmed.' };
     case 'unknown_outcome':
       return { status: 'failed', text: 'The form may or may not have gone through. It was not sent again.' };
     case 'stopped':
@@ -484,15 +509,16 @@ export function errandHeadline(errand: Errand, safety: SafetyWord): Headline {
  * The sentence on top for a call. A finished call whose contact is now on hold says so last, in words, so the room
  * knows no further call goes to that contact until someone checks.
  */
-export function callHeadline(call: CallRequest, safety: SafetyWord, commands: readonly CommandEvent[] = []): Headline {
-  const headline = callHeadlineWithoutHold(call, safety, commands);
+export function callHeadline(call: CallRequest, safety: SafetyWord, input: InputKind, commands: readonly CommandEvent[] = []): Headline {
+  const headline = callHeadlineWithoutHold(call, safety, input, commands);
   if (callMoving.has(call.status)) return headline;
   const hold = callHoldNote(call, headline.text);
   return hold === null ? headline : { status: headline.status, text: `${headline.text} ${hold}` };
 }
 
-function callHeadlineWithoutHold(call: CallRequest, safety: SafetyWord, commands: readonly CommandEvent[]): Headline {
-  const paused = pauseWords(safety);
+function callHeadlineWithoutHold(call: CallRequest, safety: SafetyWord, input: InputKind, commands: readonly CommandEvent[]): Headline {
+  const paused = pauseWords(safety, input);
+  const confirmed = signalPhrase('CONFIRM', input);
   const name = screenText(call.contactName) ?? 'the contact';
   if (paused && callStoppedByPause.has(call.status)) return { status: 'stopped', text: `${paused} Nobody will be called.` };
   if (paused && callCancelledByPause.has(call.status)) return { status: 'stopped', text: `${paused} Cancelling the call.` };
@@ -505,15 +531,15 @@ function callHeadlineWithoutHold(call: CallRequest, safety: SafetyWord, commands
       return { status: 'waiting', text: 'Waiting for the person to confirm the call. Nobody has been called.' };
     case 'confirmed':
     case 'dialing':
-      return { status: 'working', text: `Confirmed with a double jaw clench. Calling ${name}.` };
+      return { status: 'working', text: confirmed ? `Confirmed with ${confirmed}. Calling ${name}.` : `Confirmed. Calling ${name}.` };
     case 'ringing':
       return { status: 'working', text: `Ringing ${name}.` };
     case 'connected':
-      return { status: 'working', text: `On the phone with ${name}. STOP, a long jaw clench, hangs up.` };
+      return { status: 'working', text: `On the phone with ${name}. ${stopHangsUp(input)}` };
     case 'ended': {
       const outcome = callOutcome(call);
       if (outcome === 'failed') return { status: 'failed', text: callFailedSentence(call) };
-      const reason = callEndReason(call, commands);
+      const reason = callEndReason(call, input, commands);
       return { status: outcome, text: reason ? `The call ended. ${reason}` : 'The call ended.' };
     }
     case 'failed':

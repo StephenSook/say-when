@@ -18,7 +18,7 @@
  * - Memory text is only ever read through hitDisplay: a memory shows its words only when the
  *   person marked it shareable.
  */
-import { COMMAND_INFO, commandWord } from '../../lib/commands';
+import { COMMAND_INFO, commandSignal, commandWord, offWord, withSignal } from '../../lib/commands';
 import { hitDisplay, latestOptions, timeToFirstOption } from '../../lib/data/derive';
 import type {
   AnswerOption,
@@ -26,6 +26,7 @@ import type {
   CommandEvent,
   CommandName,
   Errand,
+  InputKind,
   MossHit,
   OptionKind,
   PipelineEvent,
@@ -145,6 +146,8 @@ export interface LiveInput {
   calls: readonly CallRequest[];
   scan: ScanState | null;
   safety: SafetyState;
+  /** The session's input: a key or switch press never reads as a headset signal. */
+  input: InputKind;
   /** Set while the connection is not live: every clock stops at this moment. */
   freezeAt: number | null;
 }
@@ -300,9 +303,10 @@ interface Context {
   nextQuestion: Question | null;
   /** The scan for this question ended without a pick. */
   ended: Cut | null;
-  /** The system is paused or the headset is off (newest question only). */
+  /** The system is paused or the input is off (newest question only). */
   paused: Cut | null;
   freezeAt: number | null;
+  input: InputKind;
 }
 
 const ENDINGS: Readonly<Record<Exclude<ScanOutcome, 'picked'>, { word: string; sentence: string }>> = {
@@ -322,9 +326,12 @@ function contextFor(input: LiveInput): Context {
   let paused: Cut | null = null;
   if (input.nextQuestion === null && safety.since !== null) {
     if (safety.state === 'paused') paused = { at: safety.since, word: 'Paused', sentence: 'Paused. Nothing will be sent.' };
-    if (safety.state === 'headset_off') paused = { at: safety.since, word: 'Headset off', sentence: 'Headset off. Nothing will be sent.' };
+    if (safety.state === 'headset_off') {
+      const off = offWord(input.input);
+      paused = { at: safety.since, word: off, sentence: `${off}. Nothing will be sent.` };
+    }
   }
-  return { question, nextQuestion: input.nextQuestion, ended, paused, freezeAt: input.freezeAt };
+  return { question, nextQuestion: input.nextQuestion, ended, paused, freezeAt: input.freezeAt, input: input.input };
 }
 
 function cutFor(stage: CardStage, from: number, ctx: Context): Cut | null {
@@ -636,7 +643,9 @@ function draftCard(
   earlierRound: boolean,
   later: boolean,
 ): { card: StageCard; followUp: boolean } {
-  const tool = 'Claude';
+  // "Claude" only when a row says so: the real agent labels its plan step `claude` (agent/src/jobs.ts). A stand-in
+  // agent (the smoke script labels its step `smoke options`) is not Claude.
+  const tool = scope.events.some((event) => labelOf(event.detail)?.toLowerCase() === 'claude') ? 'Claude' : 'Agent';
   const state = stepState('plan', scope, ctx, false);
   const latest = scope.latest;
   const followUp = earlierRound || scope.events.some((event) => loose(event.detail).followUp === true);
@@ -706,6 +715,29 @@ function namesRead(event: PipelineEvent): boolean {
   return text(fields.optionId) !== null || (num(fields.rank) ?? 0) > 0 || isPromptRead(event);
 }
 
+const VOICED_TOOL = 'Cartesia Sonic, into the earpiece';
+const NO_CLIP_TOOL = 'No voice clip reported';
+
+/**
+ * No read in this round shows a voice clip: every option read was planned from an estimated length (`estimated`, set
+ * by the module when the station had reported no clip for that option as the read began) and no read carries word
+ * timings or a clip, which the station reports only for a clip that exists and plays (docs/station.md 2.9). A silent
+ * test station looks like this, and so does one whose clips never came; either way the board has no sign of a voice,
+ * so the card names none. Reads of the yes or no prompt are a stock phrase with no `estimated`, so a round of prompt
+ * reads alone is not judged here.
+ */
+export function noClipReported(events: readonly PipelineEvent[]): boolean {
+  let optionReads = 0;
+  for (const event of events) {
+    const fields = loose(event.detail);
+    if ((Array.isArray(fields.words) && fields.words.length > 0) || safeClipUrl(fields.clipUrl) !== null) return false;
+    if (event.status !== 'started' || isPromptRead(event) || num(fields.stepSeq) === null || !namesRead(event)) continue;
+    if (fields.estimated !== true) return false;
+    optionReads += 1;
+  }
+  return optionReads > 0;
+}
+
 /**
  * The earpiece only: what the person hears privately (docs/ui.md pattern 10 labels the two audio
  * channels apart). The reply said out loud comes after the pick, so it is its own line under the
@@ -713,10 +745,12 @@ function namesRead(event: PipelineEvent): boolean {
  *
  * Every read is its own speak row with the option's rank (since module v2 on live data, and in the
  * sample replay). The card names the newest read, so after the scan's "scan ended" row it still says
- * which option was read last, and counts the options played.
+ * which option was read last, and counts the options played. When no voice clip was reported for the
+ * round (`noClipReported`), it names no voice: the reads were scanned, not shown to be played.
  */
 function speakCard(ctx: Context, scope: Scope, byId: ReadonlyMap<string, AnswerOption>, later: boolean): StageCard {
-  const tool = 'Cartesia Sonic, into the earpiece';
+  const noClip = noClipReported(scope.events);
+  const tool = noClip ? NO_CLIP_TOOL : VOICED_TOOL;
   const latest = scope.latest;
   const state = stepState('speak', scope, ctx, false);
   if (!state || !latest) return notRun('speak', tool, later, false);
@@ -732,20 +766,28 @@ function speakCard(ctx: Context, scope: Scope, byId: ReadonlyMap<string, AnswerO
   }
   // A source that names no read (one row per scan) counts the scans it started.
   if (played.size === 0) for (const event of scope.events) if (event.status === 'started') played.add(event.id);
-  const passed = played.size > 0 ? `${played.size} played` : null;
+  const passed = played.size > 0 ? `${played.size} ${noClip ? 'scanned' : 'played'}` : null;
   const stopped = interrupted(state, 'Could not play the option.');
   if (stopped) return { ...base, ...stopped, passed };
   const ref = spokenRef(shown.detail, byId);
   let payload = isPromptRead(shown) ? 'The yes or no prompt' : optionWords(ref, num(detail.pass));
   const by = detail.stoppedBy;
-  if (typeof by === 'string' && by in COMMAND_INFO) payload = `${payload} Cut short by ${commandWord(by as CommandName)}.`;
+  if (typeof by === 'string' && by in COMMAND_INFO) payload = `${payload} Cut short by ${commandWord(by as CommandName, ctx.input)}.`;
   const url = safeClipUrl(detail.clipUrl);
   const clip = url ? { url, label: ref.rank !== null ? `Play option ${ref.rank}` : 'Play the option' } : null;
   return { ...base, payload, note: false, payloadTitle: payload, passed, clip };
 }
 
+/** The tool behind a pick: the input the person used (a headset only in a headset session). */
+const PICK_TOOLS: Readonly<Record<InputKind, string>> = {
+  headset: 'Headset',
+  keyboard: 'Keyboard',
+  switch: 'USB switch',
+  unknown: 'Input',
+};
+
 function selectCard(ctx: Context, scope: Scope, byId: ReadonlyMap<string, AnswerOption>, roundFrom: number): StageCard {
-  const tool = 'Headset';
+  const tool = PICK_TOOLS[ctx.input];
   const state = stepState('select', scope, ctx, false);
   const latest = scope.latest;
   if (!state || !latest) {
@@ -793,7 +835,7 @@ function span(from: number | null, to: number | null): number | null {
   return from !== null && to !== null ? Math.max(0, to - from) : null;
 }
 
-function errandSentence(errand: Errand): string {
+function errandSentence(errand: Errand, input: InputKind): string {
   const reason = text(errand.reason);
   switch (errand.status) {
     case 'preparing':
@@ -803,7 +845,7 @@ function errandSentence(errand: Errand): string {
     case 'reading_back':
       return 'Reading the values back in the earpiece.';
     case 'awaiting_confirm':
-      return 'Waiting for CONFIRM, a double jaw clench.';
+      return `Waiting for ${withSignal('CONFIRM', input)}.`;
     case 'confirmed':
       return 'CONFIRM matched the read-back. Sending.';
     case 'submitting':
@@ -823,14 +865,14 @@ function errandSentence(errand: Errand): string {
   }
 }
 
-function callSentence(call: CallRequest): string {
+function callSentence(call: CallRequest, input: InputKind): string {
   const reason = text(call.reason);
   const ended = text(call.endReason);
   switch (call.status) {
     case 'prepared':
       return 'Reading the call script back in the earpiece.';
     case 'awaiting_confirm':
-      return 'Waiting for CONFIRM, a double jaw clench.';
+      return `Waiting for ${withSignal('CONFIRM', input)}.`;
     case 'confirmed':
       return 'CONFIRM matched the script. Dialing next.';
     case 'dialing':
@@ -927,7 +969,7 @@ function actionLines(input: LiveInput, ctx: Context): ActionLine[] {
       title: `Errand: ${text(errand.form) ?? 'a form'}`,
       status,
       word: errand.status === 'stopped' ? 'Not sent' : STATUS_WORDS[status],
-      sentence: errandSentence(errand),
+      sentence: errandSentence(errand, ctx.input),
       time: done
         ? { kind: 'final', ms: (errandScope.latest?.status !== 'started' ? finishedMs(errandScope, false) : null) ?? span(errand.createdAt, finishedAt) }
         : { kind: 'running', from: errand.createdAt, until: ctx.freezeAt },
@@ -950,7 +992,7 @@ function actionLines(input: LiveInput, ctx: Context): ActionLine[] {
       title: `Call: ${maskPhoneNumbers(text(call.contactName) ?? 'a contact')}`,
       status,
       word: callStatusWord(call),
-      sentence: maskPhoneNumbers(callSentence(call)),
+      sentence: maskPhoneNumbers(callSentence(call, ctx.input)),
       time: done ? { kind: 'final', ms: span(from, call.endedAt) } : { kind: 'running', from, until: ctx.freezeAt },
     });
   } else {
@@ -1061,7 +1103,7 @@ export interface FeedItem {
   detail: string;
 }
 
-function eventSummary(event: PipelineEvent, errands: readonly Errand[], calls: readonly CallRequest[]): string | null {
+function eventSummary(event: PipelineEvent, errands: readonly Errand[], calls: readonly CallRequest[], input: InputKind): string | null {
   const detail = loose(event.detail);
   if (event.status === 'error') return errorOf(event.detail).sentence;
   switch (event.stage) {
@@ -1103,7 +1145,7 @@ function eventSummary(event: PipelineEvent, errands: readonly Errand[], calls: r
         pass === null ? null : `pass ${pass}`,
         detail.channel === 'aloud' ? 'out loud' : detail.channel === 'earpiece' ? 'earpiece' : null,
         timed > 0 ? formatCount(timed, 'word timing') : null,
-        typeof by === 'string' && by in COMMAND_INFO ? `cut short by ${commandWord(by as CommandName)}` : null,
+        typeof by === 'string' && by in COMMAND_INFO ? `cut short by ${commandWord(by as CommandName, input)}` : null,
       ]
         .filter(Boolean)
         .join(', ');
@@ -1127,9 +1169,9 @@ function eventSummary(event: PipelineEvent, errands: readonly Errand[], calls: r
   }
 }
 
-function eventItem(event: PipelineEvent, errands: readonly Errand[], calls: readonly CallRequest[]): FeedItem {
+function eventItem(event: PipelineEvent, errands: readonly Errand[], calls: readonly CallRequest[], input: InputKind): FeedItem {
   const ms = num(event.ms);
-  const parts = [labelOf(event.detail), eventSummary(event, errands, calls)].filter((part): part is string => !!part);
+  const parts = [labelOf(event.detail), eventSummary(event, errands, calls, input)].filter((part): part is string => !!part);
   return {
     key: `event:${event.id}`,
     at: event.at,
@@ -1141,15 +1183,24 @@ function eventItem(event: PipelineEvent, errands: readonly Errand[], calls: read
   };
 }
 
-function commandItem(command: CommandEvent): FeedItem {
-  const info = COMMAND_INFO[command.command];
+/**
+ * What an accepted command was, in the session's input: "imagined right fist" for the headset, "key Y" for a keyboard
+ * test, "short switch press" for a switch, nothing when the input is unknown. HEADSET_OFF in a keyboard test is the H
+ * test key (docs/station.md 2.5); elsewhere it is a system event.
+ */
+function commandWhat(command: CommandEvent, input: InputKind): string | null {
+  if (command.command === 'HEADSET_OFF') return input === 'keyboard' ? 'key H, a test' : 'system event, not a command';
+  return commandSignal(command.command, input);
+}
+
+function commandItem(command: CommandEvent, input: InputKind): FeedItem {
   const confidence = num(command.confidence);
-  const what = command.command === 'HEADSET_OFF' ? 'system event, not a command' : (info?.short ?? null);
+  const what = commandWhat(command, input);
   const parts = [command.accepted ? what : (text(command.ignoredReason) ?? 'ignored'), confidence === null ? null : `confidence ${confidence.toFixed(2)}`];
   return {
     key: `command:${command.id}`,
     at: command.at,
-    name: commandWord(command.command),
+    name: commandWord(command.command, input),
     status: command.accepted ? 'accepted' : 'ignored',
     tone: command.accepted ? 'ok' : 'muted',
     value: '',
@@ -1157,18 +1208,19 @@ function commandItem(command: CommandEvent): FeedItem {
   };
 }
 
-/** Pipeline events and command events together, newest first, at most `limit` of them. */
+/** Pipeline events and command events together, newest first, at most `limit` of them. `input` names each command's true signal. */
 export function feedItems(
   events: readonly PipelineEvent[],
   commands: readonly CommandEvent[],
   errands: readonly Errand[],
   calls: readonly CallRequest[],
   limit: number,
+  input: InputKind,
 ): FeedItem[] {
   // Both lists are oldest first, so the newest `limit` of the two together are in their tails.
   const items = [
-    ...commands.slice(-limit).map(commandItem),
-    ...events.slice(-limit).map((event) => eventItem(event, errands, calls)),
+    ...commands.slice(-limit).map((command) => commandItem(command, input)),
+    ...events.slice(-limit).map((event) => eventItem(event, errands, calls, input)),
   ];
   // Rows written in the same millisecond keep their written order, newest first: a scan's first read comes after its
   // "scan started" row, and a step a command caused comes after the command.

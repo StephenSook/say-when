@@ -8,7 +8,7 @@
  * as their contents.
  *
  * The status sentence, newest first:
- * 1. Paused or headset off: "Paused. Please wait." or "Headset off. Please wait."
+ * 1. Paused or the input off: "Paused. Please wait." or "Headset off. Please wait." ("Input off" for keys or a switch)
  * 2. An option in the earpiece: "They are choosing, option 2 of 4."
  * 3. YES on a reply, inside the short veto: "They picked an answer."
  * 4. The newest pick and the errand or call it started: "They answered.", "Waiting for them to confirm."
@@ -17,11 +17,13 @@
  * 7. Before the options are read: "Listening.", "Looking it up.", "Getting options ready."
  */
 import type { Step } from '@/components/ui/StepList';
+import { commandSignal, offWord, signalPhrase } from '@/lib/commands';
 import { spokenReply, type SpokenReply } from '@/lib/data/derive';
 import type {
   AnswerOption,
   CallRequest,
   Errand,
+  InputKind,
   OptionKind,
   PipelineEvent,
   PipelineEventOf,
@@ -87,6 +89,8 @@ export interface PartnerInput {
   calls: readonly CallRequest[];
   scan: ScanState | null;
   safety: SafetyState;
+  /** The session's input: only a headset session names the jaw clench or says "Headset off". */
+  input: InputKind;
   /** true once the phone can send a typed question, so the empty state can say "or type it here". */
   canType: boolean;
 }
@@ -96,6 +100,7 @@ export const PARTNER_TEXT = {
   emptyCanType: 'Ask a question out loud, or type it here.',
   paused: 'Paused. Please wait.',
   headsetOff: 'Headset off. Please wait.',
+  inputOff: 'Input off. Please wait.',
   nothingWillBeSent: 'Nothing will be sent.',
   listening: 'Listening.',
   lookingUp: 'Looking it up.',
@@ -143,6 +148,7 @@ interface Facts {
   /** The options being read are follow-ups after a pick (an errand, a call, "Nothing else"; PLAN D11). */
   followUp: boolean;
   reply: SpokenReply | null;
+  input: InputKind;
 }
 
 interface Sentence {
@@ -154,11 +160,11 @@ export function buildPartnerView(input: PartnerInput): PartnerView {
   const hold = holdFor(input.safety, input.scan);
   const question = input.question;
   if (!question) {
-    const status = hold ? holdStatus(hold, 'none') : makeStatus('empty', input.canType ? PARTNER_TEXT.emptyCanType : PARTNER_TEXT.empty, 'plain', 'none', '');
+    const status = hold ? holdStatus(hold, 'none', input.input) : makeStatus('empty', input.canType ? PARTNER_TEXT.emptyCanType : PARTNER_TEXT.empty, 'plain', 'none', '');
     return { status, hint: hold ? PARTNER_TEXT.nothingWillBeSent : null, asked: null, steps: [], answer: null };
   }
   const facts = readFacts(input, question);
-  const sentence = hold ? { status: holdStatus(hold, question.id), hint: PARTNER_TEXT.nothingWillBeSent } : sentenceFor(facts);
+  const sentence = hold ? { status: holdStatus(hold, question.id, input.input), hint: PARTNER_TEXT.nothingWillBeSent } : sentenceFor(facts);
   return {
     status: sentence.status,
     hint: sentence.hint,
@@ -205,6 +211,7 @@ function readFacts(input: PartnerInput, question: Question): Facts {
     lastPick,
     followUp,
     reply,
+    input: input.input,
   };
 }
 
@@ -309,9 +316,9 @@ function makeStatus(
   return { key, text, tone, icon, announce, title };
 }
 
-function holdStatus(hold: Hold, questionId: string): PartnerStatus {
+function holdStatus(hold: Hold, questionId: string, input: InputKind): PartnerStatus {
   return hold === 'headset_off'
-    ? makeStatus(`${questionId}:headset-off`, PARTNER_TEXT.headsetOff, 'paused', 'cross')
+    ? makeStatus(`${questionId}:headset-off`, input === 'headset' ? PARTNER_TEXT.headsetOff : PARTNER_TEXT.inputOff, 'paused', 'cross')
     : makeStatus(`${questionId}:paused`, PARTNER_TEXT.paused, 'paused', 'pause');
 }
 
@@ -397,12 +404,12 @@ function pickSentence(f: Facts, pick: Pick): Sentence {
   // Keyed by the words, not the status, so two statuses with one sentence are announced once.
   const errand = errandFor(pick, f);
   if (errand) {
-    const s = errandSentence(errand);
+    const s = errandSentence(errand, f.input);
     return { status: makeStatus(`${id}:errand:${errand.id}:${s.text}`, s.text, s.tone, s.icon), hint: s.hint };
   }
   const call = callFor(pick, f);
   if (call) {
-    const s = callSentence(call);
+    const s = callSentence(call, f.input);
     return { status: makeStatus(`${id}:call:${call.id}:${s.text}`, s.text, s.tone, s.icon), hint: s.hint };
   }
   if (pick.kind === 'errand') return { status: makeStatus(`${id}:errand-picked`, 'They chose an errand.'), hint: 'Getting it ready. Nothing is sent yet.' };
@@ -432,9 +439,21 @@ function line(text: string, hint: string | null = null, tone: StatusTone = 'plai
   return { text, tone, icon, hint };
 }
 
+/**
+ * The confirm hints. Only a headset session names the double jaw clench; a key or a switch press is named as itself, and
+ * an unknown input names no signal.
+ */
+function confirmHints(input: InputKind, what: 'request' | 'call'): { waiting: string; confirmed: string } {
+  const phrase = signalPhrase('CONFIRM', input);
+  const nothing = what === 'call' ? 'No call is made' : 'Nothing is sent';
+  const waiting = input === 'headset' ? `${nothing} without their ${commandSignal('CONFIRM', input)}.` : `${nothing} until they confirm.`;
+  return { waiting, confirmed: phrase === null ? 'They confirmed.' : `They confirmed with ${phrase}.` };
+}
+
 /** Content-free errand progress. The form's name and values stay off the phone. */
-function errandSentence(errand: Errand): Line {
+function errandSentence(errand: Errand, input: InputKind): Line {
   const reason = plain(errand.reason);
+  const hints = confirmHints(input, 'request');
   switch (errand.status) {
     case 'preparing':
       return line('Getting their request ready.', 'Nothing is sent yet.');
@@ -442,10 +461,10 @@ function errandSentence(errand: Errand): Line {
     case 'reading_back':
       return line('Reading their request back to them.', 'Nothing is sent yet.');
     case 'awaiting_confirm':
-      return line('Waiting for them to confirm.', 'Nothing is sent without their double jaw clench.', 'waiting', 'hourglass');
+      return line('Waiting for them to confirm.', hints.waiting, 'waiting', 'hourglass');
     case 'confirmed':
     case 'submitting':
-      return line('Sending their request.', 'They confirmed with a double jaw clench.');
+      return line('Sending their request.', hints.confirmed);
     case 'sent':
       return line('Their request was sent.', null, 'done', 'check');
     case 'stopped':
@@ -460,8 +479,9 @@ function errandSentence(errand: Errand): Line {
 }
 
 /** Content-free call progress. The contact and the script stay off the phone. */
-function callSentence(call: CallRequest): Line {
+function callSentence(call: CallRequest, input: InputKind): Line {
   const reason = plain(call.reason);
+  const hints = confirmHints(input, 'call');
   const endReason = plain(call.endReason);
   // A hang-up was asked for and the line has not dropped yet (docs/spacetime.md `cancel_requested`).
   const live = call.status === 'confirmed' || call.status === 'dialing' || call.status === 'ringing' || call.status === 'connected';
@@ -470,10 +490,10 @@ function callSentence(call: CallRequest): Line {
     case 'prepared':
       return line('Reading the call back to them.', 'No call is made yet.');
     case 'awaiting_confirm':
-      return line('Waiting for them to confirm the call.', 'No call is made without their double jaw clench.', 'waiting', 'hourglass');
+      return line('Waiting for them to confirm the call.', hints.waiting, 'waiting', 'hourglass');
     case 'confirmed':
     case 'dialing':
-      return line('Calling.', 'They confirmed with a double jaw clench.');
+      return line('Calling.', hints.confirmed);
     case 'ringing':
       return line('Ringing.');
     case 'connected':
@@ -583,7 +603,7 @@ function readingStep(f: Facts, hold: Hold | null): Step {
   if (scan?.outcome === 'stopped') return { key, label, status: 'stopped', statusWord: 'Stopped' };
   if (scan?.outcome === 'cancelled') return { key, label, status: 'stopped', statusWord: 'Cancelled' };
   const started = isReading(scan) || f.firstSpeak !== null;
-  if (started && hold) return { key, label, status: 'stopped', statusWord: hold === 'headset_off' ? 'Headset off' : 'Paused' };
+  if (started && hold) return { key, label, status: 'stopped', statusWord: hold === 'headset_off' ? offWord(f.input) : 'Paused' };
   if (started) return { key, label, status: 'working' };
   return { key, label, status: 'not_started' };
 }

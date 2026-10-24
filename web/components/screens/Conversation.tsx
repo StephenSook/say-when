@@ -24,7 +24,7 @@
  * - Error: "Could not draft options. Ask again." with the failed mark (raw text in a tooltip).
  * - Reconnecting or offline with rows: the shell dims the screen and says "Showing the last known
  *   state"; here the word mark and the countdown stop, since the rows may be stale.
- * - Paused or headset off: under the shell banner the list drops to 40% and the cursor stops.
+ * - Paused or the input off: under the shell banner the list drops to 40% and the cursor stops.
  * The rules for reading the rows live in components/conversation/model.ts.
  */
 import { useMemo } from 'react';
@@ -39,6 +39,7 @@ import {
   useCalls,
   useConnection,
   useErrands,
+  useInput,
   useQuestionEvents,
   useQuestions,
   useRows,
@@ -55,6 +56,7 @@ export function Conversation() {
   const errands = useErrands();
   const calls = useCalls();
   const safety = useSafety();
+  const input = useInput();
   const conn = useConnection();
 
   const question = useMemo(() => focusQuestion(questions, scan), [questions, scan]);
@@ -64,9 +66,9 @@ export function Conversation() {
   const view = useMemo(
     () =>
       question
-        ? buildConversationView({ question, scan, options, events, errands, calls, safety, hasReply: reply !== null })
+        ? buildConversationView({ question, scan, options, events, errands, calls, safety, input, hasReply: reply !== null })
         : null,
-    [question, scan, options, events, errands, calls, safety, reply],
+    [question, scan, options, events, errands, calls, safety, input, reply],
   );
 
   if (view === null) {

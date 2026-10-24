@@ -24,6 +24,7 @@ import type {
   CommandEvent,
   DataRows,
   Errand,
+  InputKind,
   PipelineEvent,
   Question,
   SafetyState,
@@ -181,6 +182,11 @@ export function useScanState(): ScanState | null {
 /** The headset safety state behind the shell banner and the headset chip. */
 export function useSafety(): SafetyState {
   return useData().state.rows.safety;
+}
+
+/** The board session's input mode (headset, keyboard, switch or unknown), so no screen passes a key press off as a headset signal. */
+export function useInput(): InputKind {
+  return useData().state.rows.input;
 }
 
 /** The ?replay flag from the address, kept on in-app links. */

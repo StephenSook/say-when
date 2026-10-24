@@ -26,6 +26,7 @@ function partnerAt(rows: DataRows) {
     calls: rows.calls,
     scan: rows.scan,
     safety: rows.safety,
+    input: rows.input,
     canType: false,
   });
 }
@@ -41,6 +42,7 @@ function conversationAt(rows: DataRows) {
     errands: rows.errands,
     calls: rows.calls,
     safety: rows.safety,
+    input: rows.input,
     hasReply: spokenReply(question) !== null,
   });
 }
@@ -57,6 +59,7 @@ function liveAt(rows: DataRows) {
     calls: rows.calls,
     scan: rows.scan,
     safety: rows.safety,
+    input: rows.input,
     freezeAt: null,
   });
 }
@@ -118,19 +121,19 @@ describe('screen models over the sample replay', () => {
 
   test('Agents: CONFIRM waits, the send is shown, and STOP during the call shows the hang-up', () => {
     const waiting = at(33).errands[0]!;
-    assert.equal(errandHeadline(waiting, 'ok').text, 'Waiting for the person to confirm. Nothing has been sent.');
+    assert.equal(errandHeadline(waiting, 'ok', 'headset').text, 'Waiting for the person to confirm. Nothing has been sent.');
     assert.equal(errandBadge(waiting, 'ok').status, 'waiting');
-    assert.equal(errandHeadline(at(37).errands[0]!, 'ok').status, 'done');
+    assert.equal(errandHeadline(at(37).errands[0]!, 'ok', 'headset').status, 'done');
     const hangingUp = at(61.8).calls[0]!;
     assert.equal(hangingUp.status, 'connected');
     assert.equal(hangingUp.cancelRequested, true);
-    assert.equal(callHeadline(hangingUp, 'ok').text, 'Hanging up on Demo caregiver. The person used STOP.');
+    assert.equal(callHeadline(hangingUp, 'ok', 'headset').text, 'Hanging up on Demo caregiver. The person used STOP.');
     assert.equal(callBadge(hangingUp, 'ok').word, 'Hanging up');
     assert.equal(conversationAt(at(61.8)).agent?.sentence, 'Hanging up on Demo caregiver.', 'Conversation says it too');
     assert.equal(partnerAt(at(61.8)).status.text, 'Hanging up.', 'and the phone, without the name');
     const ended = at(63).calls[0]!;
     assert.equal(ended.status, 'ended');
-    assert.equal(callHeadline(ended, 'ok').text, 'The call ended. The person hung up with STOP.');
+    assert.equal(callHeadline(ended, 'ok', 'headset').text, 'The call ended. The person hung up with STOP.');
   });
 
   test('Live data: the shared memory shows its words and the private one reads "Private memory"', () => {

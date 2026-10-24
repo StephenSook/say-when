@@ -8,11 +8,12 @@
  * - One plain sentence on top, rolled up from the agent at work (docs/ui.md pattern 8).
  * - The agent at work gets the big card. The other agent is one dimmed line at the bottom.
  * - Errands and calls are options (PLAN D11): YES picks one, the read-back plays, and only a fresh
- *   CONFIRM (a double jaw clench) matched to the read-back digest sends it. STOP hangs up a call.
+ *   CONFIRM matched to the read-back digest sends it (a double jaw clench with the headset; the key
+ *   or the switch press in a keyboard or switch session). STOP hangs up a call.
  *
  * States: it renders inside the shell's <main> behind ConnectionGate, so loading and "Not connected"
  * belong to the gate. Reconnecting dims the screen (the shell) and stops its clocks
- * (components/agents/useClockNow.ts). Paused and headset off change the sentence on top and the
+ * (components/agents/useClockNow.ts). Paused and the input off change the sentence on top and the
  * confirm step, since both cancel anything pending. The empty state is the sentence from docs/ui.md.
  * The rules sit in components/agents/model.ts.
  */
@@ -21,6 +22,7 @@ import { AgentLine } from '@/components/agents/AgentLine';
 import { CallCard } from '@/components/agents/CallCard';
 import { ErrandCard } from '@/components/agents/ErrandCard';
 import {
+  agentsEmptySentence,
   callHeadline,
   callIsMoving,
   chooseFocus,
@@ -32,11 +34,8 @@ import {
   type AgentRef,
 } from '@/components/agents/model';
 import { StatusMark } from '@/components/ui/StatusMark';
-import { useCalls, useCommands, useErrands, useRows, useSafety } from '@/lib/data/provider';
+import { useCalls, useCommands, useErrands, useInput, useRows, useSafety } from '@/lib/data/provider';
 import styles from './Agents.module.css';
-
-const EMPTY_SENTENCE =
-  "No errand or call yet. Errands and calls are offered as options, or from the person's menu. Nothing is sent without a double jaw clench.";
 
 /** The viewer's "Show" choice, tied to the rows on screen when it was made. */
 interface Pin {
@@ -51,6 +50,7 @@ export function Agents() {
   const commands = useCommands();
   const { options } = useRows();
   const safety = useSafety();
+  const input = useInput();
 
   const errand = newest(errands);
   const call = newest(calls);
@@ -68,7 +68,11 @@ export function Agents() {
   const errandOption = useMemo(() => findOption(options, errand?.optionId ?? null), [options, errand?.optionId]);
 
   const headline =
-    focus === null ? null : focus.kind === 'errand' ? errandHeadline(focus.row, safety.state) : callHeadline(focus.row, safety.state, commands);
+    focus === null
+      ? null
+      : focus.kind === 'errand'
+        ? errandHeadline(focus.row, safety.state, input)
+        : callHeadline(focus.row, safety.state, input, commands);
 
   let other: AgentRef | null = null;
   if (focus?.kind === 'errand' && call !== null) other = { kind: 'call', row: call };
@@ -90,14 +94,14 @@ export function Agents() {
           </span>
         ) : null}
         <p role="status" className={headline ? styles.headline : styles.emptyText}>
-          {headline ? headline.text : EMPTY_SENTENCE}
+          {headline ? headline.text : agentsEmptySentence(input)}
         </p>
       </div>
 
       {focus?.kind === 'errand' ? (
-        <ErrandCard key={`errand:${focus.row.id}`} errand={focus.row} option={errandOption} commands={commands} safety={safety.state} />
+        <ErrandCard key={`errand:${focus.row.id}`} errand={focus.row} option={errandOption} commands={commands} safety={safety.state} input={input} />
       ) : null}
-      {focus?.kind === 'call' ? <CallCard key={`call:${focus.row.id}`} call={focus.row} commands={commands} safety={safety.state} /> : null}
+      {focus?.kind === 'call' ? <CallCard key={`call:${focus.row.id}`} call={focus.row} commands={commands} safety={safety.state} input={input} /> : null}
 
       {focus !== null ? (
         <AgentLine kind={otherKind} agent={other} safety={safety.state} onShow={showOther ? () => setPin(showOther) : null} />

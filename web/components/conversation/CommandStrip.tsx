@@ -2,33 +2,45 @@
 
 /**
  * The command strip (docs/ui.md "Command strip"): the person's four commands at the bottom center,
- * a legend and a live echo of the headset. When a command event arrives, its chip lights for 1.2 s
+ * a legend and a live echo of the input. When a command event arrives, its chip lights for 1.2 s
  * (litCommand): accent border and fill, and its light turns from a ring into a filled dot, so the
  * echo is a shape as well as a color. Ignored repeats never light. HEADSET_OFF is a system event,
  * not a command the person gives, so it has no chip; the shell banner shows it.
+ *
+ * Each chip names what the person does in this session's input (lib/commands.ts): the imagined
+ * fists and jaw clenches for the headset, the keys for a keyboard test, the presses for a switch,
+ * and the command alone when the input is unknown.
  */
 import { Chip } from '@/components/ui/Chip';
 import { COMMAND_INFO, commandChipLabel } from '@/lib/commands';
 import { cx } from '@/lib/cx';
 import { litCommand } from '@/lib/data/derive';
-import { useCommands } from '@/lib/data/provider';
-import { PERSON_COMMANDS } from '@/lib/data/types';
+import { useCommands, useInput } from '@/lib/data/provider';
+import { PERSON_COMMANDS, type InputKind } from '@/lib/data/types';
 import { useNow } from '@/lib/use-now';
 import styles from './CommandStrip.module.css';
 
+const STRIP_NAMES: Readonly<Record<InputKind, string>> = {
+  headset: 'Headset commands',
+  keyboard: 'Keyboard commands',
+  switch: 'Switch commands',
+  unknown: 'Commands',
+};
+
 export function CommandStrip() {
   const commands = useCommands();
+  const input = useInput();
   const now = useNow(250);
   const lit = now > 0 ? litCommand(commands, now) : null;
 
   return (
-    <ul className={styles.strip} aria-label="Headset commands. The last one heard lights up.">
+    <ul className={styles.strip} aria-label={`${STRIP_NAMES[input]}. The last one heard lights up.`}>
       {PERSON_COMMANDS.map((name) => {
         const on = lit === name;
         return (
           <li key={name} className={styles.item}>
             <Chip size="lg" lit={on} lead={<span className={cx(styles.light, on && styles.on)} />} title={COMMAND_INFO[name].meaning}>
-              {commandChipLabel(name)}
+              {commandChipLabel(name, input)}
               {on ? <span className="visually-hidden">, just heard</span> : null}
             </Chip>
           </li>

@@ -56,6 +56,7 @@ function views(rows: DataRows) {
     errands: rows.errands,
     calls: rows.calls,
     safety: rows.safety,
+    input: rows.input,
     hasReply: spokenReply(focus) !== null,
   });
   const partner = buildPartnerView({
@@ -66,6 +67,7 @@ function views(rows: DataRows) {
     calls: rows.calls,
     scan: rows.scan,
     safety: rows.safety,
+    input: rows.input,
     canType: false,
   });
   const live = buildLiveView({
@@ -77,6 +79,7 @@ function views(rows: DataRows) {
     calls: rows.calls,
     scan: rows.scan,
     safety: rows.safety,
+    input: rows.input,
     freezeAt: null,
   });
   return { conversation, partner, live };
@@ -123,11 +126,13 @@ describe('boardRows over rows recorded from say-when-dev', () => {
     assert.deepEqual([errand.id, errand.questionId, errand.optionId, errand.status], ['5', '21', '61', 'awaiting_confirm']);
     assert.match(errand.previewDigest ?? '', /^[0-9a-f]{16}$/);
     assert.ok(errand.confirmClosesAt !== null && errand.readAloudAt !== null && errand.confirmClosesAt > errand.readAloudAt);
-    assert.equal(errandHeadline(errand, rows.safety.state).text, 'Waiting for the person to confirm. Nothing has been sent.');
+    assert.equal(errandHeadline(errand, rows.safety.state, rows.input).text, 'Waiting for the person to confirm. Nothing has been sent.');
     assert.equal(errandBadge(errand, rows.safety.state).countdownTo, errand.confirmClosesAt);
     const { conversation, partner, live } = views(rows);
     assert.equal(conversation.picked?.id, '61');
-    assert.equal(conversation.agent?.sentence, 'Waiting for CONFIRM, a double jaw clench. Nothing is sent yet.');
+    // The recorded session's label is "smoke", which names no input mode, so no jaw clench is claimed (W1).
+    assert.equal(rows.input, 'unknown');
+    assert.equal(conversation.agent?.sentence, 'Waiting for CONFIRM. Nothing is sent yet.');
     assert.equal(partner.status.text, 'Waiting for them to confirm.');
     // Question 1 ended with no pick: its old "no pick" select step names no option, so it is not shown as a pick.
     const selects = rows.pipelineEvents.filter((e) => e.stage === 'select');

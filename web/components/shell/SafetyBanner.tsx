@@ -1,24 +1,21 @@
 'use client';
 
 import { CrossIcon, PauseIcon } from '@/components/ui/icons';
-import { useSafety } from '@/lib/data/provider';
-import type { SafetyState } from '@/lib/data/types';
+import { safetySentence } from '@/lib/commands';
+import { useInput, useSafety } from '@/lib/data/provider';
 import styles from './SafetyBanner.module.css';
 
-/**
- * The sentence the room must see while the system is paused (STOP or the idle auto-pause) or the
- * headset is off (HEADSET_OFF). Both cancel anything pending.
- */
-export function safetySentence(state: SafetyState['state']): string | null {
-  if (state === 'paused') return 'Paused. Nothing will be sent.';
-  if (state === 'headset_off') return 'Headset off. Nothing will be sent.';
-  return null;
-}
+export { safetySentence };
 
-/** Full-width banner under the header (docs/ui.md "Shared shell"). The live region stays mounted. */
+/**
+ * Full-width banner under the header (docs/ui.md "Shared shell"): the sentence the room must see while the system is
+ * paused (STOP or the idle auto-pause) or the input is off ("Headset off" in a headset session, "Input off" for keys
+ * or a switch). Both cancel anything pending. The live region stays mounted.
+ */
 export function SafetyBanner() {
   const { state } = useSafety();
-  const sentence = safetySentence(state);
+  const input = useInput();
+  const sentence = safetySentence(state, input);
   return (
     <div role="status" className={styles.region}>
       {sentence ? (

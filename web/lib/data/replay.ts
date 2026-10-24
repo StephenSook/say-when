@@ -481,8 +481,8 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
   event(4_300, 'retrieve', 'started', {}, null);
   event(4_380, 'retrieve', 'ok', { hitCount: mossHits.length, hits: mossHits, mossMs: 12 }, 80);
 
-  event(4_400, 'plan', 'started', {}, null);
-  event(5_150, 'plan', 'ok', { version: 1, optionCount: firstOptions.length }, 750);
+  event(4_400, 'plan', 'started', { label: 'claude' }, null);
+  event(5_150, 'plan', 'ok', { label: 'claude', version: 1, optionCount: firstOptions.length }, 750);
   publishOptions(5_150, 1, firstOptions);
 
   // Option 1: read, then its window (the first one is longer). Silence, so the scan moves on.
@@ -519,8 +519,8 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
 
   // Follow-up options: Claude offers the errand, a call, or nothing else. YES picks the errand.
   const followUpAt = aloudAt + aloudMs + 100;
-  event(followUpAt, 'plan', 'started', {}, null);
-  event(followUpAt + 700, 'plan', 'ok', { version: 2, optionCount: errandOptions.length, followUp: true }, 700);
+  event(followUpAt, 'plan', 'started', { label: 'claude' }, null);
+  event(followUpAt + 700, 'plan', 'ok', { label: 'claude', version: 2, optionCount: errandOptions.length, followUp: true }, 700);
   publishOptions(followUpAt + 700, 2, errandOptions);
   const errandRead = readOption(followUpAt + 800, 2, 1, errandOptions[0]!, FIRST_WINDOW_MS);
   const errandPickAt = errandRead.readEnd + 1_000;
@@ -597,8 +597,8 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
 
   // Another follow-up: the call, or nothing else. YES picks the call.
   const callFollowUpAt = sentAt + 200;
-  event(callFollowUpAt, 'plan', 'started', {}, null);
-  event(callFollowUpAt + 500, 'plan', 'ok', { version: 3, optionCount: callOptions.length, followUp: true }, 500);
+  event(callFollowUpAt, 'plan', 'started', { label: 'claude' }, null);
+  event(callFollowUpAt + 500, 'plan', 'ok', { label: 'claude', version: 3, optionCount: callOptions.length, followUp: true }, 500);
   publishOptions(callFollowUpAt + 500, 3, callOptions);
   const callRead = readOption(callFollowUpAt + 600, 3, 1, callOptions[0]!, FIRST_WINDOW_MS);
   const callPickAt = callRead.readEnd + 900;
@@ -728,6 +728,8 @@ function toDataRows(rows: MutableRows): DataRows {
     commands: rows.commands,
     scan: rows.scan,
     safety: rows.safety,
+    // The sample is a headset session by design: its commands are the headset's, with decoder confidences.
+    input: 'headset',
   };
 }
 

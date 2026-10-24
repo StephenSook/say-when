@@ -18,7 +18,7 @@
  *   Unpaired phones stay read-only, with "Pair this phone to ask" under the button.
  * - Working: "Listening.", "Looking it up.", "Getting options ready.", "They are choosing, option 2 of 4."
  * - Error: "Could not draft options. Ask again." and the like, with a cross in the error color.
- * - Paused: "Paused. Please wait." Headset off: "Headset off. Please wait."
+ * - Paused: "Paused. Please wait." Headset off: "Headset off. Please wait." ("Input off" for keys or a switch).
  *
  * The phone never shows the words of the options (docs/spacetime.md `partner_view`), only which
  * option number is in the earpiece, and then the reply the person picked. The rules for reading the
@@ -39,6 +39,7 @@ import {
   useConnection,
   useCurrentQuestion,
   useErrands,
+  useInput,
   useQuestionEvents,
   useRows,
   useSafety,
@@ -78,13 +79,14 @@ function PartnerNow() {
   const calls = useCalls();
   const scan = useScanState();
   const safety = useSafety();
+  const input = useInput();
   const ask = useAsk();
   const askedId = useId();
   const canType = ask !== null;
 
   const view = useMemo(
-    () => buildPartnerView({ question, events, options, errands, calls, scan, safety, canType }),
-    [question, events, options, errands, calls, scan, safety, canType],
+    () => buildPartnerView({ question, events, options, errands, calls, scan, safety, input, canType }),
+    [question, events, options, errands, calls, scan, safety, input, canType],
   );
 
   return (

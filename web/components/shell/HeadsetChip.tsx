@@ -2,40 +2,25 @@
 
 import { Chip } from '@/components/ui/Chip';
 import { CrossIcon, HeadsetIcon, PauseIcon } from '@/components/ui/icons';
-import { useSafety } from '@/lib/data/provider';
+import { inputChip } from '@/lib/commands';
+import { useInput, useSafety } from '@/lib/data/provider';
 
-/** "Headset on" in muted text; Paused or Headset off in the error color; unknown before any data. */
+/**
+ * "Headset on" in muted text; Paused or Headset off in the error color; unknown before any data. A keyboard or switch
+ * session says "Keyboard input" or "Switch input" and "Input off" instead (lib/commands.ts `inputChip`), so key presses
+ * never read as headset input.
+ */
 export function HeadsetChip() {
   const safety = useSafety();
-  let chip;
-  if (safety.state === 'paused') {
-    chip = (
-      <Chip tone="error" lead={<PauseIcon />}>
-        Paused
-      </Chip>
-    );
-  } else if (safety.state === 'headset_off') {
-    chip = (
-      <Chip tone="error" lead={<CrossIcon />}>
-        Headset off
-      </Chip>
-    );
-  } else if (safety.state === 'ok') {
-    chip = (
-      <Chip tone="muted" lead={<HeadsetIcon size={14} />}>
-        Headset on
-      </Chip>
-    );
-  } else {
-    chip = (
-      <Chip tone="muted" lead={<HeadsetIcon size={14} />} dashed>
-        Headset unknown
-      </Chip>
-    );
-  }
+  const input = useInput();
+  const view = inputChip(safety.state, input);
+  const lead =
+    view.lead === 'pause' ? <PauseIcon /> : view.lead === 'cross' ? <CrossIcon /> : view.lead === 'headset' ? <HeadsetIcon size={14} /> : 'dot';
   return (
-    <span role="status" aria-label="Headset">
-      {chip}
+    <span role="status" aria-label={view.name}>
+      <Chip tone={view.tone} lead={lead} dashed={view.dashed}>
+        {view.words}
+      </Chip>
     </span>
   );
 }
