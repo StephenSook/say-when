@@ -1,0 +1,40 @@
+/* The live region stays in the page (empty, zero height) so screen readers hear the line appear. */
+.region {
+  display: block;
+}
+
+.line {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s2);
+  min-height: 40px;
+  margin: 0;
+  padding: var(--s2) var(--gutter);
+  border-bottom: 1px solid var(--divider);
+  color: var(--fg-muted);
+  text-align: center;
+}
+
+.offlineIcon {
+  color: var(--error);
+  flex: none;
+}
+
+.center {
+  display: grid;
+  place-items: center;
+  min-height: 40vh;
+  padding: var(--s12) 0;
+}
+
+.offline {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: var(--text-title);
+  line-height: var(--leading-tight);
+  text-align: center;
+}

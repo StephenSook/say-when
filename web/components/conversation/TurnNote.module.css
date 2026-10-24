@@ -1,0 +1,45 @@
+/* Waits, errors and endings on Live conversation. */
+
+/* In place of the list while there are no options yet: the screen's focus, so it is large. */
+.big {
+  margin: var(--s2) 0 0;
+}
+
+/* Under the list, lined up with the option text. */
+.small {
+  margin: var(--s4) 0 0;
+  padding: 0 var(--s6);
+}
+
+.quiet {
+  margin: var(--s2) 0 0;
+  font-size: var(--text-title);
+  line-height: var(--leading-tight);
+  color: var(--fg-muted);
+}
+
+.error,
+.ending {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin: var(--s4) 0 0;
+  font-size: var(--text-title);
+  line-height: var(--leading-tight);
+}
+
+.error {
+  color: var(--error);
+}
+
+.ending {
+  padding: 0 var(--s6);
+  color: var(--fg-muted);
+}
+
+@media (max-width: 720px) {
+  .small,
+  .ending {
+    padding: 0 var(--s4);
+  }
+}

@@ -1,0 +1,15 @@
+/* Neutral hazard stripes: the words carry the meaning, so no state color is borrowed. */
+.banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s2);
+  min-height: 36px;
+  padding: var(--s1) var(--gutter);
+  background: repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.07) 0 10px, rgba(255, 255, 255, 0.02) 10px 20px);
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.32);
+  color: var(--fg);
+  font-size: var(--text-meta);
+  font-weight: var(--weight-strong);
+  text-align: center;
+}

@@ -1,0 +1,27 @@
+.link {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--fg-muted);
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--ring);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) ease,
+    text-decoration-color var(--dur-fast) ease;
+}
+
+.link:hover,
+.link:focus-visible {
+  color: var(--fg);
+  text-decoration-color: currentColor;
+}
+
+.link[aria-pressed='true'] {
+  color: var(--fg);
+}

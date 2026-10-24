@@ -1,0 +1,14 @@
+/*
+ * The word in the earpiece. A soft fill plus a thick accent underline, so it still shows on a
+ * projector where a faint fill fades. No padding and no weight change, so the line never reflows.
+ */
+.mark {
+  border-radius: 4px;
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  color: inherit;
+  text-decoration-line: underline;
+  text-decoration-color: var(--accent);
+  text-decoration-thickness: 3px;
+  text-underline-offset: 6px;
+}

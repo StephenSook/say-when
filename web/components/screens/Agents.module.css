@@ -1,0 +1,47 @@
+/* Screen 2, Agents at work (docs/ui.md "Screen 2"; look: docs/mockups/agents.html). */
+
+.root {
+  display: grid;
+  gap: var(--s8);
+  min-width: 0;
+}
+
+/* One plain sentence on top, rolled up from the agent at work (docs/ui.md pattern 8). */
+.lede {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s3);
+  min-width: 0;
+}
+
+/* Centers the 20 px mark on the first line of the sentence, at both sizes of --text-lead. */
+.ledeMark {
+  display: inline-flex;
+  flex: none;
+  margin-top: calc((var(--text-lead) * 1.2 - 20px) / 2);
+}
+
+.headline {
+  margin: 0;
+  min-width: 0;
+  font-size: var(--text-lead);
+  line-height: var(--leading-tight);
+  font-weight: var(--weight-strong);
+}
+
+/* Nothing yet: one muted sentence in the middle of the screen. */
+.empty {
+  display: grid;
+  place-items: center;
+  min-height: 40vh;
+  padding: var(--s12) 0;
+}
+
+.emptyText {
+  max-width: 34em;
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: var(--text-title);
+  line-height: var(--leading);
+  text-align: center;
+}

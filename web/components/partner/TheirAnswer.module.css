@@ -1,0 +1,48 @@
+.answer {
+  margin-top: var(--s6);
+  padding-top: var(--s4);
+  border-top: 1px solid var(--divider);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-meta);
+  font-weight: var(--weight);
+  color: var(--fg-muted);
+}
+
+.text {
+  margin: var(--s1) 0 0;
+  font-size: var(--text-lead);
+  line-height: var(--leading-tight);
+  animation: fadeIn var(--dur-fast) ease both;
+}
+
+.reply {
+  color: var(--fg);
+  font-weight: var(--weight-strong);
+}
+
+.placeholder {
+  color: var(--fg-muted);
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin: var(--s2) 0 0;
+  font-size: var(--text-meta);
+  color: var(--fg-muted);
+}
+
+.done {
+  flex: none;
+  color: var(--accent);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+}

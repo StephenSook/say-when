@@ -1,0 +1,20 @@
+/* The confirm window under "Waiting for CONFIRM": the bar, then the seconds left. */
+.countdown {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--s3);
+  max-width: 28rem;
+  margin-top: var(--s2);
+}
+
+.left {
+  color: var(--wait);
+  font-size: var(--text-meta);
+  white-space: nowrap;
+}
+
+/* Silence is the safe outcome, so a closed window is muted, never red. */
+.closed {
+  color: var(--fg-muted);
+}

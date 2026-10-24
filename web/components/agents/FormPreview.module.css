@@ -1,0 +1,99 @@
+/* The form preview on the errand card, and its large view in the dialog. */
+.preview {
+  display: grid;
+  gap: var(--s2);
+  margin: 0;
+  min-width: 0;
+}
+
+/* The whole picture is the button. Its label sits on top, so the picture never reads as sent. */
+.frame {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-height: 160px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-card);
+  background: var(--media-bg);
+  color: inherit;
+  text-align: left;
+  cursor: zoom-in;
+  transition: border-color var(--dur-fast) ease;
+}
+
+.frame:hover {
+  border-color: var(--fg-muted);
+}
+
+.frame:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.shot {
+  display: block;
+  width: 100%;
+  height: auto;
+  opacity: 0;
+  transition: opacity 250ms ease;
+}
+
+.loaded {
+  opacity: 1;
+}
+
+.loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
+/* "Preview, not sent" in the wait color on the page color, as in the mockup. */
+.tag {
+  position: absolute;
+  top: var(--s3);
+  right: var(--s3);
+  padding: 2px var(--s3);
+  border-radius: var(--radius-pill);
+  background: var(--bg);
+  color: var(--wait);
+  font-size: var(--text-meta);
+  font-weight: var(--weight-strong);
+  line-height: var(--leading);
+}
+
+.tagSent {
+  color: var(--accent);
+}
+
+.caption {
+  color: var(--fg-muted);
+  font-size: var(--text-meta);
+}
+
+.placeholder {
+  display: grid;
+  place-items: center;
+  min-height: 200px;
+  padding: var(--s6);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-card);
+  text-align: center;
+}
+
+.placeholderText {
+  margin: 0;
+  color: var(--fg-muted);
+}
+
+.full {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius-thumb);
+  background: var(--media-bg);
+}

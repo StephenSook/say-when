@@ -1,0 +1,21 @@
+.actions {
+  margin: 0 0 var(--s8);
+}
+
+.title {
+  margin: 0 0 var(--s2);
+  font-size: var(--text-meta);
+  font-weight: var(--weight);
+  color: var(--fg-muted);
+}
+
+.main {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1) var(--s3);
+}
+
+.name {
+  font-weight: var(--weight-strong);
+}

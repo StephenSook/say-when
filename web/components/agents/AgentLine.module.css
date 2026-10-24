@@ -1,0 +1,31 @@
+/* The idle agent: one quiet line with a hairline border, under the big card. */
+.line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2) var(--s4);
+  min-width: 0;
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-panel);
+  color: var(--fg-muted);
+}
+
+.title {
+  margin: 0;
+  min-width: 0;
+  color: var(--fg-muted);
+  font-size: var(--text);
+  line-height: var(--leading);
+}
+
+.time {
+  color: var(--fg-muted);
+  font-size: var(--text-meta);
+}
+
+/* Pushed to the right end, with a taller hit area than the words alone. */
+.line .show {
+  margin-left: auto;
+  padding: var(--s2) 0;
+}

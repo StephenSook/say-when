@@ -1,0 +1,99 @@
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.row {
+  display: grid;
+  grid-template-rows: 1fr;
+  border-top: 1px solid var(--divider);
+}
+
+.enter {
+  animation: rowIn var(--dur-row) var(--ease-out) both;
+}
+
+@keyframes rowIn {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+
+.clip {
+  display: block;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: var(--s1) var(--s4);
+  padding: var(--s3) var(--s2);
+  border-radius: var(--radius);
+  text-align: left;
+}
+
+.main {
+  grid-column: 1;
+  grid-row: 1;
+  color: var(--fg);
+  min-width: 0;
+}
+
+.side,
+.sideMeta {
+  grid-column: 2;
+  text-align: right;
+  font-size: var(--text-meta);
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+.side {
+  grid-row: 1;
+}
+
+.meta,
+.sideMeta {
+  grid-row: 2;
+}
+
+.meta {
+  grid-column: 1;
+  font-size: var(--text-meta);
+  color: var(--fg-muted);
+  min-width: 0;
+}
+
+.current .grid {
+  background: var(--active);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.button {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  border-radius: var(--radius);
+  transition: background-color var(--dur-fast) ease;
+}
+
+.button:hover .grid {
+  background: var(--hover);
+}
+
+.current .button:hover .grid {
+  background: var(--active);
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}

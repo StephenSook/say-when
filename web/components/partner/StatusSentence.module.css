@@ -1,0 +1,77 @@
+.block {
+  margin: var(--s8) 0 var(--s6);
+}
+
+/* The hero line: --text-lead (28 px, 22 px on phones), weight 500 (docs/mockups/partner.html .status). */
+.sentence {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s3);
+  margin: 0;
+  font-size: var(--text-lead);
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-tight);
+  color: var(--fg);
+}
+
+.text {
+  min-width: 0;
+  animation: fadeIn var(--dur-fast) ease both;
+}
+
+/* A round mark one line tall, centered on the first line of the sentence. */
+.icon {
+  display: inline-grid;
+  place-items: center;
+  width: 1em;
+  height: 1em;
+  margin-top: 0.1em;
+  flex: none;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+}
+
+.icon[data-icon='no_entry'] {
+  border-color: transparent;
+}
+
+.done .icon {
+  border-color: transparent;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.waiting .icon {
+  border-color: transparent;
+  background: var(--wait-soft);
+  color: var(--wait);
+}
+
+/* Stopped and refused are on purpose and safe: muted, never red (docs/ui.md "Status vocabulary"). */
+.stopped {
+  color: var(--fg-muted);
+}
+
+/* Paused and headset off: the words stay bright, the mark is in the error color, as in the shell banner. */
+.paused .icon {
+  color: var(--error);
+}
+
+.failed {
+  color: var(--error);
+}
+
+.failed .icon {
+  background: var(--error-soft);
+}
+
+.hint {
+  margin: var(--s2) 0 0;
+  color: var(--fg-muted);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+}

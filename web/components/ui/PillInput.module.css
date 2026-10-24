@@ -1,0 +1,80 @@
+.pill {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  height: var(--pill-h);
+  min-width: 0;
+  padding: 0 var(--s1) 0 var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  transition: border-color var(--dur-fast) ease;
+}
+
+.phone {
+  height: var(--pill-h-phone);
+}
+
+/* The border turns muted while typing (docs/ui.md), and a 2 px outline marks keyboard focus. */
+.pill:focus-within {
+  border-color: var(--fg-muted);
+}
+
+.pill:has(.input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.icon {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  color: var(--fg-muted);
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--fg);
+  font-size: 16px;
+}
+
+.input:focus-visible {
+  outline: none;
+}
+
+.input::placeholder {
+  color: var(--fg-muted);
+}
+
+.submit {
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 var(--s3);
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--fg);
+  font-weight: var(--weight-strong);
+  transition: color var(--dur-fast) ease;
+}
+
+.submit:disabled {
+  color: var(--fg-muted);
+  cursor: default;
+}
+
+.submit:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.disabled {
+  opacity: 0.6;
+}

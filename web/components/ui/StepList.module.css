@@ -1,0 +1,61 @@
+.steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.step {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  gap: var(--s1) var(--s3);
+  align-items: start;
+  padding: var(--s2) 0;
+}
+
+.mark {
+  grid-column: 1;
+  margin-top: 2px;
+}
+
+.label {
+  grid-column: 2;
+  min-width: 0;
+}
+
+.time {
+  grid-column: 3;
+  font-size: var(--text-meta);
+  color: var(--fg-muted);
+  white-space: nowrap;
+  padding-top: 2px;
+}
+
+.detail {
+  grid-column: 2 / 4;
+  font-size: var(--text-meta);
+  color: var(--fg-muted);
+  min-width: 0;
+}
+
+.not_started .label,
+.refused .label,
+.stopped .label {
+  color: var(--fg-muted);
+}
+
+.waiting .label {
+  color: var(--wait);
+}
+
+.failed .label {
+  color: var(--error);
+}
+
+.lg .label {
+  font-size: var(--text-title);
+  line-height: var(--leading-tight);
+}
+
+.lg .mark {
+  margin-top: 1px;
+}

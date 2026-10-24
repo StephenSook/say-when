@@ -1,0 +1,81 @@
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  vertical-align: middle;
+}
+
+.mark {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+}
+
+.word {
+  font-size: var(--text-meta);
+  line-height: var(--leading-tight);
+}
+
+/* Not started: a hollow ring, muted. */
+.not_started .mark {
+  border: 1px solid var(--ring);
+}
+
+.not_started .word {
+  color: var(--fg-muted);
+}
+
+/* Working: the spinner, fg text. */
+.working .word {
+  color: var(--fg);
+}
+
+/* Waiting for confirm: hourglass on the wait color. */
+.waiting .mark {
+  background: var(--wait-soft);
+  color: var(--wait);
+}
+
+.waiting .word {
+  color: var(--wait);
+}
+
+/* Done: a check on the accent. */
+.done .mark {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.done .word {
+  color: var(--accent);
+}
+
+/* Refused and Stopped are on purpose and safe: muted, never red. */
+.refused .mark,
+.stopped .mark {
+  border: 1px solid var(--fg-muted);
+  color: var(--fg-muted);
+}
+
+.refused .mark {
+  border-color: transparent;
+}
+
+.refused .word,
+.stopped .word {
+  color: var(--fg-muted);
+}
+
+/* Failed: an X in a circle, in the error color. */
+.failed .mark {
+  background: var(--error-soft);
+  border: 1px solid var(--error);
+  color: var(--error);
+}
+
+.failed .word {
+  color: var(--error);
+}

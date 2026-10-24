@@ -1,0 +1,100 @@
+.hold {
+  display: grid;
+  gap: var(--s2);
+}
+
+/* One large pill, the full column wide (docs/mockups/partner.html .ask). */
+.button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s3);
+  width: 100%;
+  min-height: 64px;
+  margin: 0;
+  padding: var(--s2) var(--s6);
+  border: 1px solid var(--accent-line);
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  color: var(--fg);
+  font-size: var(--text-title);
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-tight);
+  /* A hold must not scroll the page, select text or open the long-press menu. */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    background-color var(--dur-fast) ease,
+    border-color var(--dur-fast) ease;
+}
+
+.button:hover {
+  border-color: var(--accent);
+}
+
+/* Held: the word changes to "Listening", the border turns accent and the fill gets stronger. */
+.button[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: rgba(201, 160, 240, 0.3);
+}
+
+.button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/*
+ * The live level: five bars that grow with the microphone level. Script sets --level (0 to 1) on
+ * this element; at 0 the bars are short dots. Each bar scales by its own share (--bar-share).
+ */
+.level {
+  --level: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 24px;
+  flex: none;
+}
+
+.level span {
+  display: block;
+  width: 3px;
+  height: 24px;
+  border-radius: 2px;
+  background: var(--accent);
+  transform: scaleY(calc(0.16 + 0.84 * var(--level) * var(--bar-share, 1)));
+}
+
+.level span:nth-child(1) {
+  --bar-share: 0.5;
+}
+
+.level span:nth-child(2) {
+  --bar-share: 0.85;
+}
+
+.level span:nth-child(3) {
+  --bar-share: 1;
+}
+
+.level span:nth-child(4) {
+  --bar-share: 0.7;
+}
+
+.level span:nth-child(5) {
+  --bar-share: 0.45;
+}
+
+.label {
+  min-width: 0;
+}
+
+.note {
+  margin: 0;
+  font-size: var(--text-meta);
+  color: var(--fg-muted);
+  text-align: center;
+}

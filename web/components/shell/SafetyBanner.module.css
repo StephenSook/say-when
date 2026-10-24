@@ -1,0 +1,43 @@
+/* The live region stays in the page (empty, zero height) so screen readers hear the banner appear. */
+.region {
+  display: block;
+}
+
+.banner {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  min-height: 48px;
+  padding: var(--s2) var(--s6);
+  background: var(--error-soft);
+  border-bottom: 1px solid rgba(217, 138, 138, 0.4);
+  color: var(--fg);
+  font-size: var(--text-title);
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-tight);
+  animation: bannerIn var(--dur-fast) ease both;
+}
+
+.icon {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  border-radius: 50%;
+  border: 1px solid var(--error);
+  color: var(--error);
+}
+
+@keyframes bannerIn {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (max-width: 720px) {
+  .banner {
+    padding: var(--s2) var(--gutter);
+    font-size: var(--text);
+  }
+}

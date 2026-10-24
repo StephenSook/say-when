@@ -1,0 +1,87 @@
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  height: 32px;
+  padding: 0 var(--s3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--control-bg);
+  color: var(--fg);
+  font-size: var(--text-meta);
+  line-height: 1;
+  white-space: nowrap;
+  transition:
+    border-color var(--dur-slow) ease,
+    background-color var(--dur-slow) ease,
+    color var(--dur-slow) ease;
+}
+
+.lg {
+  height: 40px;
+  padding: 0 var(--s4);
+  font-size: var(--text);
+}
+
+.muted {
+  color: var(--fg-muted);
+}
+
+.accent {
+  color: var(--accent);
+}
+
+.wait {
+  color: var(--wait);
+}
+
+.error {
+  color: var(--error);
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--fg-muted);
+}
+
+.live .dot,
+.accent .dot {
+  background: var(--accent);
+}
+
+.live .dot {
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+.wait .dot {
+  background: var(--wait);
+}
+
+.error .dot {
+  background: var(--error);
+}
+
+.icon {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+}
+
+.label {
+  display: inline-block;
+}
+
+.dashed {
+  border-style: dashed;
+  border-color: rgba(255, 255, 255, 0.32);
+}
+
+.lit {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--fg);
+  transition-duration: var(--dur-fast);
+}

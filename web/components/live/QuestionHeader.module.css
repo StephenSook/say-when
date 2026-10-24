@@ -1,0 +1,106 @@
+/* The question and its headline number (docs/mockups/live.html ".question"). */
+
+.header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s4) var(--s8);
+}
+
+.main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.heading {
+  margin: 0;
+  font-weight: var(--weight-strong);
+}
+
+.eyebrow {
+  display: block;
+  margin-bottom: var(--s2);
+  font-size: var(--text-meta);
+  font-weight: var(--weight);
+  line-height: var(--leading);
+  color: var(--fg-muted);
+}
+
+/* 34ch of the headline's own size, as in the mockup: about 560 px at 28 px. */
+.headline {
+  display: block;
+  max-width: 34ch;
+  font-size: var(--text-lead);
+  line-height: var(--leading-tight);
+}
+
+.quiet {
+  color: var(--fg-muted);
+  font-weight: var(--weight);
+}
+
+.listening {
+  margin-top: var(--s1);
+}
+
+.nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--s4);
+  margin-top: var(--s3);
+  font-size: var(--text-meta);
+}
+
+/* A taller hit area than the text, for a finger on a phone. */
+.navLink {
+  display: inline-block;
+  padding: var(--s2) 0;
+}
+
+.navNote {
+  font-size: var(--text-meta);
+  color: var(--fg-muted);
+}
+
+.ttfo {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--s1);
+  text-align: right;
+}
+
+.big {
+  font-size: 48px;
+  line-height: 1;
+  font-weight: var(--weight-strong);
+  color: var(--fg);
+}
+
+/* Still counting: the number is not the result yet. */
+.counting {
+  color: var(--fg-muted);
+}
+
+.ttfoLabel {
+  color: var(--fg-muted);
+}
+
+.none {
+  font-size: var(--text-title);
+  line-height: var(--leading-tight);
+  color: var(--fg-muted);
+}
+
+@media (max-width: 1100px) {
+  .header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .ttfo {
+    align-items: flex-start;
+    text-align: left;
+  }
+}

@@ -157,3 +157,30 @@ jobs:
           pass=$(awk '/^# pass/ {print $3}' test.log)
           echo "passing tests: $pass"
           test "$pass" -ge 75
+
+  web:
+    name: Web dashboard (typecheck, tests, production build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - name: Tests (sample replay and screen models, no server)
+        run: |
+          status=0
+          npm test > test.log 2>&1 || status=$?
+          cat test.log
+          test "$status" -eq 0
+          grep -qE '^# fail 0$' test.log
+          pass=$(awk '/^# pass/ {print $3}' test.log)
+          echo "passing tests: $pass"
+          test "$pass" -ge 112
+      - run: npm run build

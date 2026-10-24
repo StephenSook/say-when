@@ -1,0 +1,51 @@
+/* "In the earpiece now" under the option being read, with the phase or the time left. */
+
+.ear {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2) var(--s4);
+  min-width: 0;
+  font-size: var(--text);
+  font-weight: var(--weight);
+  line-height: var(--leading-tight);
+  color: var(--fg);
+}
+
+.label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 0;
+}
+
+.icon {
+  flex: none;
+  color: var(--accent);
+}
+
+/* The bar's place stays the same width in both phases, so the words beside it do not move. */
+.meter {
+  flex: 0 1 160px;
+  min-width: 48px;
+}
+
+.phase {
+  min-width: 8ch;
+  color: var(--accent);
+}
+
+.time {
+  min-width: 8ch;
+  color: var(--fg);
+}
+
+.stale {
+  color: var(--fg-muted);
+}
+
+@media (max-width: 720px) {
+  .meter {
+    flex: 1 1 96px;
+  }
+}

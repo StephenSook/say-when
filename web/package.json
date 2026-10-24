@@ -1,0 +1,30 @@
+{
+  "name": "@say-when/web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "NeuroLingo live dashboard (Live data, Agents, Conversation) and the partner phone view.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "next typegen && tsc --noEmit",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "next": "16.4.3",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "spacetimedb": "2.13.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "tsx": "^4.23.15",
+    "typescript": "~6.0.3"
+  },
+  "license": "MIT"
+}

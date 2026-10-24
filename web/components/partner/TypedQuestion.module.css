@@ -1,0 +1,17 @@
+.typed {
+  display: grid;
+  gap: var(--s2);
+}
+
+/* "Could not send. Try again." above the pill: a cross, the words, and the error color. */
+.error {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin: 0;
+  color: var(--error);
+}
+
+.error svg {
+  flex: none;
+}

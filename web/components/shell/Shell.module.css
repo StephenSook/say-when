@@ -1,0 +1,102 @@
+.skip {
+  position: absolute;
+  left: var(--s4);
+  top: -100px;
+  z-index: var(--z-dialog);
+  padding: var(--s2) var(--s4);
+  border-radius: var(--radius);
+  background: var(--fg);
+  color: var(--bg);
+  text-decoration: none;
+}
+
+.skip:focus-visible {
+  top: var(--s2);
+}
+
+/* Header: 56 px, 24 px side padding, a divider under it (docs/ui.md "Shared shell"). */
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--s8);
+  min-height: var(--header-h);
+  padding: 0 var(--s6);
+  border-bottom: 1px solid var(--divider);
+}
+
+.brand {
+  font-size: var(--text-title);
+  font-weight: var(--weight-strong);
+  white-space: nowrap;
+}
+
+.tabs {
+  min-width: 0;
+}
+
+.chips {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.main {
+  display: block;
+  max-width: var(--page-max);
+  margin: 0 auto;
+  padding: var(--s8) var(--s6) var(--s12);
+  outline: none;
+  transition: opacity var(--dur-slow) ease;
+}
+
+/* Reconnecting or offline with cached rows: the last known state at 60%. */
+.dimmed {
+  opacity: 0.6;
+}
+
+/* The phone view fills one screen, the replay banner included; the screen inside grows to fill the rest. */
+.phoneFrame {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+.phoneMain {
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 auto;
+  outline: none;
+}
+
+/*
+ * Under 720 px: name and chips on one row, tabs on a second row. The chips take the rest of the
+ * first row and wrap inside it, so two long chips stack beside the name instead of dropping below it.
+ */
+@media (max-width: 720px) {
+  .header {
+    flex-wrap: wrap;
+    gap: 0 var(--s3);
+    padding: var(--s2) var(--gutter) 0;
+  }
+
+  .chips {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: var(--s1) 0;
+  }
+
+  .tabs {
+    order: 3;
+    width: 100%;
+    gap: var(--s4);
+    overflow-x: auto;
+  }
+
+  .main {
+    padding: var(--s6) var(--gutter) var(--s12);
+  }
+}

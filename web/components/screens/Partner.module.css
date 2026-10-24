@@ -1,0 +1,72 @@
+/* Screen 4, Partner phone view (docs/ui.md "Screen 4"; look: docs/mockups/partner.html). */
+
+/* Fills the phone frame (components/shell/Shell.module.css), which is one screen tall with the replay banner included. */
+.root {
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 auto;
+}
+
+/*
+ * One column with 16 px gutters, at most 420 px wide and centered, so a 390 px phone never scrolls
+ * sideways. It fills the rest of the screen, so the ask controls sit at the bottom, under the thumb.
+ */
+.phone {
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 auto;
+  width: 100%;
+  max-width: 420px;
+  margin: 0 auto;
+  padding: var(--s4) var(--gutter) var(--s6);
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  min-height: 44px;
+}
+
+.brand {
+  font-size: var(--text-title);
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-tight);
+  white-space: nowrap;
+}
+
+.now {
+  min-width: 0;
+  transition: opacity var(--dur-slow) ease;
+}
+
+/* Reconnecting, or offline with rows: the last known state at 60%. */
+.dimmed {
+  opacity: 0.6;
+}
+
+.asked {
+  margin-bottom: var(--s6);
+}
+
+.label {
+  margin: 0;
+  font-size: var(--text-meta);
+  font-weight: var(--weight);
+  color: var(--fg-muted);
+}
+
+.question {
+  margin: var(--s1) 0 0;
+  font-size: var(--text-title);
+  line-height: var(--leading-tight);
+}
+
+/* "Hold to ask", then the typed fallback below it, pushed to the bottom of the screen. */
+.ask {
+  display: grid;
+  gap: var(--s4);
+  margin-top: auto;
+  padding-top: var(--s8);
+}

@@ -1,0 +1,54 @@
+/* Screen 3, Live conversation (docs/ui.md "Screen 3"; look: docs/mockups/conversation.html). */
+
+.root {
+  min-width: 0;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+/* Nothing asked yet: one muted sentence in the middle of the screen. */
+.empty {
+  display: grid;
+  place-items: center;
+  min-height: 40vh;
+  margin: 0;
+  padding: var(--s12) 0;
+  font-size: var(--text-lead);
+  line-height: var(--leading-tight);
+  color: var(--fg-muted);
+  text-align: center;
+}
+
+.turn {
+  min-width: 0;
+  transition: opacity var(--dur-slow) ease;
+}
+
+/* Paused or headset off: the list drops to 40% under the shell banner. */
+.paused {
+  opacity: 0.4;
+}
+
+/* The way out of the list, then "Pass 1 of 2". */
+.foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--s4);
+  padding: var(--s2) var(--s6) 0;
+  font-size: var(--text);
+  line-height: var(--leading);
+  color: var(--fg-muted);
+}
+
+.pass {
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .foot {
+    flex-direction: column;
+    gap: var(--s1);
+    padding: var(--s2) var(--s4) 0;
+  }
+}

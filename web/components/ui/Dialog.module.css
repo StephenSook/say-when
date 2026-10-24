@@ -1,0 +1,74 @@
+.dialog {
+  width: min(560px, calc(100vw - 2 * var(--gutter)));
+  max-height: calc(100vh - 2 * var(--s8));
+  margin: auto;
+  padding: 0;
+  overflow: auto;
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-dialog);
+  background: var(--card);
+  color: var(--fg);
+  box-shadow: var(--shadow-dialog);
+}
+
+.lg {
+  width: min(960px, calc(100vw - 2 * var(--gutter)));
+}
+
+.dialog::backdrop {
+  background: var(--backdrop);
+}
+
+/* Rises 7 px and fades in over 160 ms (docs/ui.md "Motion"). */
+.dialog[open] {
+  animation: dialogIn var(--dur-panel) var(--ease-out) both;
+}
+
+@keyframes dialogIn {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+}
+
+.inner {
+  padding: var(--s6);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s4);
+  margin-bottom: var(--s4);
+}
+
+.title {
+  font-size: var(--text-title);
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-tight);
+}
+
+/* A text link look, 44 px tall so it is easy to hit. */
+.close {
+  flex: none;
+  min-height: 44px;
+  margin: 0;
+  padding: 0 var(--s2);
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--fg-muted);
+  transition: color var(--dur-fast) ease;
+}
+
+.close:hover,
+.close:focus-visible {
+  color: var(--fg);
+}
+
+@media (max-width: 720px) {
+  .inner {
+    padding: var(--s4);
+  }
+}

@@ -1,0 +1,105 @@
+/* Apify found, Moss recalled, Claude drafted (docs/mockups/live.html ".split"). */
+
+.panels {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s8) var(--s6);
+}
+
+.panel {
+  min-width: 0;
+}
+
+.title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s1) var(--s3);
+  margin: 0 0 var(--s3);
+  font-size: var(--text-title);
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-tight);
+}
+
+.titleMeta {
+  font-size: var(--text-meta);
+  font-weight: var(--weight);
+  color: var(--fg-muted);
+}
+
+/* A new set of rows fades in over 150 ms (tube re-keys its results and fades them in). */
+.list {
+  animation: fadeIn var(--dur-fast) ease both;
+}
+
+/* The options before a new draft: still readable, clearly not the newest. */
+.stale {
+  opacity: 0.6;
+}
+
+.wait {
+  padding: var(--s3) var(--s2);
+  border-top: 1px solid var(--divider);
+}
+
+.note {
+  margin: 0;
+  padding: var(--s3) var(--s2);
+  border-top: 1px solid var(--divider);
+  color: var(--fg-muted);
+}
+
+.noteError {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  color: var(--error);
+}
+
+.noteIcon {
+  flex: none;
+  align-self: center;
+}
+
+/* A row's meta line, wrapped to at most two lines. */
+.clamp {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+
+.private {
+  color: var(--fg-muted);
+}
+
+.picked {
+  color: var(--accent);
+}
+
+.rank {
+  display: inline-block;
+  min-width: 1.6em;
+  color: var(--fg-muted);
+}
+
+.more {
+  margin: 0;
+  padding: var(--s2);
+  font-size: var(--text-meta);
+  color: var(--fg-muted);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (max-width: 1100px) {
+  .panels {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

@@ -1,0 +1,29 @@
+.tabs {
+  display: flex;
+  gap: var(--s6);
+  min-width: 0;
+}
+
+/* Plain links at body size, 44 px tall so they are easy to hit on a phone. */
+.tab {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--fg-muted);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: color var(--dur-fast) ease;
+}
+
+.tab:hover {
+  color: var(--fg);
+}
+
+/* The current screen: fg, weight 500, a 2 px underline (docs/ui.md "Shared shell"). */
+.current {
+  color: var(--fg);
+  font-weight: var(--weight-strong);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 8px;
+}

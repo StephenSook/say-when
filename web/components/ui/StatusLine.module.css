@@ -1,0 +1,37 @@
+.line {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s3);
+  margin: 0;
+  color: var(--fg-muted);
+  text-align: center;
+}
+
+.start {
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.meta {
+  font-size: var(--text-meta);
+}
+
+.body {
+  font-size: var(--text);
+}
+
+.lead {
+  font-size: var(--text-lead);
+  line-height: var(--leading-tight);
+}
+
+.text {
+  animation: fadeIn var(--dur-fast) ease both;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+}

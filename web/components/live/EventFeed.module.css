@@ -1,0 +1,104 @@
+/* The raw event feed (docs/mockups/live.html ".events"). */
+
+.events {
+  margin-top: var(--s12);
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s1) var(--s4);
+  font-size: var(--text-meta);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-meta);
+  font-weight: var(--weight);
+  color: var(--fg-muted);
+}
+
+.paused {
+  color: var(--fg-muted);
+}
+
+.empty {
+  margin: var(--s2) 0 0;
+  font-size: var(--text-meta);
+  color: var(--fg-muted);
+}
+
+.list {
+  margin: var(--s2) 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-meta);
+}
+
+/* Fixed columns, so the values line up row after row: time, step, status, time taken, detail. */
+.row {
+  display: grid;
+  grid-template-columns: 5.5em 7em 5.5em 5.5em minmax(0, 1fr);
+  gap: 0 var(--s4);
+  padding: var(--s1) 0;
+  color: var(--fg-muted);
+  animation: fadeIn var(--dur-fast) ease both;
+}
+
+.time,
+.name,
+.status,
+.value,
+.detail {
+  min-width: 0;
+}
+
+.name {
+  color: var(--fg);
+}
+
+.detail {
+  overflow-wrap: anywhere;
+}
+
+/* Words first; the color only repeats them. */
+.ok {
+  color: var(--accent);
+}
+
+.error {
+  color: var(--error);
+}
+
+.muted {
+  color: var(--fg-muted);
+}
+
+.plain {
+  color: var(--fg);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+}
+
+/* On a phone: time, step and status on the first line, the rest under them. */
+@media (max-width: 720px) {
+  .row {
+    grid-template-columns: 5em minmax(0, 1fr) auto;
+    gap: 0 var(--s3);
+    padding: var(--s2) 0;
+    border-top: 1px solid var(--divider);
+  }
+
+  .value {
+    grid-column: 1;
+  }
+
+  .detail {
+    grid-column: 2 / -1;
+  }
+}

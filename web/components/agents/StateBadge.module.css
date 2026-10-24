@@ -1,0 +1,27 @@
+/* A pill around the status mark and its word (docs/mockups/agents.html `.state`). */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: var(--s1) var(--s3) var(--s1) var(--s2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--control-bg);
+  white-space: nowrap;
+}
+
+/* Tints only for waiting, done and failed. Refused and Stopped stay plain: calm, never red. */
+.waiting {
+  border-color: transparent;
+  background: var(--wait-soft);
+}
+
+.done {
+  border-color: transparent;
+  background: var(--accent-soft);
+}
+
+.failed {
+  border-color: transparent;
+  background: var(--error-soft);
+}

@@ -1,0 +1,229 @@
+/*
+ * NeuroLingo design tokens, from docs/ui.md "Tokens" and docs/mockups/tokens.css (values measured
+ * from tube unless marked "ours"). Where the two differ, docs/ui.md wins: --text-hero follows its
+ * Accessibility rule, options at 32 to 48 px. Fonts come from next/font in app/layout.tsx as
+ * --font-geist-sans and --font-geist-mono.
+ */
+:root {
+  color-scheme: dark;
+
+  /* Surfaces */
+  --bg: #050505;
+  --surface: rgba(5, 5, 5, 0.72);
+  --card: #0e0e0f;
+  --card-border: #3a3a3c;
+  --control-bg: #0a0a0a;
+  --media-bg: #111111;
+
+  /* Text */
+  --fg: rgba(255, 255, 255, 0.88); /* 15.6:1 */
+  --fg-muted: rgba(255, 255, 255, 0.52); /* 5.7:1 */
+
+  /* Lines and fills: decoration only, never the only sign of state */
+  --line: rgba(255, 255, 255, 0.14);
+  --divider: rgba(255, 255, 255, 0.07);
+  --hover: rgba(255, 255, 255, 0.05);
+  --active: rgba(255, 255, 255, 0.09);
+  --ring: rgba(255, 255, 255, 0.24); /* the hollow "not started" ring in the mockups */
+  --track: rgba(255, 255, 255, 0.1); /* bar track */
+
+  /* State. Every state also has an icon and a word. */
+  --accent: #c9a0f0; /* now: live, the scan cursor, done */
+  --accent-soft: rgba(201, 160, 240, 0.16);
+  --accent-line: rgba(201, 160, 240, 0.45);
+  --wait: #f2c46d; /* ours: waiting for the person's confirm */
+  --wait-soft: rgba(242, 196, 109, 0.14);
+  --error: #d98a8a; /* failed, offline, paused, headset off */
+  --error-soft: rgba(217, 138, 138, 0.14);
+  --highlight: #ff3b30;
+  --focus: rgba(255, 255, 255, 0.88);
+
+  /* Type */
+  --font-sans: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --weight: 400;
+  --weight-strong: 500; /* tube never goes above 500 */
+  --leading: 1.45;
+  --leading-tight: 1.2;
+  --text-meta: 14px;
+  --text: 16px;
+  --text-title: 20px;
+  --text-lead: 28px;
+  --text-hero: clamp(32px, 3vw, 48px); /* ours: the question's options */
+
+  /* Space */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s6: 24px;
+  --s8: 32px;
+  --s12: 48px;
+
+  /* Radius */
+  --radius: 6px;
+  --radius-card: 8px;
+  --radius-panel: 10px;
+  --radius-dialog: 12px;
+  --radius-thumb: 4px;
+  --radius-pill: 999px;
+
+  /* Elevation and layers */
+  --shadow-card: 0 16px 48px rgba(0, 0, 0, 0.6);
+  --shadow-dialog: 0 24px 64px rgba(0, 0, 0, 0.28);
+  --backdrop: rgba(0, 0, 0, 0.45);
+  --z-header: 10;
+  --z-banner: 20;
+  --z-dialog: 30;
+
+  /* Layout */
+  --gutter: 16px;
+  --header-h: 56px;
+  --page-max: 1440px;
+  --side-w: 320px;
+  --pill-h: 44px;
+  --pill-h-phone: 56px;
+
+  /* Motion */
+  --dur-fast: 150ms;
+  --dur-panel: 160ms;
+  --dur-row: 240ms;
+  --dur-slow: 300ms;
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+/* Phone values live in this same file (docs/ui.md, Skip item 7). 720px is tube's NARROW. */
+@media (max-width: 720px) {
+  :root {
+    --text-lead: 22px;
+    --text-hero: 28px;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+body {
+  min-height: 100vh;
+  font: var(--weight) var(--text) / var(--leading) var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-wrap: break-word;
+}
+
+h1,
+h2,
+h3,
+h4,
+p,
+ol,
+ul,
+dl,
+dd,
+figure {
+  margin: 0;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-weight: var(--weight-strong);
+}
+
+ol,
+ul {
+  padding: 0;
+}
+
+a {
+  color: inherit;
+}
+
+img {
+  max-width: 100%;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+
+/* Utilities */
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.muted {
+  color: var(--fg-muted);
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0 0 0 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+/*
+ * Reduced motion: drop every slide, fade and count-up so values switch at once. Keep the spinner
+ * (data-spinner), since it is the only sign of work (docs/ui.md "Motion").
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0ms !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  [data-spinner] {
+    animation-duration: 0.8s !important;
+    animation-iteration-count: infinite !important;
+  }
+}

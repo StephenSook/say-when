@@ -1,0 +1,42 @@
+.card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-card);
+  padding: var(--s6);
+  min-width: 0;
+  transition: opacity var(--dur-slow) ease;
+}
+
+.sm {
+  padding: var(--s4);
+}
+
+.none {
+  padding: 0;
+}
+
+.muted {
+  opacity: 0.55;
+}
+
+.enter {
+  animation: cardIn var(--dur-panel) var(--ease-out) both;
+}
+
+@keyframes cardIn {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+}
+
+@media (max-width: 720px) {
+  .card {
+    padding: var(--s4);
+  }
+
+  .none {
+    padding: 0;
+  }
+}

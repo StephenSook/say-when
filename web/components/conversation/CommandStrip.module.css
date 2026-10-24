@@ -1,0 +1,50 @@
+/* The four command chips at the bottom center, where tube puts its search pill. */
+
+.strip {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--s3);
+  margin: var(--s8) 0 var(--s6);
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  display: flex;
+  max-width: 100%;
+}
+
+/* A ring that fills when its command arrives: on in 150 ms, off in 300 ms, like the chip. */
+.light {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid var(--ring);
+  border-radius: 50%;
+  transition:
+    background-color var(--dur-slow) ease,
+    border-color var(--dur-slow) ease,
+    box-shadow var(--dur-slow) ease;
+}
+
+.on {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  transition-duration: var(--dur-fast);
+}
+
+@media (max-width: 720px) {
+  .strip {
+    margin: var(--s8) 0 var(--s6);
+    gap: var(--s2);
+  }
+}
+
+/* A short laptop screen, about 800 px tall: less air here, so "Said out loud" stays on screen. */
+@media (min-width: 721px) and (max-height: 860px) {
+  .strip {
+    margin: var(--s4) 0;
+  }
+}

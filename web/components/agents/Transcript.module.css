@@ -1,0 +1,89 @@
+/* The call transcript beside the call steps (docs/mockups/agents.html `.transcript`). */
+.transcript {
+  display: grid;
+  gap: var(--s2);
+  min-width: 0;
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--s2) var(--s4);
+  padding-bottom: var(--s2);
+  border-bottom: 1px solid var(--divider);
+  color: var(--fg-muted);
+  font-size: var(--text-meta);
+}
+
+.consent {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+}
+
+.scroll {
+  max-height: 22rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-radius: var(--radius);
+}
+
+.scroll:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.lines {
+  display: grid;
+  gap: var(--s3);
+  margin: 0;
+  padding: var(--s2) 0;
+  list-style: none;
+}
+
+/* A new line grows from zero height and fades in at the bottom (docs/ui.md "Motion", 240 ms). */
+.line {
+  display: grid;
+  grid-template-rows: 1fr;
+  animation: lineIn var(--dur-row) var(--ease-out) both;
+}
+
+@keyframes lineIn {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+
+.lineInner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.who {
+  display: block;
+  color: var(--fg-muted);
+  font-size: var(--text-meta);
+}
+
+.text {
+  margin: 0;
+  color: var(--fg);
+}
+
+/* The person called speaks from the right, so two voices are easy to tell apart. */
+.them {
+  text-align: right;
+}
+
+.empty {
+  margin: 0;
+  padding: var(--s3) 0;
+  color: var(--fg-muted);
+}
+
+.transcript .jump {
+  justify-self: end;
+  padding: var(--s2) 0;
+}
