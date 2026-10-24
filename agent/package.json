@@ -21,7 +21,8 @@
         "test": "tsx --test test/*.test.ts",
         "start": "tsx src/main.ts run",
         "pair": "tsx src/main.ts pair",
-        "check": "tsx src/main.ts check"
+        "check": "tsx src/main.ts check",
+        "warm": "tsx src/main.ts warm"
     },
     "dependencies": {
         "@anthropic-ai/sdk": "0.137.0",

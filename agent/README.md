@@ -61,6 +61,7 @@ npm ci
 npm run check    # every setting by name, set or not, and whether the bindings are there. Never prints a value.
 npm run pair     # once per database: prints the approve_pairing command for the owner, then waits for it
 npm start        # runs the sidecar. Ctrl-C stops it cleanly; a second Ctrl-C exits at once.
+npm run warm     # in a second terminal, right before a judge's first question (see "Warm")
 ```
 
 `npm start` loads `agent/.env.local`, then the repo's `.env.local`, without overriding variables already set (`AGENT_ENV_FILES=off` skips both). It stops before connecting if a setting is malformed or there are no Anthropic credentials, and says which variable to fix.
@@ -73,6 +74,7 @@ npm start        # runs the sidecar. Ctrl-C stops it cleanly; a second Ctrl-C ex
 agent/scripts/run-with-keychain.sh check    # npm run check
 agent/scripts/run-with-keychain.sh pair     # npm run pair
 agent/scripts/run-with-keychain.sh          # npm start
+agent/scripts/run-with-keychain.sh warm     # npm run warm, with the same keys and database
 ```
 
 | Variable | Keychain service |
@@ -89,6 +91,14 @@ agent/scripts/run-with-keychain.sh          # npm start
 - It refuses any database whose name does not end in `-dev`. Pass `--allow-non-dev` to use `say-when-demo` on purpose.
 - Calls are always off here (`AGENT_CALLS=off`): calls need consent confirmed under the Eleven name first.
 - Defaults, each overridden by a value already in the environment: `SPACETIMEDB_DB=say-when-dev`, `SPACETIMEDB_URI` Maincloud, `AGENT_PLANNER_MODEL=claude-haiku-5-5`, `FORM_ERRAND_URL` the form-errand Actor's Standby URL, `AGENT_FORMS_FILE=agent/forms.example.json` (the Actor's built-in demo form, which sends nothing anywhere; grant `errand care_team_request` for it), `MOSS_SNAPSHOT_DIR=moss/.memory`, and `AGENT_TOKEN_FILE=~/.config/say-when/agent_token_<database>`, outside the repo and one per database.
+
+### Warm
+
+`npm run warm` gets the slow first steps out of the way before a judge's first question, and prints one line per step with its time (`warm moss ok 812 ms: ...`). It never prints a key, a token, a URL or any content, and exits 0 only when all three are ok:
+
+- **moss.** Moss runs inside the sidecar and closes itself after 3 idle minutes, so opening it in the short-lived `warm` process would bill a second session and help nothing. `warm` finds the running sidecar by its pid file (`<AGENT_TOKEN_FILE>.pid`, mode 600, written once the sidecar runs, removed when it stops), checks that the process is alive and is `src/main.ts run` (a pid left by a crash can name another process, which the signal would end), and sends it SIGUSR2. The sidecar opens its Moss, or, when it is already open, makes one local read (a recall for a partner id no one has) so its idle clock starts again, bounded at 30 s. It logs the result and writes it to `<AGENT_TOKEN_FILE>.warm`, which `warm` waits for (at most 40 s) and prints. The 3 minutes then run again: warm within 3 minutes of the first question, or set `AGENT_MOSS_REOPEN=on`.
+- **apify.** One `GET /` of the form-errand Actor's Standby URL (`FORM_ERRAND_URL`), with the token in the Authorization header and redirects refused. The Actor answers it with its description, and the request starts a container if none was up. No preview, no submit, no form. The public RAG Web Browser is not touched.
+- **cartesia.** Mints one 60-second TTS access token with `CARTESIA_API_KEY` and drops it, to show the key and the API answer. The station's own tokens come from the module's `mint_voice_token`, which uses the module's copy of the key.
 
 ## Settings
 

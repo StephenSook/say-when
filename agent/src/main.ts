@@ -4,12 +4,17 @@
 //                     variables already set)
 //   npm run pair      pair this laptop's identity with the module as the Agent role
 //   npm run check     print which settings are present (names only) and exit
+//   npm run warm      before a judge arrives: wake the form-errand Actor, check a voice token can be minted, and
+//                     ask the running sidecar to open Moss (src/warm.ts). One line per step on stdout.
 //
 // Startup prints every setting by NAME with whether it is set; values are never printed.
 
 import { randomInt, randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+
+import { loadConfig as loadApifyConfig } from '@say-when/apify-client';
+import { mintAccessToken } from '@say-when/cartesia/server';
 
 import { CallRunner } from './calls.js';
 import { loadEnvFiles, readConfig, type ConfigResult } from './config.js';
@@ -20,6 +25,7 @@ import { ConversationLog, PreviewBook, type JobDeps } from './jobs.js';
 import { consoleLogger, type Logger } from './log.js';
 import { Orchestrator } from './orchestrator.js';
 import { errorTag, startupFailureLine, StartupError } from './startup.js';
+import { askSidecar, checkVoiceToken, formatWarm, removeQuietly, wakeStandby, warmFiles, warmMoss, writePrivate } from './warm.js';
 import { classifyQuestion, wire } from './wiring.js';
 
 const AGENT_DIR = fileURLToPath(new URL('../', import.meta.url));
@@ -175,6 +181,28 @@ async function run(result: ConfigResult, log: Logger): Promise<number> {
     orchestrator.start();
     log.info('the sidecar is running; press Ctrl-C to stop');
 
+    // `npm run warm` finds this process by its pid file and sends SIGUSR2: Moss opens here (or its idle clock starts
+    // again), and the result goes to the status file that `warm` prints. One warm at a time.
+    const files = warmFiles(config.spacetime.tokenFile);
+    let warming = false;
+    const onWarm = () => {
+        if (warming) return;
+        warming = true;
+        void warmMoss(wired.moss, wired.memory)
+            .then((line) => {
+                log.info(formatWarm(line));
+                writePrivate(files.status, JSON.stringify(line));
+            })
+            .catch(() => log.warn('warm: the status could not be written'))
+            .finally(() => (warming = false));
+    };
+    process.on('SIGUSR2', onWarm);
+    try {
+        writePrivate(files.pid, `${process.pid}\n`);
+    } catch {
+        log.warn('warm: the pid file could not be written; npm run warm will not find this sidecar');
+    }
+
     return new Promise<number>((resolve) => {
         let stopping = false;
         const stop = (signal: NodeJS.Signals) => {
@@ -185,6 +213,9 @@ async function run(result: ConfigResult, log: Logger): Promise<number> {
             stopping = true;
             log.info('stopping', { signal });
             void (async () => {
+                process.off('SIGUSR2', onWarm);
+                removeQuietly(files.pid);
+                removeQuietly(files.status);
                 await orchestrator.stop(20_000);
                 await wired.moss?.close('signal');
                 db.close();
@@ -194,6 +225,26 @@ async function run(result: ConfigResult, log: Logger): Promise<number> {
         process.once('SIGINT', stop);
         process.once('SIGTERM', stop);
     });
+}
+
+/** `npm run warm`: the three steps at once, then one line each. Exit 0 only when all three are ok. */
+async function warm(result: ConfigResult): Promise<number> {
+    let apifyUrl: string | undefined;
+    let apifyToken: string | undefined;
+    try {
+        const apify = loadApifyConfig(process.env);
+        apifyUrl = apify.formErrandUrl;
+        apifyToken = apify.token;
+    } catch {
+        // Reported by wakeStandby as a setting that is not set.
+    }
+    const lines = await Promise.all([
+        askSidecar(warmFiles(result.config.spacetime.tokenFile)),
+        wakeStandby(apifyUrl, apifyToken),
+        checkVoiceToken(process.env.CARTESIA_API_KEY, (key) => mintAccessToken(key, 'tts', { expiresInSeconds: 60, timeoutMs: 15_000 })),
+    ]);
+    for (const line of lines) process.stdout.write(`${formatWarm(line)}\n`);
+    return lines.every((line) => line.ok) ? 0 : 1;
 }
 
 async function main(): Promise<number> {
@@ -211,13 +262,15 @@ async function main(): Promise<number> {
     if (bindings && !sdk) log.error('the bindings import spacetimedb from spacetime/node_modules: run npm ci in spacetime/');
 
     if (command === 'check') return result.problems.length === 0 && bindings && sdk ? 0 : 1;
+    // Warm needs only its own settings, so an unrelated problem does not stop it.
+    if (command === 'warm') return warm(result);
     if (result.problems.length > 0) {
         log.error('fix the settings above and start again');
         return 1;
     }
     if (command === 'pair') return pair(result, log);
     if (command === 'run') return run(result, log);
-    log.error('unknown command; use run, pair or check');
+    log.error('unknown command; use run, pair, check or warm');
     return 2;
 }
 
