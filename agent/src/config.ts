@@ -21,6 +21,8 @@ export interface AgentConfig {
     timeZone: string;
     maxJobs: number;
     maxOptions: number;
+    /** AGENT_YES_NO_FAST (on by default) and AGENT_DRAFT_FIRST (off by default). */
+    speed: { yesNoFast: boolean; draftFirst: boolean };
 }
 
 export interface EnvCheck {
@@ -196,6 +198,11 @@ export function readConfig(env: Env, tokenFileDefault: string, hasAnthropicProfi
     }
     const maxJobs = integer(env, 'AGENT_MAX_JOBS', DEFAULTS.maxJobs, 1, 8, checks, problems, 'jobs at once');
     const maxOptions = integer(env, 'AGENT_MAX_OPTIONS', DEFAULTS.maxOptions, 2, 4, checks, problems, 'options per question');
+    // Speed (src/fastpath.ts). The fast path is on by default. Draft first is off: the module ends a question with no
+    // pick when the draft's passes run out and cancels the job, even while the options with web results are still
+    // coming (spacetime/src/clock.ts endPass, finishScan), so with a short draft and a slow search they can be lost.
+    const yesNoFast = flag(env, 'AGENT_YES_NO_FAST', true, checks, problems, 'stock Yes and No at once for a clear yes or no question');
+    const draftFirst = flag(env, 'AGENT_DRAFT_FIRST', false, checks, problems, 'options from memory while the web search runs');
 
     return {
         config: {
@@ -210,6 +217,7 @@ export function readConfig(env: Env, tokenFileDefault: string, hasAnthropicProfi
             timeZone,
             maxJobs,
             maxOptions,
+            speed: { yesNoFast, draftFirst },
         },
         checks,
         problems,

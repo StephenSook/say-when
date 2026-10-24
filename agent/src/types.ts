@@ -21,7 +21,8 @@ export type MenuItem = 'none' | 'need' | 'request' | 'call' | 'say';
 export type AnswerMode = 'pick' | 'yes_no';
 /** What the planner may offer. `menu` options are made by the module, never by the sidecar. */
 export type OptionKind = 'reply' | 'errand' | 'call';
-export type Provenance = 'memory' | 'web' | 'maps' | 'model';
+/** `stock`: the yes or no fast path's own Yes and No (src/fastpath.ts), written by no model. */
+export type Provenance = 'memory' | 'web' | 'maps' | 'model' | 'stock';
 
 export type ErrandStatus =
     | 'drafted'

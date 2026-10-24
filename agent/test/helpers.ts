@@ -174,8 +174,20 @@ export class FakeSearch implements SearchPort {
     error: Error | null = null;
     hang = false;
     partial = false;
+    /** While set, each search waits for it (a slow search the test releases), or fails at once if aborted. */
+    gate: Promise<void> | null = null;
 
     constructor(private readonly trace?: Trace) {}
+
+    /** Holds every search until the returned function is called. */
+    hold(): () => void {
+        let release = () => undefined as void;
+        this.gate = new Promise<void>((resolve) => (release = resolve));
+        return () => {
+            this.gate = null;
+            release();
+        };
+    }
 
     web(question: string, options: { signal: AbortSignal }): Promise<SearchResult> {
         this.calls.push({ kind: 'web', query: question });
@@ -195,6 +207,18 @@ export class FakeSearch implements SearchPort {
                 const fail = () => reject(Object.assign(new Error('aborted'), { name: 'ApifyHttpError', kind: 'aborted' }));
                 if (signal.aborted) fail();
                 signal.addEventListener('abort', fail, { once: true });
+            });
+        }
+        if (this.gate) {
+            const gate = this.gate;
+            await new Promise<void>((resolve, reject) => {
+                const fail = () => reject(Object.assign(new Error('aborted'), { name: 'ApifyHttpError', kind: 'aborted' }));
+                if (signal.aborted) return fail();
+                signal.addEventListener('abort', fail, { once: true });
+                void gate.then(() => {
+                    signal.removeEventListener('abort', fail);
+                    resolve();
+                });
             });
         }
         if (this.error) throw this.error;
@@ -479,6 +503,10 @@ export interface HarnessOptions {
     /** The call dial deadline after the CONFIRM, and the allowed clock difference (CallRunner). */
     confirmToDialMs?: number;
     clockSkewMs?: number;
+    /** The yes or no fast path (JobDeps.yesNoFast). Off by default here, so the older tests keep the planner path. */
+    yesNoFast?: boolean;
+    /** Draft first (JobDeps.draftFirst). Off by default here, like the fast path. */
+    draftFirst?: boolean;
 }
 
 export function harness(options: HarnessOptions = {}): Harness {
@@ -521,6 +549,8 @@ export function harness(options: HarnessOptions = {}): Harness {
         clock,
         requestId: () => `call-test-${++requests}`,
         leaseHeartbeatMs: options.leaseHeartbeatMs,
+        yesNoFast: options.yesNoFast,
+        draftFirst: options.draftFirst,
     };
     // Short retry waits so the tests of claims that never reached the module run fast.
     const callRunner = new CallRunner({
