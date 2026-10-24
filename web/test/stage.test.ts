@@ -104,7 +104,7 @@ describe('brain slot', () => {
     for (const host of ['10.0.20.117', 'localhost.example.com', '127.0.0.1.example.com', '1270.0.0.1']) assert.equal(isLoopbackHost(host), false, host);
   });
 
-  test('the switch is one line: the active line is off or on, and the comment holds the on line', () => {
+  test('the switch is one line: the active line is off or on, and the comment holds the other one', () => {
     const source = readFileSync(join(process.cwd(), 'components', 'stage', 'live-brain.ts'), 'utf8');
     const lines = source.split('\n');
     const off = 'export const LIVE_BRAIN: ComponentType | null = null;';
@@ -112,8 +112,8 @@ describe('brain slot', () => {
     const active = lines.filter((line) => line.startsWith('export const LIVE_BRAIN'));
     assert.equal(active.length, 1, 'one active line');
     assert.ok(active[0] === off || active[0] === on, `the active line is the off or the on line: ${active[0]}`);
-    assert.equal(lines.filter((line) => line === ` * ${on}`).length, 1, 'the comment holds the on line, once');
-    assert.match(source, /^import dynamic from 'next\/dynamic';$/m, 'dynamic is already imported for the on line');
+    const other = active[0] === on ? off : on;
+    assert.equal(lines.filter((line) => line === ` * ${other}`).length, 1, 'the comment holds the other line, once');
     // Switched on, the slot imports Screen 1's own screen, so that file must be on this build.
     if (active[0] === on) assert.ok(existsSync(join(process.cwd(), 'components', 'brain', 'BrainScreen.tsx')), 'Screen 1 is on this build');
   });

@@ -1,20 +1,17 @@
 /**
- * The live brain (Screen 1, /brain) for the stage's brain slot. Screen 1 lives on branch screen1-brain
- * (web/app/brain/, web/components/brain/), not on main yet, so the slot shows the decoder panel instead
- * (components/stage/DecoderPanel.tsx), which draws no brain activity.
+ * The live brain (Screen 1, /brain, web/components/brain/) for the stage's brain slot. Switched on: the line below
+ * loads Screen 1's own `BrainScreen` in the browser only, as its page does (it needs WebGL). It is drawn for a whole
+ * window, so the slot fits it into its box (components/stage/Stage.module.css `.liveBrain`).
  *
- * When Screen 1 is on main, replace the one line below with this one, and nothing else:
+ * The slot mounts it only on a loopback address (the laptop that runs the EEG bridge) or with `?brain=1`, because it
+ * opens a socket to ws://127.0.0.1:8766 as it loads; the deployed site keeps the decoder panel
+ * (components/stage/DecoderPanel.tsx), and `?brain=0` keeps it anywhere (lib/stage/layout.ts `brainSlotKind`).
  *
- * export const LIVE_BRAIN: ComponentType | null = dynamic(() => import('@/components/brain/BrainScreen'), { ssr: false, loading: () => null });
+ * To switch it off everywhere, replace the one line below with this one, and nothing else:
  *
- * `BrainScreen` is Screen 1's own default export, loaded in the browser only as its page does (it needs WebGL). It is
- * drawn for a whole window, so the slot fits it into its box (components/stage/Stage.module.css `.liveBrain`).
- * Even then the slot mounts it only on a loopback address (the laptop that runs the EEG bridge) or with `?brain=1`,
- * because it opens a socket to ws://127.0.0.1:8766 as it loads; the deployed site keeps the decoder panel, and
- * `?brain=0` keeps it anywhere (lib/stage/layout.ts `brainSlotKind`).
+ * export const LIVE_BRAIN: ComponentType | null = null;
  */
-// Imported now for the line above, so switching it on touches one line only.
 import dynamic from 'next/dynamic';
 import type { ComponentType } from 'react';
 
-export const LIVE_BRAIN: ComponentType | null = null;
+export const LIVE_BRAIN: ComponentType | null = dynamic(() => import('@/components/brain/BrainScreen'), { ssr: false, loading: () => null });

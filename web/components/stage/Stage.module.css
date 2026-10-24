@@ -136,6 +136,21 @@
   margin-left: 0;
 }
 
+/* Screen 1's title and subtitle: the slot keeps its mode pill and gives the room to the brain. */
+.liveBrain > div > div:first-child {
+  justify-content: flex-end;
+  padding-top: var(--s3);
+}
+
+.liveBrain > div > div:first-child > div:first-child {
+  display: none;
+}
+
+/* On a 1280 px screen the band strip has no room; the brain and its guess stay. */
+.compact .liveBrain > div > section:nth-of-type(2) {
+  display: none;
+}
+
 /* ---- Brain slot: the decoder panel ---- */
 
 .decoder {

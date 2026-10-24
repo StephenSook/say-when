@@ -5,7 +5,7 @@
  * switching tabs. It is made of the other screens' parts, fed by the same rows:
  * - the partner's question on top (Conversation's header);
  * - the Suggested replies tree as the main area (lookups, drafting, the options, the pick, an errand's read-back);
- * - a side column: the brain slot (the live brain once Screen 1 is on this build, else the decoder panel), what is in
+ * - a side column: the brain slot (Screen 1's live brain on the EEG laptop, else the decoder panel), what is in
  *   the earpiece now or what was picked, and what was said out loud;
  * - the command strip along the bottom, in this session's true input words (keys say keys).
  * The header's connection and input chips come from the shell, as on every dashboard. `?replay=1` plays the sample

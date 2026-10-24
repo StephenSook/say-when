@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * The stage's brain slot: the live brain (Screen 1) once it is on this build, else the decoder panel
+ * The stage's brain slot: the live brain (Screen 1) on a loopback address or with ?brain=1, else the decoder panel
  * (lib/stage/layout.ts `brainSlotKind`; the switch is one line in components/stage/live-brain.ts).
  */
 import { useSyncExternalStore } from 'react';

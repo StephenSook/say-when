@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * The brain slot until the live brain (Screen 1) is on this build: the session's input and the newest commands, each
+ * The brain slot wherever the live brain (Screen 1) does not show: the session's input and the newest commands, each
  * with what the person did and when (lib/stage/decoder.ts). Text and one mark per command, nothing that moves like a
  * brain: the rows hold commands, not brain activity. A keyboard session says keys; an unknown input names no signal.
  */
