@@ -3,7 +3,7 @@
 > Living status doc for Stephen, Khadim, Shashank and Leon. Update it on every task change and push to `main`. This file is the single source of truth for who is working on what.
 
 **Project:** Screenless reply and errand assistant for people who cannot speak or use their hands, driven by four head-worn switch commands.
-**Team:** Stephen (all UI/UX, Apify, Moss, Cartesia), Khadim (no rows assigned yet, see Q8), Shashank (SpacetimeDB, AI planner, hardware and EEG), Leon (user consult, consent, demo video)
+**Team:** Stephen (SpacetimeDB, all UI/UX, Apify, Moss, Cartesia), Khadim (no rows assigned yet, see Q8), Shashank (headset and decoder, AI planner, Tiger telemetry), Leon (user consult, consent, demo video)
 **Deadline:** Sunday Oct 25, 8:50 AM PDT submission. Judging 10:30 AM to 12:30 PM.
 **Repo:** https://github.com/StephenSook/say-when
 
@@ -16,8 +16,8 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⛔ blocked
 | # | Component | File(s) | Owner | Status | Deps | Notes |
 |---|-----------|---------|-------|--------|------|-------|
 | 0.1 | Repo, PLAN.md, CI, hooks | `PLAN.md` | Stephen | ✅ | - | |
-| 1.1 | SpacetimeDB module: tables, reducers, scan clock | `spacetime/` | Shashank | ⬜ | - | Start from the draft contracts below |
-| 1.2 | Lock shared contracts (table and reducer names) | `PLAN.md` | Shashank | ⬜ | 1.1 | Announce changes with ⚠️ CONTRACT |
+| 1.1 | SpacetimeDB module: tables, reducers, views, scan clock, consent gate | `spacetime/` | Stephen | 🟡 | - | Stephen, since Oct 23 10:45pm PT. Claude building. Design in `docs/spacetime.md`; niche features in D12 |
+| 1.2 | Lock shared contracts (table and reducer names) | `PLAN.md` | Stephen | 🟡 | 1.1 | Stephen, since Oct 23 10:45pm PT. Locked from `docs/spacetime.md`; announce changes with ⚠️ CONTRACT |
 | 2.1 | Headset reader and four-command decoder | `switch/` | Shashank | ⬜ | - | Which headset? See Q1 |
 | 2.2 | Calibration: per-person signal map and thresholds | `switch/` | Shashank | ⬜ | 2.1 | Idle false-activation rate goes on the dashboard |
 | 2.3 | STOP, HEADSET-OFF watchdog and idle auto-pause | `switch/` | Shashank | ⬜ | 2.1 | 0.5 s packet watchdog; long jaw clench is STOP |
@@ -108,9 +108,9 @@ Deterministic Playwright, not an LLM clicking. Preview by default, a form allowl
 
 **Locked Oct 23 by Stephen.**
 
-### D6: Stephen owns Apify, Moss, Cartesia and all UI/UX
+### D6: Stephen owns SpacetimeDB, Apify, Moss, Cartesia and all UI/UX
 
-Apify search, the form-errand Actor, Moss retrieval, and every Cartesia piece (Ink-2 speech to text, Sonic earpiece voice, pronunciation dictionary, and the outbound call agent) are Stephen's, and so is all of the UI/UX (every dashboard screen and the partner phone view). Shashank keeps SpacetimeDB, the headset and decoder, the option planner and Tiger telemetry.
+Apify search, the form-errand Actor, Moss retrieval, and every Cartesia piece (Ink-2 speech to text, Sonic earpiece voice, pronunciation dictionary, and the outbound call agent) are Stephen's, and so is all of the UI/UX (every dashboard screen and the partner phone view) and, from Oct 23 10:45 PM, the SpacetimeDB module. Claude implements these for Stephen. Shashank keeps the headset and decoder, the option planner and Tiger telemetry.
 
 **Locked Oct 23 by Stephen.**
 
@@ -146,6 +146,19 @@ The headset reads two things: imagined hand squeezes and the jaw. No eyes.
 How it plays out: a yes or no question costs one thought ("Are you tired?" then right fist, the voice says "Yes"); an open question plays four options in four tones and silence moves on, so the person thinks once on the one they want; when the talk leads to an errand or a call, Claude offers it as a follow-up option ("Send the care team a lunch request", "Call Leon", "Nothing else"), YES picks it, the read-back plays, and only a double clench sends it; while nothing is happening, YES opens the person's own menu, which keeps their independence; during a call a long clench hangs up. HEADSET-OFF and the 2-minute idle auto-pause still cancel anything pending. Imagined movement is slow, so each option's response window is about 3 to 4 seconds, set at calibration. Proposed by Khadim; adopted by Stephen.
 
 **Locked Oct 24 by Stephen.**
+
+### D12: How we use SpacetimeDB (the niche features)
+
+SpacetimeDB is the whole live backend, not a store behind an API:
+
+1. **One clock for every screen.** The scan cursor is a chain of one-shot scheduled reducers. Each step writes `scan_state` (cursor, step number, when the step ends) and schedules the next tick, so the earpiece, the partner's phone and the dashboard advance on the same server tick. A YES is matched to the step the person actually heard, with a short grace window.
+2. **A dead-man interlock.** While a session is live the station sends a heartbeat; each one pushes a one-shot liveness row forward. If heartbeats stop (headset off, laptop asleep, network gone), the row fires, pauses the scan and voids any pending confirm.
+3. **Consent is a row, enforced in a reducer.** The Apify preview's digest is stored with the errand; only a fresh CONFIRM inside the window, matching that digest, moves it to Confirmed, and the agent can only submit a Confirmed errand with that digest. Every step lands in an append-only ledger.
+4. **Roles in reducers, privacy in views.** Each device has one role (Station, Partner, Speaker, Agent); every reducer checks it. Per-role views give each device only what it needs, and an anonymous public board shows judges the live pipeline without private text.
+5. **The database runs short credentialed hops.** A procedure mints 60-second Cartesia tokens for paired browsers, so no key reaches a browser; an optional scheduled procedure can start the Apify submit and an HTTP route can receive its webhook.
+6. **A public pipeline table drives the live dashboards** on any laptop, and an event table carries chimes and toasts.
+
+**Locked Oct 23 by Stephen. Design detail in `docs/spacetime.md`.**
 
 ### D7: Three live dashboard screens
 

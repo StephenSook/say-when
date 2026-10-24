@@ -41,15 +41,32 @@ The hand commands are imagined movements read over the motor cortex, so they onl
 - Calls go only to people who consented. The voice says it is an automated assistant with an AI-generated voice, says who it calls for, and gives a callback number.
 - The form-errand Actor only fills forms on an allowlist and refuses CAPTCHAs, logins, passwords, payments, and uploads.
 
+## Status
+
+| Part | Folder | State |
+|---|---|---|
+| Form-errand Actor | `apify/form-errand/` | Built and published: [Confirm-Gated Form Errand on the Apify Store](https://apify.com/stephensookra/confirm-gated-form-errand). 40 tests in CI, preview and submit verified on the platform |
+| Apify client (search, places, errand) | `apify/client/` | Built, 125 tests in CI |
+| Cartesia (speech to text, voice, dictionary, call) | `cartesia/` | Built, 94 tests in CI; live API smoke test pending |
+| Moss retrieval | `moss/` | In progress |
+| SpacetimeDB module | `spacetime/` | In progress; design in [docs/spacetime.md](docs/spacetime.md) |
+| Dashboard and partner phone | `web/` | In progress; spec in [docs/ui.md](docs/ui.md), mockups in `docs/mockups/` |
+| Headset decoder | `switch/` | In progress (Shashank); brain test in [docs/brain-mode-test.md](docs/brain-mode-test.md) |
+
+## How we use SpacetimeDB
+
+SpacetimeDB is the whole live backend. One server-side clock (chained scheduled reducers) moves the scan cursor on every screen at once. A heartbeat lease pauses everything if the headset or laptop drops. Consent is a row: a form or a call is released only by a fresh CONFIRM whose digest matches what the person heard. Each device has a role checked in every reducer, per-role views keep private text private, and a public pipeline table drives the live dashboards on any laptop. Details in [docs/spacetime.md](docs/spacetime.md).
+
 ## Repo layout
 
 | Path | What |
 |---|---|
-| `spacetime/` | SpacetimeDB module: tables, reducers, scheduled scan clock |
+| `spacetime/` | SpacetimeDB module: tables, reducers, views, scan clock, consent gate |
 | `switch/` | Headset reader, four-command decoder, calibration |
-| `agent/` | Speech to text, option planner, earpiece voice, call agent |
+| `agent/` | Option planner and the agent sidecar |
 | `apify/form-errand/` | Apify Actor: preview, read back, submit |
 | `apify/client/` | Apify client for the agent: web search, places, errand preview and submit |
+| `cartesia/` | Ink-2 speech to text, Sonic voice, pronunciation dictionary, outbound call |
 | `moss/` | Moss retrieval over web results and the person's memory |
 | `web/` | Live dashboard and partner phone view |
 | `telemetry/` | Tiger Data telemetry writer and SQL |
