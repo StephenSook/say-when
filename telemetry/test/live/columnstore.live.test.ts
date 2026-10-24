@@ -22,7 +22,7 @@ import type pg from 'pg';
 
 import { connectTiger, type TigerConnection } from '../../src/db.js';
 import { memoryLogger, silentLogger } from '../../src/log.js';
-import { AGGREGATES, HYPERTABLES, verifySchema, type Hypertable } from '../../src/migrate.js';
+import { AGGREGATES, HYPERTABLES, PLAIN_TABLES, verifySchema, type Hypertable } from '../../src/migrate.js';
 import { createPipeline } from '../../src/pipeline.js';
 import { PgSink, SPECS } from '../../src/sink.js';
 import { FakeSource } from '../../src/sources/fake.js';
@@ -172,7 +172,7 @@ describe('the columnstore on the live Tiger service', { skip: !LIVE && 'set TIGE
         // A safety net if a test stopped early (the cleanup test does this and asserts it). Every failure is reported.
         const errors: string[] = [];
         if (!cleaned) {
-            for (const t of HYPERTABLES) {
+            for (const t of [...HYPERTABLES, ...PLAIN_TABLES]) {
                 try {
                     await conn.pool.query(`DELETE FROM telemetry.${t} WHERE session_id = $1`, [SESSION]);
                 } catch (error) {
@@ -393,10 +393,10 @@ describe('the columnstore on the live Tiger service', { skip: !LIVE && 'set TIGE
     });
 
     test('cleanup: the session is deleted from the converted chunks, no row is left, and the chunks go back to the rowstore', async () => {
-        for (const t of HYPERTABLES) await conn.pool.query(`DELETE FROM telemetry.${t} WHERE session_id = $1`, [SESSION]);
+        for (const t of [...HYPERTABLES, ...PLAIN_TABLES]) await conn.pool.query(`DELETE FROM telemetry.${t} WHERE session_id = $1`, [SESSION]);
         await refreshRecent(conn.pool);
         const left = (await conn.pool.query(
-            `SELECT ${HYPERTABLES.map((t) => `(SELECT count(*) FROM telemetry.${t} WHERE session_id = $1)`).join(' + ')} AS raw,
+            `SELECT ${[...HYPERTABLES, ...PLAIN_TABLES].map((t) => `(SELECT count(*) FROM telemetry.${t} WHERE session_id = $1)`).join(' + ')} AS raw,
                     ${AGGREGATES.map((a) => `(SELECT count(*) FROM telemetry.${a} WHERE session_id = $1)`).join(' + ')} AS aggregates`,
             [SESSION],
         )).rows[0] as { raw: string; aggregates: string };

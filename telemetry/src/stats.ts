@@ -4,10 +4,17 @@
 //
 // The window is the `windowMinutes` one-minute buckets ending with the current one (the newest still filling), so
 // it spans between windowMinutes - 1 and windowMinutes minutes. Numerators and denominators use the same buckets.
+//
+// Input (request T1): with no sessionId, only sessions whose label says `headset-` count by default (sql/060), so a
+// keyboard or switch session never becomes a headset statistic. A session with no input row counts only under
+// `input: 'any'`. A named sessionId is read whatever its input, and its input is returned beside the numbers.
 import type pg from 'pg';
 
 import type { PercentileMode } from './migrate.js';
-import { TEST_SESSION_RE } from './types.js';
+import { INPUT_KINDS, TEST_SESSION_RE, type InputKind } from './types.js';
+
+/** Which sessions count by input: one input word, or `any` (every session, with or without an input row). */
+export type InputFilter = InputKind | 'any';
 
 export interface StatsOptions {
     /** Default 30. */
@@ -16,6 +23,8 @@ export interface StatsOptions {
     readonly sessionId?: string;
     /** Count `test-` sessions too when no sessionId is given. Default false. */
     readonly includeTest?: boolean;
+    /** Only sessions with this input when no sessionId is given. Default `headset`. Ignored with a sessionId. */
+    readonly input?: InputFilter;
     /** The rate stays null until the window holds this much rest. Default 1 minute. */
     readonly minIdleMinutes?: number;
 }
@@ -33,12 +42,20 @@ export interface RawStats {
     readonly percentiles: PercentileMode;
     readonly rowsWritten: number;
     readonly lastWriteAt: Date | null;
+    /** The input filter applied (`any` when a session was named). */
+    readonly input: InputFilter;
+    /** With a sessionId: that session's stored input, or null if no input row exists for it. Otherwise null. */
+    readonly sessionInput: InputKind | null;
 }
 
 export interface DashboardStats {
     readonly windowMinutes: number;
     readonly windowStart: string;
     readonly asOf: string;
+    /** The input filter applied: `headset` by default, `any` when a session was named. */
+    readonly input: InputFilter;
+    /** With a sessionId: that session's input (headset, keyboard, switch, unknown), or null if none was stored. */
+    readonly sessionInput: InputKind | null;
     /** False activations per minute of rest, or null until the window holds `minIdleMinutes` of rest. */
     readonly falseActivationsPerIdleMinute: number | null;
     readonly falseActivations: number;
@@ -72,6 +89,8 @@ export function summarize(raw: RawStats, options: Pick<StatsOptions, 'windowMinu
         windowMinutes,
         windowStart: raw.windowStart.toISOString(),
         asOf: raw.asOf.toISOString(),
+        input: raw.input,
+        sessionInput: raw.sessionInput,
         falseActivationsPerIdleMinute: idleMinutes >= minIdle && idleMinutes > 0 ? round(raw.falseActivations / idleMinutes, 3) : null,
         falseActivations: raw.falseActivations,
         idleMinutes: round(idleMinutes, 2),
@@ -102,8 +121,15 @@ export function percentileCont(values: readonly number[], p: number): number | n
 const num = (v: unknown): number => (v === null || v === undefined ? 0 : Number(v));
 const numOrNull = (v: unknown): number | null => (v === null || v === undefined || Number.isNaN(Number(v)) ? null : Number(v));
 
-/** $1 session key or null, $2 include test sessions. Kept in one place so every query filters the same way. */
-const SESSION_FILTER = `(($1::text IS NOT NULL AND session_id = $1::text) OR ($1::text IS NULL AND ($2::boolean OR session_id NOT LIKE 'test-%')))`;
+/**
+ * $1 session key or null, $2 include test sessions, $n the input filter (an input word, or `any`). A named session
+ * is read whatever its input; otherwise only sessions whose input row has that word (T1). Kept in one place so every
+ * query filters the same way.
+ */
+export function sessionFilter(n: number): string {
+    const input = `$${n}::text = 'any' OR session_id IN (SELECT i.session_id FROM telemetry.session_inputs i WHERE i.input = $${n}::text)`;
+    return `(($1::text IS NOT NULL AND session_id = $1::text) OR ($1::text IS NULL AND ($2::boolean OR session_id NOT LIKE 'test-%') AND (${input})))`;
+}
 
 const TABLES = ['switch_events', 'scan_steps', 'picks', 'action_outcomes', 'rest_minutes'] as const;
 
@@ -120,19 +146,24 @@ export async function fetchRawStats(pool: pg.Pool, options: StatsOptions = {}): 
     if (options.sessionId !== undefined && !(TEST_SESSION_RE.test(options.sessionId) || /^[a-z0-9]+(-[a-z0-9]+)*:[0-9]{1,20}$/.test(options.sessionId))) {
         throw new RangeError('sessionId must look like say-when-demo:3 or test-<id>');
     }
-    const params = [options.sessionId ?? null, options.includeTest ?? false, windowMinutes];
+    const requested = options.input ?? 'headset';
+    if (requested !== 'any' && !(INPUT_KINDS as readonly string[]).includes(requested)) throw new RangeError(`input must be one of ${INPUT_KINDS.join(', ')} or any`);
+    // A named session is read whatever its input.
+    const input: InputFilter = options.sessionId !== undefined ? 'any' : requested;
+    const session = options.sessionId ?? null;
+    const includeTest = options.includeTest ?? false;
     const percentiles = await readPercentileMode(pool);
 
     const counts = (
         await pool.query(
             `WITH w AS (SELECT now() AS as_of, time_bucket(INTERVAL '1 minute', now()) - make_interval(mins => $3::int - 1) AS start)
              SELECT w.as_of, w.start,
-                (SELECT coalesce(sum(false_activations), 0) FROM telemetry.switch_1m WHERE bucket >= w.start AND ${SESSION_FILTER}) AS false_activations,
-                (SELECT coalesce(sum(commands), 0) FROM telemetry.switch_1m WHERE bucket >= w.start AND ${SESSION_FILTER}) AS commands,
-                (SELECT coalesce(sum(yes_acted_at_rest), 0) FROM telemetry.switch_1m WHERE bucket >= w.start AND ${SESSION_FILTER}) AS yes_acted,
-                (SELECT coalesce(sum(idle_ms), 0) FROM telemetry.idle_1m WHERE bucket >= w.start AND ${SESSION_FILTER}) AS idle_ms
+                (SELECT coalesce(sum(false_activations), 0) FROM telemetry.switch_1m WHERE bucket >= w.start AND ${sessionFilter(4)}) AS false_activations,
+                (SELECT coalesce(sum(commands), 0) FROM telemetry.switch_1m WHERE bucket >= w.start AND ${sessionFilter(4)}) AS commands,
+                (SELECT coalesce(sum(yes_acted_at_rest), 0) FROM telemetry.switch_1m WHERE bucket >= w.start AND ${sessionFilter(4)}) AS yes_acted,
+                (SELECT coalesce(sum(idle_ms), 0) FROM telemetry.idle_1m WHERE bucket >= w.start AND ${sessionFilter(4)}) AS idle_ms
              FROM w`,
-            params,
+            [session, includeTest, windowMinutes, input],
         )
     ).rows[0] as Record<string, unknown>;
     const windowStart = counts.start as Date;
@@ -142,22 +173,28 @@ export async function fetchRawStats(pool: pg.Pool, options: StatsOptions = {}): 
             ? `SELECT coalesce(sum(timed_picks), 0) AS n,
                   CASE WHEN coalesce(sum(timed_picks), 0) > 0 THEN approx_percentile(0.5, rollup(time_to_pick)) END AS p50,
                   CASE WHEN coalesce(sum(timed_picks), 0) > 0 THEN approx_percentile(0.95, rollup(time_to_pick)) END AS p95
-               FROM telemetry.picks_1m WHERE bucket >= $3 AND ${SESSION_FILTER}`
+               FROM telemetry.picks_1m WHERE bucket >= $3 AND ${sessionFilter(4)}`
             : `SELECT count(time_to_pick_ms) AS n,
                   percentile_cont(0.5) WITHIN GROUP (ORDER BY time_to_pick_ms) AS p50,
                   percentile_cont(0.95) WITHIN GROUP (ORDER BY time_to_pick_ms) AS p95
-               FROM telemetry.picks WHERE time >= $3 AND time_to_pick_ms IS NOT NULL AND ${SESSION_FILTER}`;
+               FROM telemetry.picks WHERE time >= $3 AND time_to_pick_ms IS NOT NULL AND ${sessionFilter(4)}`;
     // Every placeholder is referenced: Postgres cannot type a parameter the statement never uses.
-    const picks = (await pool.query(pickSql, [params[0], params[1], windowStart])).rows[0] as Record<string, unknown>;
+    const picks = (await pool.query(pickSql, [session, includeTest, windowStart, input])).rows[0] as Record<string, unknown>;
 
     const written = (
         await pool.query(
             `SELECT coalesce(sum(n), 0) AS n, max(last) AS last FROM (
-                ${TABLES.map((t) => `SELECT count(*) AS n, max(ingested_at) AS last FROM telemetry.${t} WHERE ${SESSION_FILTER}`).join(' UNION ALL ')}
+                ${TABLES.map((t) => `SELECT count(*) AS n, max(ingested_at) AS last FROM telemetry.${t} WHERE ${sessionFilter(3)}`).join(' UNION ALL ')}
              ) t`,
-            params.slice(0, 2),
+            [session, includeTest, input],
         )
     ).rows[0] as Record<string, unknown>;
+
+    const stored =
+        session === null
+            ? undefined
+            : ((await pool.query('SELECT input FROM telemetry.session_inputs WHERE session_id = $1', [session])).rows[0] as { input?: string } | undefined)?.input;
+    const sessionInput = stored !== undefined && (INPUT_KINDS as readonly string[]).includes(stored) ? (stored as InputKind) : null;
 
     return {
         asOf: counts.as_of as Date,
@@ -172,6 +209,8 @@ export async function fetchRawStats(pool: pg.Pool, options: StatsOptions = {}): 
         percentiles,
         rowsWritten: num(written.n),
         lastWriteAt: (written.last as Date | null) ?? null,
+        input,
+        sessionInput,
     };
 }
 

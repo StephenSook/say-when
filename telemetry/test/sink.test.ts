@@ -24,6 +24,9 @@ describe('inserts', () => {
         assert.equal(params[2], '5'); // ledger_id as a string, so no bigint precision is lost
         const m = restRow(60, [0, 1, 59]);
         assert.deepEqual(insertParams('rest_minutes', [m.row as never]).slice(1), ['test-unit:1', ((1n << 59n) | 3n).toString(), 3000]);
+        // A session's input (T1): its start, its key and one word; a replay lands once.
+        assert.equal(buildInsert('session_inputs', 1), 'INSERT INTO telemetry.session_inputs (started_at, session_id, input) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING');
+        assert.deepEqual(insertParams('session_inputs', [{ time: BASE, sessionId: 'test-unit:1', input: 'keyboard' }]), [microsToIso(BASE), 'test-unit:1', 'keyboard']);
     });
 
     test('server timestamps keep all six fractional digits', () => {
@@ -66,6 +69,16 @@ describe('rows older than the aggregates refresh on their own', () => {
         await sink.insert('picks', [old]);
         assert.equal(sent.length, 0);
         assert.deepEqual(sink.tooOld, { picks: 1 });
+    });
+
+    test("the sink never age-filters a session's input row: a session can start long before its current commands", async () => {
+        const sent: string[] = [];
+        const pool = { query: async (sql: string) => void sent.push(sql) } as never;
+        const sink = new PgSink(pool, () => now);
+        await sink.insert('session_inputs', [{ time: BASE - 8n * 86_400_000_000n, sessionId: 'test-unit:1', input: 'headset' }]);
+        assert.equal(sent.length, 1, 'inserted, and no aggregate refresh');
+        assert.match(sent[0]!, /^INSERT INTO telemetry\.session_inputs /);
+        assert.deepEqual(sink.tooOld, {});
     });
 
     test('the sink refreshes the matching aggregate after inserting a backlog, and only then', async () => {

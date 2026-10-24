@@ -15,6 +15,8 @@ export interface PipelineOptions {
     readonly capacity?: number;
     readonly maxBatch?: number;
     readonly flushEveryMs?: number;
+    /** Write rows only for these session ids (TrackerOptions.onlySessions). Default: every session. */
+    readonly onlySessions?: ReadonlySet<bigint>;
 }
 
 export interface Pipeline {
@@ -32,6 +34,7 @@ export function createPipeline(options: PipelineOptions): Pipeline {
     const tracker = new Tracker({
         database: options.source.database,
         emit: (row) => writer?.push(row),
+        onlySessions: options.onlySessions,
     });
     writer = new TelemetryWriter({
         sink: options.sink,

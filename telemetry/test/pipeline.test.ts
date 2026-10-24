@@ -71,6 +71,38 @@ describe('source to tracker to writer to sink', () => {
         assert.equal(pipeline.writer.stats().dropped.switch_events, 0);
     });
 
+    test('a queue overflow during an outage, then a reconnect: the commands that survive and the session input both land', async () => {
+        const timers = new ManualTimers();
+        const sink = new MemorySink();
+        sink.failAlways = true;
+        const s = new Scenario(3n).start(sec(0), true, 'headset-demo').ready();
+        for (let i = 0; i < 30; i++) s.gesture(sec(1 + i), 'NO', 'ignored:idle');
+        // The connection drops and the snapshot replays: the same session_start row, which the tracker has seen.
+        const start = s.events.find((e) => e.type === 'ledger' && e.row.kind === 'session_start')!;
+        s.lost();
+        s.events.push(start);
+        s.ready();
+        const pipeline = createPipeline({ source: new FakeSource('test-overflow', s.events), sink, log: memoryLogger(), timers, capacity: 10 });
+        await pipeline.start(); // a live source cannot pause the server: past capacity the oldest rows go
+        assert.ok(pipeline.writer.stats().dropped.switch_events > 0, 'the queue overflowed');
+        await timers.advance(1_000); // attempt 1 fails
+        await timers.advance(1_000); // attempt 2, after the 1 s wait, fails
+        assert.equal(pipeline.writer.stats().failedFlushes, 2);
+        // Each failed flush tried the session's input first and sent nothing after it.
+        assert.deepEqual(sink.calls.map((c) => c.table), ['session_inputs', 'session_inputs']);
+        sink.failAlways = false;
+        await timers.advance(60_000);
+        await pipeline.stop();
+        const landed = sink.calls.slice(2).map((c) => c.table);
+        assert.equal(landed[0], 'session_inputs', 'the input goes first in the flush that lands');
+        assert.ok(landed.includes('switch_events'));
+        assert.ok(sink.count('switch_events') > 0);
+        assert.deepEqual(sink.rows.get('session_inputs'), [{ time: sec(0), sessionId: 'test-overflow:3', input: 'headset' }]);
+        assert.equal(pipeline.writer.stats().written.session_inputs, 1);
+        assert.equal(pipeline.writer.stats().dropped.session_inputs, 0);
+        assert.equal(pipeline.writer.stats().failedFlushes, 2);
+    });
+
     test('a fake source refuses a real-looking database name', () => {
         assert.throws(() => new FakeSource('say-when-demo', []), /test-/);
     });

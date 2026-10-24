@@ -81,10 +81,13 @@ export class Scenario {
         return this.scanState;
     }
 
-    /** `healthy: null` is a station that has not reported decoder health yet (before its first heartbeat). */
-    start(at: Micros, healthy: boolean | null = true): this {
+    /**
+     * `healthy: null` is a station that has not reported decoder health yet (before its first heartbeat). `label` is
+     * the station's session label, the `session_start` row's outcome (docs/station.md 2.3).
+     */
+    start(at: Micros, healthy: boolean | null = true, label = 'demo'): this {
         this.station(at, true, healthy);
-        this.ledger(at, 'session_start', { outcome: 'demo' });
+        this.ledger(at, 'session_start', { outcome: label });
         this.scanState = { ...this.scanState, stepStartedAt: at, stepEndsAt: at, updatedAt: at };
         this.events.push({ type: 'scan', row: this.scanState });
         return this;

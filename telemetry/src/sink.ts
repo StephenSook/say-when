@@ -1,8 +1,19 @@
-// Multi-row, parameterized inserts into the telemetry hypertables. Every table is insert-only and idempotent on its
-// identity index (ON CONFLICT DO NOTHING), except rest_minutes, whose rows merge with bitwise OR (a union).
+// Multi-row, parameterized inserts into the telemetry hypertables and session_inputs. Every table is insert-only and
+// idempotent on its identity index (ON CONFLICT DO NOTHING), except rest_minutes, whose rows merge with bitwise OR.
 import type pg from 'pg';
 
-import type { ActionOutcomeRow, Micros, PickRow, RestMinuteRow, ScanStepRow, SwitchEventRow, TableName, TelemetryRow } from './types.js';
+import {
+    SESSION_METADATA,
+    type ActionOutcomeRow,
+    type Micros,
+    type PickRow,
+    type RestMinuteRow,
+    type ScanStepRow,
+    type SessionInputRow,
+    type SwitchEventRow,
+    type TableName,
+    type TelemetryRow,
+} from './types.js';
 
 /** A server timestamp (microseconds) as an ISO string with all six fractional digits, so nothing is rounded. */
 export function microsToIso(micros: Micros): string {
@@ -91,6 +102,11 @@ export const SPECS: { readonly [T in TableName]: Spec<T> } = {
             'ON CONFLICT (session_id, time) DO UPDATE SET rest_mask = telemetry.rest_minutes.rest_mask | EXCLUDED.rest_mask, ' +
             'idle_ms = bit_count((telemetry.rest_minutes.rest_mask | EXCLUDED.rest_mask)::bit(64)) * 1000, ingested_at = now()',
     },
+    session_inputs: {
+        columns: ['started_at', 'session_id', 'input'],
+        values: (r: SessionInputRow) => [microsToIso(r.time), r.sessionId, r.input],
+        conflict: 'ON CONFLICT DO NOTHING',
+    },
 };
 
 /** `INSERT INTO telemetry.<table> (...) VALUES ($1, ...), (...) <conflict>` for `count` rows. */
@@ -164,7 +180,8 @@ export class PgSink implements RowSink {
 
     async insert<T extends TableName>(table: T, rows: readonly RowOf<T>[]): Promise<void> {
         const nowMs = this.now();
-        const fresh = rows.filter((r) => nowMs - Number((r as { time: Micros }).time / 1000n) <= OLDEST_ROW_MS);
+        // Session metadata is keyed by session and its time is the session's start: never refused for age.
+        const fresh = SESSION_METADATA.has(table) ? rows : rows.filter((r) => nowMs - Number((r as { time: Micros }).time / 1000n) <= OLDEST_ROW_MS);
         if (fresh.length < rows.length) this.tooOld[table] = (this.tooOld[table] ?? 0) + rows.length - fresh.length;
         if (fresh.length === 0) return;
         await this.pool.query(buildInsert(table, fresh.length), insertParams(table, fresh));

@@ -146,13 +146,19 @@ export async function migrate(pool: pg.Pool, options: MigrateOptions = {}): Prom
 export const HYPERTABLES = ['switch_events', 'scan_steps', 'picks', 'action_outcomes', 'rest_minutes'] as const;
 export type Hypertable = (typeof HYPERTABLES)[number];
 export const AGGREGATES = ['switch_1m', 'idle_1m', 'picks_1m'] as const;
-/** Each hypertable's idempotency index, column by column (sql/01*.sql). */
-export const IDENTITY_COLUMNS: Record<Hypertable, readonly string[]> = {
+/** Plain tables (not hypertables): session_inputs, one row per session (sql/060, request T1). */
+export const PLAIN_TABLES = ['session_inputs'] as const;
+export type PlainTable = (typeof PLAIN_TABLES)[number];
+/** Every table the writer inserts into. */
+export type TelemetryTable = Hypertable | PlainTable;
+/** Each table's idempotency index, column by column (sql/01*.sql, sql/060). */
+export const IDENTITY_COLUMNS: Record<TelemetryTable, readonly string[]> = {
     switch_events: ['session_id', 'ledger_id', 'time'],
     scan_steps: ['session_id', 'step_seq', 'time'],
     picks: ['session_id', 'ledger_id', 'time'],
     action_outcomes: ['session_id', 'kind', 'action_id', 'status', 'time'],
     rest_minutes: ['session_id', 'time'],
+    session_inputs: ['session_id'],
 };
 export const RAW_RETENTION = '7 days';
 export const AGGREGATE_RETENTION = '30 days';
@@ -352,7 +358,7 @@ export interface IdentityIndexRow {
  * Whether an identity index can deduplicate every row: unique, valid, on the right hypertable, not partial, no
  * expressions, no INCLUDE columns, and exactly the expected key columns in order.
  */
-export function judgeIdentityIndex(name: Hypertable, got: IdentityIndexRow | undefined): { ok: boolean; detail: string } {
+export function judgeIdentityIndex(name: TelemetryTable, got: IdentityIndexRow | undefined): { ok: boolean; detail: string } {
     if (!got) return { ok: false, detail: 'missing' };
     const want = IDENTITY_COLUMNS[name];
     const cols = got.cols ?? [];
@@ -382,8 +388,8 @@ export interface ColumnRow {
 }
 
 const TSZ = 'timestamp with time zone';
-/** Every column of every hypertable and its type, exactly as sql/01*.sql and sql/040 leave them. Nothing else. */
-export const EXPECTED_COLUMNS: { readonly [T in Hypertable]: Readonly<Record<string, string>> } = {
+/** Every column of every telemetry table and its type, exactly as sql/01*.sql, sql/040 and sql/060 leave them. */
+export const EXPECTED_COLUMNS: { readonly [T in TelemetryTable]: Readonly<Record<string, string>> } = {
     switch_events: {
         time: TSZ,
         session_id: 'text',
@@ -429,6 +435,7 @@ export const EXPECTED_COLUMNS: { readonly [T in Hypertable]: Readonly<Record<str
     },
     action_outcomes: { time: TSZ, session_id: 'text', kind: 'text', action_id: 'bigint', status: 'text', result: 'text', ingested_at: TSZ },
     rest_minutes: { time: TSZ, session_id: 'text', rest_mask: 'bigint', idle_ms: 'integer', ingested_at: TSZ },
+    session_inputs: { session_id: 'text', input: 'text', started_at: TSZ, ingested_at: TSZ },
 };
 /** Columns that must never be stored, under any type: the station chooses gesture ids (sql/040). */
 export const FORBIDDEN_COLUMNS: ReadonlySet<string> = new Set(['gesture_id']);
@@ -445,7 +452,7 @@ function wordList(col: string, words: readonly string[], nullable = false): stri
  * (pg_get_constraintdef). Whole definitions are compared, so a loosened pattern, a LIKE '%' or an added OR branch
  * cannot pass; a PostgreSQL upgrade that words them differently makes verify fail, never pass.
  */
-export const EXPECTED_TEXT_CHECKS: { readonly [T in Hypertable]: Readonly<Record<string, string>> } = {
+export const EXPECTED_TEXT_CHECKS: { readonly [T in TelemetryTable]: Readonly<Record<string, string>> } = {
     switch_events: {
         session_id: SESSION_SHAPE,
         command: wordList('command', ['YES', 'NO', 'CONFIRM', 'STOP', 'HEADSET_OFF']),
@@ -489,6 +496,7 @@ export const EXPECTED_TEXT_CHECKS: { readonly [T in Hypertable]: Readonly<Record
         result: wordList('result', ['answered', 'no_answer', 'busy', 'voicemail', 'cancelled', 'failed', 'refused', 'unknown', 'other'], true),
     },
     rest_minutes: { session_id: SESSION_SHAPE },
+    session_inputs: { session_id: SESSION_SHAPE, input: wordList('input', ['headset', 'keyboard', 'switch', 'unknown']) },
 };
 
 /**
@@ -496,7 +504,7 @@ export const EXPECTED_TEXT_CHECKS: { readonly [T in Hypertable]: Readonly<Record
  * column was added, and the check can never pass by finding nothing), no forbidden column, and every text column
  * held by a validated CHECK whose whole definition is the expected one. (Any further CHECK can only restrict more.)
  */
-export function judgeColumns(name: Hypertable, rows: readonly ColumnRow[]): { ok: boolean; detail: string } {
+export function judgeColumns(name: TelemetryTable, rows: readonly ColumnRow[]): { ok: boolean; detail: string } {
     const want = EXPECTED_COLUMNS[name];
     const checks = EXPECTED_TEXT_CHECKS[name];
     const mine = rows.filter((r) => r.tbl === name);
@@ -713,17 +721,17 @@ export async function verifySchema(pool: pg.Pool): Promise<VerifyReport> {
              LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum AND k.attnum > 0
              WHERE n.nspname = 'telemetry' AND c.relname = ANY($1::text[])
              GROUP BY c.relname, t.relname, i.indisunique, i.indisvalid, (i.indpred IS NULL), (i.indexprs IS NULL), i.indnkeyatts, i.indnatts`,
-            [HYPERTABLES.map((h) => `${h}_identity`)],
+            [[...HYPERTABLES, ...PLAIN_TABLES].map((h) => `${h}_identity`)],
         )
     ).rows as IdentityIndexRow[];
-    for (const name of HYPERTABLES) {
+    for (const name of [...HYPERTABLES, ...PLAIN_TABLES]) {
         const verdict = judgeIdentityIndex(name, indexRows.find((r) => r.index === `${name}_identity`));
         add(`idempotency index telemetry.${name}_identity`, verdict.ok, verdict.detail);
     }
 
-    // Content-free storage, read from the live catalog over every column (of any type) of every hypertable: exactly
-    // the expected columns and types, no gesture id (sql/040), and each text column held by a validated CHECK to a
-    // pattern or a word list (judgeColumns reads the constraint definitions).
+    // Content-free storage, read from the live catalog over every column (of any type) of every hypertable and of
+    // session_inputs: exactly the expected columns and types, no gesture id (sql/040), and each text column held by a
+    // validated CHECK to a pattern or a word list (judgeColumns reads the constraint definitions).
     const columns = (
         await pool.query(
             `SELECT c.relname AS tbl, a.attname AS col, format_type(a.atttypid, a.atttypmod) AS type,
@@ -735,10 +743,10 @@ export async function verifySchema(pool: pg.Pool): Promise<VerifyReport> {
              WHERE n.nspname = 'telemetry' AND c.relname = ANY($1::text[])
              GROUP BY c.relname, a.attname, a.attnum, a.atttypid, a.atttypmod
              ORDER BY c.relname, a.attnum`,
-            [[...HYPERTABLES]],
+            [[...HYPERTABLES, ...PLAIN_TABLES]],
         )
     ).rows as ColumnRow[];
-    for (const name of HYPERTABLES) {
+    for (const name of [...HYPERTABLES, ...PLAIN_TABLES]) {
         const verdict = judgeColumns(name, columns);
         add(`columns telemetry.${name}`, verdict.ok, verdict.detail);
     }
