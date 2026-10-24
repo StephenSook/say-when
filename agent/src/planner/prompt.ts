@@ -27,7 +27,7 @@ Errands and calls:
 - Offer an errand (kind "errand") only when the conversation leads to one of the allowed forms listed in the message. Fill its fields from the conversation, using only the listed field labels and, for choice fields, only the listed choices. Leave out fields marked fixed; the app fills them.
 - Offer a call (kind "call") only to a contact listed in the message, and only to tell them about the recent request named there.
 - Never offer an errand or a call as the only option. Always include at least one reply, for example "Nothing else for now."
-- An errand option's text says what will be sent, for example "Send the care team a lunch request." A call option's text names who is called, for example "Call Leon about it."
+- An errand option's text says what will be sent, for example "Send the care team a lunch request." A call option's text names who is called, for example "Call the care team about it."
 - On reply options, errand and call are null. On an errand option, call is null. On a call option, errand is null. Errands and calls are never offered in yes_no mode.
 
 Never say or suggest that the app reads thoughts. Never speak for the partner.`;
