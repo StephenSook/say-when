@@ -9,6 +9,6 @@ const report = await dialerFromEnv().preflight();
 console.log(`consent list: ${report.consentCount} people`);
 console.log(`do-not-call list: ${report.doNotCallCount} numbers`);
 console.log(`script: ${report.scriptProblems.length === 0 ? 'ok' : report.scriptProblems.join('; ')}`);
-console.log(`published agent: ${report.agent === 'skipped' ? 'not checked' : report.agent.ok ? 'matches the script' : `${report.agent.code} (${report.agent.what})`}`);
-console.log(`calling hours now: ${report.insideHoursNow ? 'yes' : 'no (9 AM to 9 PM Pacific only)'}`);
+console.log(`published agent: ${report.agent.ok ? 'matches cartesia/agent/ exactly' : `${report.agent.code} (${report.agent.what})`}`);
+console.log(`calling hours now: ${report.insideHoursNow ? 'yes, for everyone on the list' : 'no (9 AM to 9 PM in their time zone and in Pacific time)'}`);
 if (!report.ok) process.exitCode = 1;

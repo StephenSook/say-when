@@ -1,12 +1,14 @@
 // Server side, CALL stretch: one consented outbound call through a Cartesia Managed Agent, after a read-back and a
-// fresh confirm. The model never dials. Numbers come only from a private consent list and never reach events or logs.
+// fresh CONFIRM (double jaw clench), the only command that releases the dial. STOP (long jaw clench), HEADSET-OFF and
+// the idle auto-pause cancel or hang up. The model never dials. Numbers come only from a private consent list and
+// never reach events, errors or logs.
 
 import { createHash } from 'node:crypto';
 import { appendFileSync, readFileSync } from 'node:fs';
 
-import { checkAgentScript, normalizeScript, renderTemplate, type AgentScript } from './call-script.js';
-import { emit, type OnEvent } from './events.js';
-import { buildRequest, send, type FetchLike } from './http.js';
+import { checkAgentScript, firstDifference, loadAgentScript, renderTemplate, type AgentScript } from './call-script.js';
+import { emit, redact, type OnEvent } from './events.js';
+import { buildRequest, send, type FetchLike, type HttpResponse } from './http.js';
 import { isEmergencyNumber, spokenNumber, toUsE164 } from './phone.js';
 import { checkLibraryVoices } from './voices.js';
 
@@ -19,11 +21,13 @@ export class CallConfigError extends Error {
 
 /** One person who agreed, in writing, to AI-voice calls and to recording. Lives in a private file, never in code. */
 export interface ConsentEntry {
-    /** Short id the app uses, for example "leon". Never the number. */
+    /** Short id the app uses, for example "leon". Starts with a letter; never the number. */
     id: string;
     /** The name the call uses, for example "Leon". */
     name: string;
     phone: string;
+    /** The recipient's own IANA time zone, for example "America/New_York". Calling hours are checked in it. */
+    timeZone: string;
     /** What they agreed to, word for word. */
     consentText: string;
     consentedAt: string;
@@ -32,7 +36,7 @@ export interface ConsentEntry {
 
 export interface CallLists {
     consent: ConsentEntry[];
-    /** E.164 numbers that asked not to be called. Checked before every prepare and every dial. */
+    /** E.164 numbers that asked not to be called. Checked before every prepare, every confirm and every dial. */
     doNotCall: Set<string>;
 }
 
@@ -40,7 +44,28 @@ function text(value: unknown): string {
     return typeof value === 'string' ? value.trim() : '';
 }
 
-/** Parses the consent file. Errors name the entry id or position, never the number. */
+/** Letters (any language), spaces, apostrophes, hyphens and periods: a name, never markup or a number. */
+const PLAIN_NAME = /^\p{L}[\p{L} .'-]{0,39}$/u;
+/** Starts with a letter and has no run of three digits, so an id can never be shaped like a phone number. */
+const CONTACT_ID = /^[a-z][a-z0-9_-]{0,39}$/;
+// Calls only reach +1 numbers, whose zones are all IANA America/... or Pacific/... (Honolulu, Guam, Pago Pago).
+const ZONE_SHAPE = /^(America|Pacific)(?:\/[A-Za-z0-9_+-]+){1,2}$/;
+
+/**
+ * An IANA zone name the runtime knows, in the America or Pacific areas: America/New_York or
+ * America/Indiana/Indianapolis, never an alias like US/Eastern or an abbreviation like EST.
+ */
+export function isUsableTimeZone(zone: unknown): zone is string {
+    if (typeof zone !== 'string' || !ZONE_SHAPE.test(zone)) return false;
+    try {
+        new Intl.DateTimeFormat('en-US', { timeZone: zone });
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+/** Parses the consent file. Errors name the entry's position only, never its id, name or number. */
 export function parseConsentList(json: string, now: number = Date.now()): ConsentEntry[] {
     let raw: unknown;
     try {
@@ -49,28 +74,34 @@ export function parseConsentList(json: string, now: number = Date.now()): Consen
         throw new CallConfigError('The consent list is not valid JSON.');
     }
     if (!Array.isArray(raw)) throw new CallConfigError('The consent list must be a JSON array.');
-    const seen = new Set<string>();
+    const seen = new Map<string, number>();
     return raw.map((item: unknown, i) => {
-        if (!item || typeof item !== 'object') throw new CallConfigError(`Consent entry ${i} is not an object.`);
+        const where = `Consent entry ${i}`;
+        if (!item || typeof item !== 'object') throw new CallConfigError(`${where} is not an object.`);
         const record = item as Record<string, unknown>;
         const id = text(record.id);
-        if (!/^[a-z0-9_-]{1,40}$/.test(id)) throw new CallConfigError(`Consent entry ${i} needs an id of lowercase letters, digits, - or _.`);
-        if (seen.has(id)) throw new CallConfigError(`Consent id ${id} appears twice.`);
-        seen.add(id);
+        if (!CONTACT_ID.test(id) || /\d{3}/.test(id)) {
+            throw new CallConfigError(`${where} needs an id that starts with a letter, uses lowercase letters, digits, - or _, and has no run of three digits.`);
+        }
+        const first = seen.get(id);
+        if (first !== undefined) throw new CallConfigError(`Consent entries ${first} and ${i} share an id.`);
+        seen.set(id, i);
         const name = text(record.name);
-        if (!name || name.length > 60 || /[{}<>[\]\d]/.test(name)) throw new CallConfigError(`Consent entry ${id} needs a plain name.`);
+        if (!PLAIN_NAME.test(name)) throw new CallConfigError(`${where} needs a plain name of letters, up to 40 characters.`);
         const phone = toUsE164(text(record.phone));
-        if (!phone) throw new CallConfigError(`Consent entry ${id} does not have a US phone number.`);
-        if (isEmergencyNumber(phone)) throw new CallConfigError(`Consent entry ${id} is an emergency number, which is never called.`);
+        if (!phone) throw new CallConfigError(`${where} does not have a US phone number.`);
+        if (isEmergencyNumber(phone)) throw new CallConfigError(`${where} is an emergency number, which is never called.`);
+        const timeZone = text(record.timeZone);
+        if (!isUsableTimeZone(timeZone)) throw new CallConfigError(`${where} needs the recipient's time zone, an IANA name such as America/Los_Angeles.`);
         const consentText = text(record.consentText);
-        if (consentText.length < 20) throw new CallConfigError(`Consent entry ${id} needs the consent text they agreed to.`);
+        if (consentText.length < 20) throw new CallConfigError(`${where} needs the consent text they agreed to.`);
         const consentedAt = text(record.consentedAt);
         const consentedMs = Date.parse(consentedAt);
-        if (Number.isNaN(consentedMs) || consentedMs > now) throw new CallConfigError(`Consent entry ${id} needs a past consentedAt time.`);
-        const entry: ConsentEntry = { id, name, phone, consentText, consentedAt };
+        if (Number.isNaN(consentedMs) || consentedMs > now) throw new CallConfigError(`${where} needs a past consentedAt time.`);
+        const entry: ConsentEntry = { id, name, phone, timeZone, consentText, consentedAt };
         if (record.expiresAt !== undefined) {
             const expiresAt = text(record.expiresAt);
-            if (Number.isNaN(Date.parse(expiresAt))) throw new CallConfigError(`Consent entry ${id} has an unreadable expiresAt.`);
+            if (Number.isNaN(Date.parse(expiresAt))) throw new CallConfigError(`${where} has an unreadable expiresAt.`);
             entry.expiresAt = expiresAt;
         }
         return entry;
@@ -80,13 +111,15 @@ export function parseConsentList(json: string, now: number = Date.now()): Consen
 /** One number per line or comma, # for comments. An unreadable line stops startup rather than being skipped. */
 export function parseDoNotCall(source: string): Set<string> {
     const numbers = new Set<string>();
-    for (const line of source.split(/[\n,]/)) {
-        const value = line.replace(/#.*/, '').trim();
-        if (!value) continue;
-        const number = toUsE164(value);
-        if (!number) throw new CallConfigError('A do-not-call line is not a US phone number.');
-        numbers.add(number);
-    }
+    source.split('\n').forEach((line, index) => {
+        for (const part of line.replace(/#.*/, '').split(',')) {
+            const value = part.trim();
+            if (!value) continue;
+            const number = toUsE164(value);
+            if (!number) throw new CallConfigError(`Do-not-call line ${index + 1} is not a US phone number.`);
+            numbers.add(number);
+        }
+    });
     return numbers;
 }
 
@@ -106,12 +139,14 @@ export function appendToDoNotCallFile(path: string, e164: string): void {
     appendFileSync(path, `${e164}\n`, 'utf8');
 }
 
-/** California bars these calls from 9 PM to 9 AM (PUC 2872(c)). The whole call must fit inside 9 AM to 9 PM Pacific. */
-export const CALL_WINDOW = { startMinute: 9 * 60, endMinute: 21 * 60, timeZone: 'America/Los_Angeles' } as const;
+/** Calls only go out between 9 AM and 9 PM. */
+export const CALL_WINDOW = { startMinute: 9 * 60, endMinute: 21 * 60 } as const;
+/** The demo is in San Francisco, and California bars these calls from 9 PM to 9 AM (PUC 2872(c)). */
+export const VENUE_TIME_ZONE = 'America/Los_Angeles';
 
-function pacific(ms: number): { day: string; minute: number } {
+function localClock(ms: number, timeZone: string): { day: string; minute: number } {
     const parts = new Intl.DateTimeFormat('en-US', {
-        timeZone: CALL_WINDOW.timeZone,
+        timeZone,
         year: 'numeric',
         month: '2-digit',
         day: '2-digit',
@@ -123,20 +158,35 @@ function pacific(ms: number): { day: string; minute: number } {
     return { day: `${get('year')}-${get('month')}-${get('day')}`, minute: Number(get('hour')) * 60 + Number(get('minute')) };
 }
 
-export function insideCallingHours(startMs: number, spanMs: number): boolean {
-    const start = pacific(startMs);
-    const end = pacific(startMs + spanMs);
+function fitsWindow(startMs: number, spanMs: number, timeZone: string): boolean {
+    const start = localClock(startMs, timeZone);
+    const end = localClock(startMs + spanMs, timeZone);
     return start.day === end.day && start.minute >= CALL_WINDOW.startMinute && end.minute < CALL_WINDOW.endMinute;
 }
 
-function clockTime(ms: number): string {
-    return new Intl.DateTimeFormat('en-US', { timeZone: CALL_WINDOW.timeZone, hour: 'numeric', minute: '2-digit' })
-        .format(new Date(ms))
-        .replace(/\s+/g, ' ');
+/**
+ * The whole call (ringing plus the duration cap) must fit inside 9 AM to 9 PM in the recipient's own time zone, and
+ * also in Pacific time for the venue. A wrong zone can therefore only make the window smaller, never larger.
+ */
+export function insideCallingHours(startMs: number, spanMs: number, recipientTimeZone: string): boolean {
+    return isUsableTimeZone(recipientTimeZone) && fitsWindow(startMs, spanMs, recipientTimeZone) && fitsWindow(startMs, spanMs, VENUE_TIME_ZONE);
 }
+
+function clockTime(ms: number, timeZone: string): string {
+    return new Intl.DateTimeFormat('en-US', { timeZone, hour: 'numeric', minute: '2-digit' }).format(new Date(ms)).replace(/\s+/g, ' ');
+}
+
+/**
+ * The errand titles a call may report, set by the team, never taken from a web page. A form's own title is only used
+ * to pick one of these, so nothing a form says can reach the agent's prompt.
+ */
+export const DEFAULT_ERRAND_TITLES = ['Care team request'] as const;
+const ERRAND_TITLE = /^[A-Za-z0-9][A-Za-z0-9 ,.'&()-]{0,39}$/;
+const titleKey = (title: string): string => title.replace(/\s+/g, ' ').trim().toLowerCase();
 
 export type RefusalCode =
     | 'bad_request'
+    | 'errand_not_allowed'
     | 'not_consented'
     | 'consent_expired'
     | 'do_not_call'
@@ -154,13 +204,14 @@ export type RefusalCode =
 /** Sentences written for the earpiece. None of them contains a number. */
 export const REFUSALS: Readonly<Record<RefusalCode, string>> = {
     bad_request: 'The call request was not valid, so I did not call.',
+    errand_not_allowed: 'I can only call about the errands on the approved list, so I did not call.',
     not_consented: 'That person has not agreed to calls, so I did not call.',
     consent_expired: 'Their agreement to calls has expired, so I did not call.',
     do_not_call: 'That person asked not to be called, so I did not call.',
     emergency_number: 'I never call emergency numbers. This is not an emergency tool.',
     bad_number: 'That is not a number I can call.',
     errand_stale: 'There is no request sent in the last ten minutes to call about.',
-    outside_hours: 'It is too late or too early to call. Calls only go out between 9 AM and 9 PM.',
+    outside_hours: 'It is too late or too early to call. Calls only go out between 9 AM and 9 PM their time.',
     expired: 'That call request expired. Ask again.',
     digest_mismatch: 'The call changed after it was read back, so I did not call.',
     already_used: 'That confirm was already used, so I did not call again.',
@@ -177,10 +228,10 @@ export interface CallRefusal {
 const refusal = (code: RefusalCode): CallRefusal => ({ code, reason: REFUSALS[code] });
 
 export interface CallRequest {
-    /** Unique per CALL command, for example the call_request row id. */
+    /** Unique per CALL request, for example the call_request row id. */
     requestId: string;
     contactId: string;
-    /** The errand this call reports. Only "your <title> was sent at <time>" is ever said; nothing new is promised. */
+    /** The errand this call reports. Only "<person>'s <approved title> was sent at <time>" is ever said. */
     errand: { title: string; sentAt: string | number | Date };
 }
 
@@ -191,25 +242,28 @@ export interface PreparedCall {
     recipientName: string;
     /** For the earpiece, before the confirm window opens. */
     readBack: string;
-    /** 16 hex characters over who is called and every word of the script; the confirm must carry it. */
+    /** 16 hex characters over who is called and every word of the script; the CONFIRM must carry it. */
     digest: string;
     expiresAt: number;
 }
 
 interface Prepared extends PreparedCall {
     toNumber: string;
+    timeZone: string;
     variables: Record<string, string>;
     errandSentAt: number;
+    confirmedAt: number;
 }
 
 export type CallPhase = 'checking' | 'dialing' | 'ringing' | 'connected' | 'ended';
 export type CallResult = 'answered' | 'no_answer' | 'busy' | 'voicemail' | 'cancelled' | 'failed' | 'refused' | 'unknown';
-export type CancelReason = 'no' | 'pause' | 'headset_off' | 'operator';
+/** STOP (long jaw clench), HEADSET-OFF, the 2-minute idle auto-pause, or a teammate at the dashboard. */
+export type CancelReason = 'stop' | 'headset_off' | 'auto_pause' | 'operator';
 
 export interface CallOutcome {
     requestId: string;
     result: CallResult;
-    /** 'unknown' when the dial request got no answer: it may or may not have gone out. It is never retried. */
+    /** 'unknown' when the dial got no clear answer: it may or may not have gone out. It is never retried. */
     dialed: boolean | 'unknown';
     callId: string | null;
     endReason: string | null;
@@ -218,12 +272,12 @@ export interface CallOutcome {
     optedOut: boolean;
     /** One sentence for the earpiece, without numbers. */
     spoken: string;
-    /** Cartesia's own call summary, if any. Content: keep it out of public rows unless the recipient agreed. */
+    /** Cartesia's own call summary with phone numbers masked. Still content: keep it out of public rows unless agreed. */
     summary: string | null;
     ms: number;
 }
 
-/** For the dashboard row. The transcript is content: show it only with the recipient's agreement. */
+/** For the dashboard row. Phone numbers are masked; the rest is content, shown only with the recipient's agreement. */
 export interface CallSnapshot {
     requestId: string;
     phase: CallPhase;
@@ -235,7 +289,7 @@ export interface CallSnapshot {
 
 export interface DialerConfig {
     apiKey: string;
-    /** A published Managed Agent whose welcome and instructions match cartesia/agent/. */
+    /** A published Managed Agent whose welcome and instructions are exactly cartesia/agent/welcome.txt and instructions.txt. */
     agentId: string;
     /** The Cartesia phone number id (not the number) to call from. */
     fromNumberId: string;
@@ -243,7 +297,8 @@ export interface DialerConfig {
     callbackNumber: string;
     /** Who the call is for, as spoken. */
     personName: string;
-    script: AgentScript;
+    /** The errand titles a call may report. Defaults to DEFAULT_ERRAND_TITLES. */
+    errandTitles?: readonly string[];
     /** 5 to 80 seconds (API range). Short, because a ringing call cannot be cancelled. */
     ringingTimeoutSeconds?: number;
     /** 1 to 10 minutes (our cap). */
@@ -251,8 +306,8 @@ export interface DialerConfig {
     pollIntervalMs?: number;
     preparedTtlMs?: number;
     maxErrandAgeMs?: number;
-    /** "skip" only after someone has checked the published agent by eye. */
-    agentCheck?: 'require' | 'skip';
+    /** A CONFIRM is only good for this long; the agent check must finish inside it. */
+    maxConfirmToDialMs?: number;
 }
 
 export interface DialerDeps {
@@ -304,13 +359,6 @@ function hearsOptOut(transcript: readonly { role: string; text: string }[]): boo
     return transcript.some((turn) => turn.role === 'user' && OPT_OUT.test(turn.text.replace(/[\u2018\u2019]/g, "'")));
 }
 
-function cleanTitle(raw: unknown): string | null {
-    if (typeof raw !== 'string') return null;
-    const title = raw.replace(/[{}<>[\]]/g, ' ').replace(/\s+/g, ' ').trim();
-    if (!title || title.length > 80 || /\d{7,}/.test(title.replace(/[\s().-]/g, ''))) return null;
-    return title;
-}
-
 function toMs(value: unknown): number | null {
     const ms = value instanceof Date ? value.getTime() : typeof value === 'number' ? value : typeof value === 'string' ? Date.parse(value) : NaN;
     return Number.isFinite(ms) ? ms : null;
@@ -318,7 +366,7 @@ function toMs(value: unknown): number | null {
 
 const enc = encodeURIComponent;
 
-/** A placed (or about to be placed) call. NO, PAUSE and HEADSET-OFF all go through cancel(). */
+/** A placed (or about to be placed) call. STOP, HEADSET-OFF and the idle auto-pause all go through cancel(). */
 export class CallHandle {
     phase: CallPhase = 'checking';
     status: string | null = null;
@@ -326,6 +374,7 @@ export class CallHandle {
     cancelReason: CancelReason | null = null;
     cancelConfirmed = false;
     cancelInFlight = false;
+    optedOut = false;
     finished = false;
     transcript: { role: string; text: string }[] = [];
     readonly done: Promise<CallOutcome>;
@@ -370,10 +419,12 @@ export interface AgentCheck {
 }
 
 /**
- * Reads the published agent (GET /v1/agents/{id}) and confirms it will say the reviewed script: the same welcome and
- * instructions, no voicemail message we have not reviewed, and a Cartesia library voice (never a clone).
+ * Reads the published agent (GET /v1/agents/{id}) and confirms, against the canonical files in cartesia/agent/ and
+ * nothing else, that it will say exactly the reviewed script: the same welcome and instructions character for
+ * character, no voicemail message we have not reviewed, and a Cartesia library voice (never a clone).
  */
-export async function verifyAgent(options: { apiKey: string; agentId: string; script: AgentScript; fetch?: FetchLike }): Promise<AgentCheck> {
+export async function verifyAgent(options: { apiKey: string; agentId: string; fetch?: FetchLike }): Promise<AgentCheck> {
+    const script = loadAgentScript();
     let config: Record<string, unknown>;
     try {
         const response = await send(buildRequest(options.apiKey, 'GET', `/v1/agents/${enc(options.agentId)}`), options.fetch, 10_000);
@@ -385,13 +436,13 @@ export async function verifyAgent(options: { apiKey: string; agentId: string; sc
     }
     const field = (record: unknown, key: string): unknown =>
         record && typeof record === 'object' ? (record as Record<string, unknown>)[key] : undefined;
-    const welcome = field(config, 'initial_message');
-    if (typeof welcome !== 'string' || normalizeScript(welcome) !== normalizeScript(options.script.welcome)) {
-        return { ok: false, code: 'agent_mismatch', what: 'welcome message' };
-    }
-    const instructions = field(config, 'instructions');
-    if (typeof instructions !== 'string' || normalizeScript(instructions) !== normalizeScript(options.script.instructions)) {
-        return { ok: false, code: 'agent_mismatch', what: 'instructions' };
+    for (const [key, expected, label] of [
+        ['initial_message', script.welcome, 'welcome message'],
+        ['instructions', script.instructions, 'instructions'],
+    ] as const) {
+        const live = field(config, key);
+        if (typeof live !== 'string') return { ok: false, code: 'agent_mismatch', what: `${label} missing` };
+        if (live !== expected) return { ok: false, code: 'agent_mismatch', what: `${label}: first difference at character ${firstDifference(live, expected)}` };
     }
     // Whether variables are filled in a voicemail message is not documented, so none is allowed: hang up instead.
     const voicemail = field(field(config, 'system_tools'), 'voicemail_detection');
@@ -447,25 +498,31 @@ export interface PreflightReport {
     consentCount: number;
     doNotCallCount: number;
     scriptProblems: string[];
-    agent: AgentCheck | 'skipped';
+    agent: AgentCheck;
+    /** True when every consented recipient is inside calling hours right now. */
     insideHoursNow: boolean;
 }
 
 /**
  * Holds the consent list, the do-not-call list and at most one call. prepare() builds the read-back and its digest;
- * place() needs that exact digest from a fresh confirm, dials once, and never retries.
+ * place() needs that exact digest from a fresh CONFIRM, checks everything again right before dialing, dials once,
+ * and never retries.
  */
 export class Dialer {
     readonly callIds: string[] = [];
     private readonly prepared = new Map<string, Prepared>();
     private readonly usedDigests = new Set<string>();
     private active: CallHandle | null = null;
+    private readonly script: AgentScript;
+    private readonly titles: Map<string, string>;
     private readonly callback: string;
+    private readonly personName: string;
     private readonly ringSeconds: number;
     private readonly durationMinutes: number;
     private readonly pollMs: number;
     private readonly preparedTtlMs: number;
     private readonly maxErrandAgeMs: number;
+    private readonly maxConfirmToDialMs: number;
     private readonly now: () => number;
     private readonly sleep: (ms: number) => Promise<void>;
 
@@ -479,9 +536,22 @@ export class Dialer {
         const callback = toUsE164(config.callbackNumber ?? '');
         if (!callback || isEmergencyNumber(callback)) throw new CallConfigError('CALL_CALLBACK_NUMBER must be a US number in E.164.');
         this.callback = callback;
-        if (!config.personName?.trim() || /[{}<>[\]\d]/.test(config.personName)) throw new CallConfigError('CALL_PERSON_NAME must be a plain name.');
-        const problems = checkAgentScript(config.script);
+        this.personName = text(config.personName);
+        if (!PLAIN_NAME.test(this.personName)) throw new CallConfigError('CALL_PERSON_NAME must be a plain name of letters, up to 40 characters.');
+        // The baseline is always the canonical files, read here, never a script passed in.
+        this.script = loadAgentScript();
+        const problems = checkAgentScript(this.script);
         if (problems.length > 0) throw new CallConfigError(`The agent script is not ready: ${problems.join('; ')}.`);
+        const titles = config.errandTitles ?? DEFAULT_ERRAND_TITLES;
+        if (titles.length === 0) throw new CallConfigError('At least one errand title is needed.');
+        this.titles = new Map();
+        titles.forEach((title, i) => {
+            const clean = text(title).replace(/\s+/g, ' ');
+            if (!ERRAND_TITLE.test(clean) || /\d{3}/.test(clean)) {
+                throw new CallConfigError(`Errand title ${i} must be up to 40 letters, digits, spaces or basic punctuation.`);
+            }
+            this.titles.set(titleKey(clean), clean);
+        });
         this.ringSeconds = config.ringingTimeoutSeconds ?? 25;
         if (!Number.isInteger(this.ringSeconds) || this.ringSeconds < 5 || this.ringSeconds > 80) {
             throw new CallConfigError('ringingTimeoutSeconds must be 5 to 80.');
@@ -493,6 +563,7 @@ export class Dialer {
         this.pollMs = config.pollIntervalMs ?? 1500;
         this.preparedTtlMs = config.preparedTtlMs ?? 2 * 60_000;
         this.maxErrandAgeMs = config.maxErrandAgeMs ?? 10 * 60_000;
+        this.maxConfirmToDialMs = config.maxConfirmToDialMs ?? 30_000;
         this.now = deps.now ?? Date.now;
         this.sleep = deps.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
     }
@@ -510,7 +581,19 @@ export class Dialer {
         if (isEmergencyNumber(number)) return refusal('emergency_number');
         if (this.lists.doNotCall.has(number)) return refusal('do_not_call');
         if (now - errandSentAt > this.maxErrandAgeMs || errandSentAt - now > 60_000) return refusal('errand_stale');
-        if (!insideCallingHours(now, this.spanMs())) return refusal('outside_hours');
+        if (!insideCallingHours(now, this.spanMs(), contact.timeZone)) return refusal('outside_hours');
+        return null;
+    }
+
+    /** Everything again, against the current lists and clock: used at the confirm and right before the dial. */
+    private recheck(call: Prepared, now: number): CallRefusal | null {
+        const contact = this.lists.consent.find((entry) => entry.id === call.contactId);
+        const blocked = this.check(contact, call.errandSentAt, now);
+        if (blocked) return blocked;
+        if (!contact || toUsE164(contact.phone) !== call.toNumber || contact.timeZone !== call.timeZone || contact.name !== call.recipientName) {
+            return refusal('digest_mismatch');
+        }
+        if (now > call.expiresAt || (call.confirmedAt > 0 && now - call.confirmedAt > this.maxConfirmToDialMs)) return refusal('expired');
         return null;
     }
 
@@ -523,22 +606,23 @@ export class Dialer {
     prepare(request: CallRequest): { ok: true; call: PreparedCall } | { ok: false; refusal: CallRefusal } {
         const now = this.now();
         if (!request || typeof request.requestId !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(request.requestId)) return this.refuse('bad_request');
-        const title = cleanTitle(request.errand?.title);
         const sentAt = toMs(request.errand?.sentAt);
-        if (!title || sentAt === null) return this.refuse('bad_request');
+        if (sentAt === null) return this.refuse('bad_request');
+        const title = typeof request.errand?.title === 'string' ? this.titles.get(titleKey(request.errand.title)) : undefined;
+        if (!title) return this.refuse('errand_not_allowed');
         const contact = this.lists.consent.find((entry) => entry.id === request.contactId);
         const blocked = this.check(contact, sentAt, now);
         if (blocked || !contact) return this.refuse(blocked?.code ?? 'not_consented');
         const variables: Record<string, string> = {
             recipient_name: contact.name,
-            person_name: this.config.personName.trim(),
+            person_name: this.personName,
             callback_number: spokenNumber(this.callback),
-            message: `${this.config.personName.trim()}'s ${title} was sent at ${clockTime(sentAt)}`,
+            message: `${this.personName}'s ${title} was sent at ${clockTime(sentAt, contact.timeZone)}`,
         };
         const toNumber = toUsE164(contact.phone) as string;
-        const spoken = [renderTemplate(this.config.script.welcome, variables), renderTemplate(this.config.script.instructions, variables)];
+        const spoken = [renderTemplate(this.script.welcome, variables), renderTemplate(this.script.instructions, variables)];
         const digest = createHash('sha256')
-            .update(JSON.stringify([contact.id, toNumber, ...spoken.map(normalizeScript)]))
+            .update(JSON.stringify([contact.id, toNumber, contact.timeZone, ...spoken]))
             .digest('hex')
             .slice(0, 16);
         const call: Prepared = {
@@ -549,8 +633,10 @@ export class Dialer {
             digest,
             expiresAt: now + this.preparedTtlMs,
             toNumber,
+            timeZone: contact.timeZone,
             variables,
             errandSentAt: sentAt,
+            confirmedAt: 0,
         };
         this.prepared.set(call.requestId, call);
         emit(this.deps.onEvent, { stage: 'call', status: 'ok', detail: 'read-back ready', ms: 0 });
@@ -567,7 +653,10 @@ export class Dialer {
         };
     }
 
-    /** Places the call for a fresh confirm whose digest matches the read-back. One confirm, one call, no retries. */
+    /**
+     * Places the call for a fresh CONFIRM whose digest matches the read-back. One CONFIRM, one call, no retries.
+     * Every guard runs here and again immediately before the dial request.
+     */
     place(requestId: string, confirmDigest: string): { ok: true; handle: CallHandle } | { ok: false; refusal: CallRefusal } {
         const now = this.now();
         const call = this.prepared.get(requestId);
@@ -579,20 +668,19 @@ export class Dialer {
         if (confirmDigest !== call.digest) return this.refuse('digest_mismatch');
         if (this.usedDigests.has(call.digest)) return this.refuse('already_used');
         if (this.active && !this.active.finished) return this.refuse('line_busy');
-        const contact = this.lists.consent.find((entry) => entry.id === call.contactId);
-        const blocked = this.check(contact, call.errandSentAt, now);
+        const blocked = this.recheck(call, now);
         if (blocked) return this.refuse(blocked.code);
-        if (!contact || toUsE164(contact.phone) !== call.toNumber) return this.refuse('digest_mismatch');
         // Consume the confirm before anything can fail, so one confirm can never place two calls.
         this.usedDigests.add(call.digest);
         this.prepared.delete(requestId);
+        call.confirmedAt = now;
         const handle = new CallHandle(requestId, (h) => this.onCancel(h));
         this.active = handle;
         void this.run(handle, call);
         return { ok: true, handle };
     }
 
-    /** NO, PAUSE or HEADSET-OFF from the station. */
+    /** STOP, HEADSET-OFF or the idle auto-pause from the station. */
     cancelActive(reason: CancelReason): void {
         this.active?.cancel(reason);
     }
@@ -619,14 +707,12 @@ export class Dialer {
 
     /** Checks everything except dialing. Reads the published agent; places no call. */
     async preflight(): Promise<PreflightReport> {
-        const scriptProblems = checkAgentScript(this.config.script);
-        const agent =
-            this.config.agentCheck === 'skip'
-                ? 'skipped'
-                : await verifyAgent({ apiKey: this.config.apiKey, agentId: this.config.agentId, script: this.config.script, fetch: this.deps.fetch });
-        const insideHoursNow = insideCallingHours(this.now(), this.spanMs());
+        const scriptProblems = checkAgentScript(this.script);
+        const agent = await verifyAgent({ apiKey: this.config.apiKey, agentId: this.config.agentId, fetch: this.deps.fetch });
+        const now = this.now();
+        const insideHoursNow = this.lists.consent.length > 0 && this.lists.consent.every((entry) => insideCallingHours(now, this.spanMs(), entry.timeZone));
         return {
-            ok: scriptProblems.length === 0 && this.lists.consent.length > 0 && (agent === 'skipped' || agent.ok),
+            ok: scriptProblems.length === 0 && this.lists.consent.length > 0 && agent.ok,
             consentCount: this.lists.consent.length,
             doNotCallCount: this.lists.doNotCall.size,
             scriptProblems,
@@ -659,7 +745,8 @@ export class Dialer {
                 status: handle.status,
                 cancelPending: handle.cancelPending,
                 callId: handle.callId,
-                transcript: handle.transcript,
+                // Phone numbers spoken on the call are masked before they leave the dialer.
+                transcript: handle.transcript.map((turn) => ({ role: turn.role, text: redact(turn.text) })),
             });
         } catch {
             // A dashboard problem must not stop a cancel.
@@ -692,7 +779,7 @@ export class Dialer {
                 endReason: null,
                 cancelReason: handle.cancelReason,
                 refusal: null,
-                optedOut: false,
+                optedOut: handle.optedOut,
                 spoken: '',
                 summary: null,
                 ms: this.now() - started,
@@ -710,11 +797,12 @@ export class Dialer {
             this.update(handle);
         };
         try {
-            if (this.config.agentCheck !== 'skip') {
-                const check = await verifyAgent({ apiKey: this.config.apiKey, agentId: this.config.agentId, script: this.config.script, fetch: this.deps.fetch });
-                if (!check.ok) return end('refused', { refusal: refusal(check.code ?? 'agent_unverified') });
-            }
+            const check = await verifyAgent({ apiKey: this.config.apiKey, agentId: this.config.agentId, fetch: this.deps.fetch });
+            if (!check.ok) return end('refused', { refusal: refusal(check.code ?? 'agent_unverified') });
             if (handle.cancelReason) return end('cancelled');
+            // Every guard again, right before the request: consent, do-not-call, the number, the hours, a fresh confirm.
+            const blocked = this.recheck(call, this.now());
+            if (blocked) return end('refused', { refusal: blocked });
             handle.phase = 'dialing';
             emit(this.deps.onEvent, { stage: 'call', status: 'started', detail: 'dialing', ms: 0 });
             this.update(handle);
@@ -727,27 +815,32 @@ export class Dialer {
                     outbound_calls: [{ to_number: call.toNumber, dynamic_variables: call.variables }],
                 },
             });
-            let response: { status: number; text: string };
+            let response: HttpResponse;
             try {
                 // Sent exactly once. A timeout may still have dialed, so it is reported, never retried.
                 response = await send(request, this.deps.fetch, 20_000);
             } catch {
                 return end('unknown', { dialed: 'unknown' });
             }
-            if (response.status < 200 || response.status >= 300) return end('failed');
-            let first: Record<string, unknown> | undefined;
+            // A 4xx is an explicit refusal: nothing was dialed. A 5xx or anything else leaves it open.
+            if (response.status >= 400 && response.status < 500) return end('failed', { dialed: false });
+            if (response.status < 200 || response.status >= 300) return end('unknown', { dialed: 'unknown' });
+            let first: Record<string, unknown> | null = null;
             try {
                 const data = JSON.parse(response.text) as { calls?: unknown };
-                first = Array.isArray(data.calls) ? (data.calls[0] as Record<string, unknown> | undefined) : undefined;
+                const item: unknown = Array.isArray(data.calls) ? data.calls[0] : undefined;
+                first = item && typeof item === 'object' ? (item as Record<string, unknown>) : null;
             } catch {
-                first = undefined;
+                first = null;
             }
-            if (!first || first.error !== undefined || typeof first.agent_call_id !== 'string' || first.agent_call_id === '') {
-                // Cartesia reports a per-destination error with an HTTP 200; no call record exists then.
-                return end(first ? 'failed' : 'unknown', { dialed: first ? false : 'unknown' });
+            const callId = first && typeof first.agent_call_id === 'string' && first.agent_call_id !== '' ? first.agent_call_id : null;
+            if (!callId) {
+                // A per-destination error without a call id is an explicit refusal; anything else cannot be read.
+                if (first && first.error !== undefined && first.error !== null) return end('failed', { dialed: false });
+                return end('unknown', { dialed: 'unknown' });
             }
-            handle.callId = first.agent_call_id;
-            this.callIds.push(handle.callId);
+            handle.callId = callId;
+            this.callIds.push(callId);
             handle.phase = 'ringing';
             this.update(handle);
             await this.poll(handle, call, started, end);
@@ -779,6 +872,12 @@ export class Dialer {
                 if (typeof data.end_reason === 'string') endReason = data.end_reason;
                 if (typeof data.summary === 'string') summary = data.summary;
                 handle.transcript = readTranscript(data.transcript) ?? handle.transcript;
+                // An opt-out counts the moment it is heard, so no later timeout or error can lose it.
+                if (!handle.optedOut && hearsOptOut(handle.transcript)) {
+                    handle.optedOut = true;
+                    this.addDoNotCall(call.toNumber);
+                    emit(this.deps.onEvent, { stage: 'call', status: 'ok', detail: 'opt-out recorded', ms: this.now() - started });
+                }
                 const phase = phaseFor(handle.status);
                 if (phase === 'connected') sawConnected = true;
                 if (phase && phase !== 'ended' && phase !== handle.phase) {
@@ -791,18 +890,17 @@ export class Dialer {
             if (handle.cancelReason && !handle.cancelConfirmed && (data === null || handle.phase === 'connected')) await this.sendCancel(handle);
             if (handle.status !== null && TERMINAL.has(handle.status)) break;
         }
+        const masked = summary === null ? null : redact(summary);
         if (handle.status === null || !TERMINAL.has(handle.status)) {
             if (!handle.cancelConfirmed) await this.sendCancel(handle);
-            return end('unknown', { dialed: true, endReason, summary });
+            return end('unknown', { dialed: true, endReason, summary: masked });
         }
-        const result = resultFor(handle.status, endReason, sawConnected);
-        const optedOut = hearsOptOut(handle.transcript);
-        if (optedOut) this.addDoNotCall(call.toNumber);
         emit(this.deps.onEvent, { stage: 'call', status: 'ok', detail: 'polling done', ms: this.now() - started, counts: { polls } });
-        end(result, { dialed: true, endReason, summary, optedOut });
+        end(resultFor(handle.status, endReason, sawConnected), { dialed: true, endReason, summary: masked });
     }
 
     private spokenOutcome(name: string, outcome: CallOutcome): string {
+        const optedOut = outcome.optedOut ? ` ${name} asked not to be called again, so I will not call them.` : '';
         switch (outcome.result) {
             case 'answered':
                 return outcome.optedOut ? `${name} asked not to be called again. I will not call them.` : `${name} picked up. The call has ended.`;
@@ -813,13 +911,13 @@ export class Dialer {
             case 'voicemail':
                 return 'The call went to voicemail. No message was left.';
             case 'cancelled':
-                return outcome.dialed === true ? 'The call was cancelled.' : 'Cancelled. No call was made.';
+                return (outcome.dialed === true ? 'The call was cancelled.' : 'Cancelled. No call was made.') + optedOut;
             case 'failed':
                 return 'The call could not be placed.';
             case 'refused':
                 return 'I did not call.';
             default:
-                return outcome.dialed === 'unknown' ? 'I could not tell if the call went out. Check before trying again.' : 'I could not tell how the call ended.';
+                return (outcome.dialed === 'unknown' ? 'I could not tell if the call went out. Check before trying again.' : 'I could not tell how the call ended.') + optedOut;
         }
     }
 }

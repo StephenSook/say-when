@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { emit, redact, type PipelineEvent } from '../src/events.js';
-import { buildRequest, CartesiaNetworkError, encodeQuery, httpError, send } from '../src/http.js';
+import { buildRequest, CartesiaNetworkError, encodeQuery, httpError, safeErrorCode, safeRequestId, send } from '../src/http.js';
 import { buildKeyterms, MAX_KEYTERM_CHARS, MAX_KEYTERMS } from '../src/keyterms.js';
 import { base64ToBytes, Downsampler, floatToPcm16, PcmChunker, pcmDurationMs, pcmToFloat32 } from '../src/pcm.js';
 import { checkAccessToken, socketUrl } from '../src/ws.js';
@@ -57,12 +57,26 @@ describe('http', () => {
     });
 
     it('reads structured errors and redacts them', () => {
-        const error = httpError(429, JSON.stringify({ error_code: 'concurrency_limited', title: 'Too many', message: 'sk_car_x hit it', request_id: 'r1' }));
+        const error = httpError(
+            429,
+            JSON.stringify({ error_code: 'concurrency_limited', title: 'Too many', message: 'sk_car_x hit it', request_id: '550e8400-e29b-41d4-a716-446655440000' }),
+        );
         assert.equal(error.status, 429);
         assert.equal(error.errorCode, 'concurrency_limited');
-        assert.equal(error.requestId, 'r1');
+        assert.equal(error.requestId, '550e8400-e29b-41d4-a716-446655440000');
         assert.equal(error.message.includes('sk_car_x'), false);
         assert.equal(httpError(500, 'plain text').message, 'HTTP 500: plain text');
+    });
+
+    it('drops an error code or request id that could carry a key or a number', () => {
+        const error = httpError(400, JSON.stringify({ error_code: 'sk_car_leak', title: 'Bad +14155550123', message: 'm', request_id: '+14155550123' }));
+        assert.equal(error.errorCode, null);
+        assert.equal(error.requestId, null);
+        const serialized = JSON.stringify(error);
+        for (const secret of ['sk_car_leak', '4155550123']) assert.equal(serialized.includes(secret), false, secret);
+        assert.equal(safeErrorCode('quota_exceeded'), 'quota_exceeded');
+        for (const bad of ['voice_404', 'Quota', 'a'.repeat(65), 42, null]) assert.equal(safeErrorCode(bad), null, String(bad));
+        assert.equal(safeRequestId('550e8400-e29b-41d4-a716-446655440000:ctx-1:x'), '550e8400-e29b-41d4-a716-446655440000');
     });
 
     it('cannot reach the real network from tests', async () => {

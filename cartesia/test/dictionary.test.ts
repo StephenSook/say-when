@@ -16,13 +16,13 @@ const entries = [
 
 function echo(call: FetchCall) {
     const body = JSON.parse(call.body ?? '{}') as { items?: unknown };
-    return { status: 200, body: { id: 'pdict_1', name: 'say-when-household', items: body.items } };
+    return { status: 200, body: { id: 'pdict_1', name: 'neurolingo-household', items: body.items } };
 }
 
 describe('pronunciation dictionary', () => {
     it('creates a private dictionary with pronunciation items', async () => {
         const fetch = fakeFetch(echo);
-        const result = await syncPronunciationDictionary({ apiKey: KEY, name: 'say-when-household', entries, fetch });
+        const result = await syncPronunciationDictionary({ apiKey: KEY, name: 'neurolingo-household', entries, fetch });
         assert.deepEqual(result, { id: 'pdict_1', created: true, itemCount: 3 });
         const call = fetch.calls[0];
         assert.equal(call?.method, 'POST');
@@ -30,7 +30,7 @@ describe('pronunciation dictionary', () => {
         assert.equal(call?.headers.Authorization, `Bearer ${KEY}`);
         assert.equal(call?.headers['Cartesia-Version'], '2026-08-14');
         assert.deepEqual(JSON.parse(call?.body ?? ''), {
-            name: 'say-when-household',
+            name: 'neurolingo-household',
             access: 'private',
             items: [
                 { text: 'Siobhan', pronunciation: 'shi-VAWN', case_sensitive: false },

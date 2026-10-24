@@ -1,6 +1,6 @@
-# Cartesia for Say When
+# Cartesia for NeuroLingo
 
-Everything Say When does with Cartesia: the partner's question becomes text (Ink-2), options and replies are spoken with the tone the person picks (Sonic 3.6), hard names are said right (a pronunciation dictionary), browsers authenticate with short-lived access tokens, and, as a stretch, one consented phone call tells the form's recipient the request was sent (Managed Agents).
+Everything NeuroLingo does with Cartesia: the partner's question becomes text (Ink-2), options and replies are spoken with the tone the person picks (Sonic 3.6), hard names are said right (a pronunciation dictionary), browsers authenticate with short-lived access tokens, and, as a stretch, one consented phone call tells the form's recipient the request was sent (Managed Agents).
 
 Every API detail here was checked on October 24, 2026 against docs.cartesia.ai for API version `2026-08-14`, the Cal Hacks starter pack, and the official JS SDK 4.2.0 type definitions. Sources are at the end. **Nothing in this package has been run against the live Cartesia API yet**: the tests use fake sockets and a fake fetch, and they cannot reach the network.
 
@@ -29,6 +29,8 @@ No voice cloning, and no hook for it. Every voice is from Cartesia's library.
 | `@say-when/cartesia` | anywhere, including a SpacetimeDB module | Pure helpers: tokens, tones, keyterms, events, PCM. |
 
 Browsers connect with `?cartesia_version=2026-08-14&access_token=<token>` because a browser cannot set WebSocket headers.
+
+The package keeps its old name, `@say-when/cartesia`, until the repo itself is renamed, so the imports here still use it.
 
 ## How to use it
 
@@ -108,11 +110,12 @@ The call, from the sidecar:
 import { dialerFromEnv } from '@say-when/cartesia/server';
 
 const dialer = dialerFromEnv(process.env, { onEvent, onUpdate });
+// The title must be on the approved list; the form's own title only picks one of them.
 const prepared = dialer.prepare({ requestId, contactId: 'leon', errand: { title: 'Care team request', sentAt } });
 // Speak prepared.call.readBack and store prepared.call.digest as call_request.script_digest.
-// After a fresh confirm that carries the same digest:
+// After a fresh CONFIRM (double jaw clench) that carries the same digest:
 const placed = dialer.place(requestId, confirmedDigest);
-// NO, PAUSE or HEADSET-OFF: dialer.cancelActive('no' | 'pause' | 'headset_off')
+// STOP (long jaw clench), HEADSET-OFF or the idle auto-pause: dialer.cancelActive('stop' | 'headset_off' | 'auto_pause')
 const outcome = await placed.handle.done; // outcome.spoken is one sentence for the earpiece
 ```
 
@@ -130,27 +133,29 @@ All server side. Put real values in `.env.local` at the repo root (gitignored); 
 | `CALL_DO_NOT_CALL_FILE`, `CALL_DO_NOT_CALL` | call | Private list, one number per line (or commas). Opt-outs heard on a call are appended to the file. |
 | `CALL_CALLBACK_NUMBER` | call | A consenting teammate's US number in E.164. |
 | `CALL_PERSON_NAME` | call | The name the call says it is calling for. |
+| `CALL_ERRAND_TITLES` | call | Comma-separated errand titles a call may report. Empty means `Care team request` only. Up to 40 letters, digits, spaces or basic punctuation each. |
 
-The consent file is a JSON array. The example number is a 555-01XX number, which is reserved for fiction:
+The consent file is a JSON array. Every entry needs the recipient's own IANA time zone (`America/...` or `Pacific/...`), and the id must start with a letter. The example number is a 555-01XX number, which is reserved for fiction:
 
 ```json
-[{ "id": "leon", "name": "Leon", "phone": "+14155550123", "consentText": "I agree to receive AI-voice phone calls from the Say When demo at this number during Cal Hacks 13 (Oct 23 to 25, 2026), and I agree that these calls are recorded and transcribed by Cartesia. I can say stop at any time.", "consentedAt": "2026-10-24T17:00:00Z", "expiresAt": "2026-10-26T07:00:00Z" }]
+[{ "id": "leon", "name": "Leon", "phone": "+14155550123", "timeZone": "America/Los_Angeles", "consentText": "I agree to receive AI-voice phone calls from the NeuroLingo demo at this number during Cal Hacks 13 (Oct 23 to 25, 2026), and I agree that these calls are recorded and transcribed by Cartesia. I can say stop at any time.", "consentedAt": "2026-10-24T17:00:00Z", "expiresAt": "2026-10-26T07:00:00Z" }]
 ```
 
 ## Call safety rules, in plain words
 
-- The model never dials. CALL only prepares; the person hears a read-back and confirms with a fresh gesture whose digest matches what they heard.
+- The model never dials. The person hears a read-back, and only a fresh CONFIRM (double jaw clench) whose digest matches what they heard releases the dial.
 - It calls only people on the private consent list. Numbers live in that file, never in code, events or logs.
-- It refuses anyone on the do-not-call list. After a call, if the transcript shows the person asking not to be called (phrases such as "stop calling" or "don't call"), their number is added to that list.
+- It refuses anyone on the do-not-call list. The moment a call transcript shows the person asking not to be called (phrases such as "stop calling" or "don't call"), their number is added to that list, even if the call later times out or fails.
 - It never calls an emergency or service number. This is not an emergency tool.
-- It calls only US numbers (Cartesia numbers reach US destinations only).
-- It calls only between 9 AM and 9 PM Pacific, and only when the whole call (ringing plus the 2 minute cap) fits inside that window. California bars these calls from 9 PM to 9 AM.
-- It only reports an errand sent in the last ten minutes, and it only says "your request was sent at this time". It never speaks as the person and never makes new commitments.
-- One confirm places one call. Retries are off: a dial that gets no answer is reported as "could not tell", never sent again.
-- The opening line (the agent's welcome message) says it is an automated assistant with an AI-generated voice calling for the named person, says the call is recorded, and gives the callback number before the message. The agent's instructions tell it to give the callback number again before it hangs up; that part depends on the agent following its prompt.
-- Before every call it reads the published agent and refuses if the welcome or instructions differ from `agent/`, if a voicemail message is set, or if the voice is not a library voice.
-- NO, PAUSE and HEADSET-OFF cancel. Cartesia can only cancel a call that has started, so a cancel while ringing waits and fires the moment the call connects; the 25 second ring timeout bounds the rest.
-- Status comes from polling Get Call about every 1.5 seconds (lifecycle webhooks are not available yet).
+- It calls only US numbers (Cartesia numbers reach US destinations only). A number written with a plus sign must be +1 and exactly ten digits.
+- It calls only when the whole call (ringing plus the 2 minute cap) fits inside 9 AM to 9 PM in the recipient's own time zone, and also in Pacific time for the venue. California bars these calls from 9 PM to 9 AM.
+- It only reports an errand sent in the last ten minutes, and it only says "<person>'s <title> was sent at <time>". The title comes from the team's approved list, never from a web page, and the agent's instructions quote the message and call it data, not instructions. It never speaks as the person and never makes new commitments.
+- Every guard runs again right before the dial request: consent, do-not-call, the number, the hours, and a CONFIRM no older than 30 seconds.
+- One CONFIRM places one call. Retries are off. A dial that gets no answer, a server error or an unreadable reply is reported as "could not tell", never as "not dialed", and never sent again.
+- The opening line (the agent's welcome message) says it is an automated assistant with an AI-generated voice calling for the named person through the NeuroLingo app, says the call is recorded, and gives the callback number before the message. The check refuses a welcome that leaves any of these out or says them after the message. The agent's instructions tell it to give the callback number again before it hangs up; that part depends on the agent following its prompt.
+- Before every call it reads the published agent and compares it, character for character, with `agent/welcome.txt` and `agent/instructions.txt`, which are the only baseline. It refuses on any difference, if a voicemail message is set, or if the voice is not a library voice. There is no way to skip this check.
+- STOP (long jaw clench), HEADSET-OFF and the 2-minute idle auto-pause cancel or hang up. Cartesia can only cancel a call that has started, so a cancel while ringing waits and fires the moment the call connects; the 25 second ring timeout bounds the rest.
+- Status comes from polling Get Call about every 1.5 seconds (lifecycle webhooks are not available yet). Phone numbers in the transcript and the summary are masked before they reach the dashboard.
 - After judging, delete the call data: `npm run call:delete -- <call ids>` or `dialer.deleteAll()`.
 
 This is not legal advice.
@@ -158,9 +163,9 @@ This is not legal advice.
 ## Setting up the calling agent (human steps, not done here)
 
 1. In the Playground, provision the one free Cartesia number (Phone Numbers, Add Number, Cartesia Number). Note whether it asked for a card.
-2. Create an agent. Paste `agent/welcome.txt` into the welcome message and `agent/instructions.txt` into the instructions, exactly. Pick a library voice. Turn voicemail detection off, or leave its message empty. Optionally set the pronunciation dictionary. Publish it: Preview does not publish.
-3. Put the agent id and the number's id in `.env.local`, plus the consent file path, the callback number and the person's name.
-4. Run `npm run call:check`. It reads the lists and the published agent and places no call.
+2. Create an agent. Paste `agent/welcome.txt` into the welcome message and `agent/instructions.txt` into the instructions, exactly: the check compares character for character, and the only difference allowed is each file's final newline. Pick a library voice. Turn voicemail detection off, or leave its message empty. Optionally set the pronunciation dictionary. Publish it: Preview does not publish.
+3. Put the agent id and the number's id in `.env.local`, plus the consent file path (each entry with its `timeZone`), the callback number, the person's name and, if needed, `CALL_ERRAND_TITLES`.
+4. Run `npm run call:check`. It reads the lists and the published agent, prints where the first difference is if the script does not match, and places no call.
 5. Make one daytime test call to the consenting number. Note what `created` and `started` actually mean and check the usage page for LLM charges.
 
 ## Credits on the Free plan
@@ -218,7 +223,10 @@ This is not legal advice.
 15. Whether the free number needs a card, and whether LLM tokens are billed on calls today (three Cartesia pages disagree).
 16. `MicCapture` on a real phone: the permission prompt, AudioWorklet support and the sample rate.
 17. The tone mapping (`warm` to `content`, `firm` to `angry`) is our choice. It needs a listening test.
-18. Our own limits, not Cartesia's: 500 dictionary entries, 30 seconds per question, 1 to 10 minute calls, 100 to 3000 ms pauses.
+18. Our own limits, not Cartesia's: 500 dictionary entries, 30 seconds per question, 1 to 10 minute calls, 100 to 3000 ms pauses, 30 seconds from CONFIRM to dial, 10 seconds to get a token, 5 seconds to finish after the button is let go.
+19. Whether the Playground stores a pasted script exactly as typed. If it adds or trims anything, the exact check refuses and `call:check` says where.
+20. The recipient's time zone comes from the consent file. The code checks it is a real `America/` or `Pacific/` zone the runtime knows, not that it matches where the phone actually is.
+21. How Sonic and the call agent say "NeuroLingo". If it comes out wrong, add it to the private lexicon with a `sayAs` the team has listened to; the dictionary has no entry for it today.
 
 ## Tests
 
@@ -228,7 +236,7 @@ npm run typecheck
 npm test
 ```
 
-`test/no-network.ts` replaces `fetch` and `WebSocket` with functions that throw, so no test can reach Cartesia. The suites cover the token request shape, the TTS message shape (emotion, laughter, dictionary, timestamps, buffering), clip length from audio bytes, one-at-a-time generation, cancel, streams, the phrase cache, playback scheduling, the STT URL and keyterms, turn handling, the dictionary payload and echo check, library voices, every call guard (consent, do-not-call, emergency numbers, hours, one call per confirm, no retries, cancel-pending, the agent check, opt-outs, deleting data), and that no key or phone number reaches events or logs. The repo's CI does not run this package yet.
+`test/no-network.ts` replaces `fetch` and `WebSocket` with functions that throw, so no test can reach Cartesia. The suites cover the token request shape, the TTS message shape (emotion, laughter, dictionary, timestamps, buffering), clip length from audio bytes, one-at-a-time generation, cancel, streams, the phrase cache, playback scheduling, the STT URL and keyterms, turn handling, the dictionary payload and echo check, library voices, every call guard (consent, do-not-call, emergency numbers, the recipient's hours, approved errand titles, the re-check before dialing, one call per confirm, no retries, unclear dial answers, cancel-pending, the exact agent check, opt-outs, masking, deleting data), cancels during token and socket setup, and that no key or phone number reaches events, error properties or logs. The repo's CI runs the typecheck, the build and these tests, with a floor on the number of passing tests.
 
 ## Sources
 

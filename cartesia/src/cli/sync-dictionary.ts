@@ -1,4 +1,4 @@
-// npm run dict:sync -- --file private/lexicon.json [--name say-when-household] [--field alias]
+// npm run dict:sync -- --file private/lexicon.json [--name neurolingo-household] [--field alias]
 // The lexicon file is private (gitignored): { "household": [{ "name": "...", "sayAs": "..." }], "places": [...] }.
 // Creates the dictionary, or replaces its items when CARTESIA_PRONUNCIATION_DICT_ID is set. Prints counts, never names.
 
@@ -21,7 +21,7 @@ const field = (arg(argv, '--field') ?? 'pronunciation') as ItemField;
 const dictionaryId = process.env.CARTESIA_PRONUNCIATION_DICT_ID?.trim() || undefined;
 const result = await syncPronunciationDictionary({
     apiKey: apiKeyFromEnv(),
-    name: arg(argv, '--name') ?? 'say-when-household',
+    name: arg(argv, '--name') ?? 'neurolingo-household',
     entries,
     dictionaryId,
     field,

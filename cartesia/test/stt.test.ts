@@ -5,7 +5,7 @@ import { describe, it } from 'node:test';
 
 import type { PipelineEvent } from '../src/events.js';
 import { checkTurnSettings, listen, sttUrl, TURN_PROFILES, type ListenOptions } from '../src/stt.js';
-import { FakeAudio, FakeSocket, flush, ManualTimers } from './fakes.js';
+import { deferred, FakeAudio, FakeSocket, flush, ManualTimers, settled } from './fakes.js';
 
 function setup(extra: Partial<ListenOptions> = {}) {
     FakeSocket.reset();
@@ -208,5 +208,27 @@ describe('listen', () => {
         FakeSocket.last().serverClose(1006);
         const result = await session.done;
         assert.ok(!result.ok && result.reason === 'error');
+    });
+
+    it('ends a release on time even when the token never arrives, and opens nothing later', async () => {
+        const token = deferred<string>();
+        const { session, timers, audio } = setup({ getToken: () => token.promise });
+        audio.feed();
+        session.release();
+        assert.equal(audio.stopped, true);
+        timers.tick(5000);
+        const result = await settled(session.done);
+        assert.ok(result !== 'pending' && 'value' in result && !result.value.ok && result.value.reason === 'error', JSON.stringify(result));
+        token.resolve('tok_late');
+        await flush();
+        assert.equal(FakeSocket.created.length, 0);
+    });
+
+    it('gives up on a token that never arrives while the button is held', async () => {
+        const { session, timers, audio } = setup({ getToken: () => new Promise<string>(() => undefined) });
+        timers.tick(10_000);
+        const result = await settled(session.done);
+        assert.ok(result !== 'pending' && 'value' in result && !result.value.ok && /token/.test(result.value.message), JSON.stringify(result));
+        assert.equal(audio.stopped, true);
     });
 });

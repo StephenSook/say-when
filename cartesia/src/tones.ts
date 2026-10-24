@@ -202,13 +202,16 @@ export function utterance(input: UtteranceInput, profile: VoiceProfile): Utteran
     return out;
 }
 
-/** Short prompts worth caching once per session. Spoken in the assistant voice. */
+/**
+ * Short prompts worth caching once per session. Spoken in the assistant voice. `noneOfThese` and `paused` follow a
+ * STOP, `headsetOff` a HEADSET_OFF; the wording matches the banners in docs/ui.md (PLAN D11).
+ */
 export const STOCK_PHRASES = {
     noneOfThese: 'None of these.',
     repeat: 'Hear the options again.',
     oneMoment: 'One moment.',
     paused: 'Paused. Nothing will be sent.',
-    headsetLost: 'Headset lost. Nothing will be sent.',
+    headsetOff: 'Headset off. Nothing will be sent.',
     cancelled: 'Cancelled. Nothing was sent.',
     notSent: 'Not sent.',
     sent: 'Sent.',

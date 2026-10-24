@@ -211,6 +211,28 @@ export class FakeAudioContext implements AudioContextLike {
     }
 }
 
+/** How a promise settled within `ms` of real time, or 'pending', so a broken test fails instead of hanging. */
+export async function settled<T>(promise: Promise<T>, ms = 200): Promise<{ value: T } | { error: unknown } | 'pending'> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const pending = new Promise<'pending'>((resolve) => {
+        timer = setTimeout(() => resolve('pending'), ms);
+    });
+    try {
+        return await Promise.race([promise.then((value) => ({ value }), (error: unknown) => ({ error })), pending]);
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+/** A promise the test resolves by hand, for a token that arrives late or never. */
+export function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+    let resolve: (value: T) => void = () => undefined;
+    const promise = new Promise<T>((r) => {
+        resolve = r;
+    });
+    return { promise, resolve };
+}
+
 export function fakeClip(samples: number): Clip {
     return {
         contextId: 'clip',

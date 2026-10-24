@@ -3,7 +3,7 @@
     "version": "0.1.0",
     "private": true,
     "type": "module",
-    "description": "Apify layer for the Say When agent sidecar: live web search, place search, and a client for the form-errand Actor.",
+    "description": "Apify layer for the NeuroLingo agent sidecar: live web search, place search, and a client for the form-errand Actor.",
     "engines": {
         "node": ">=22"
     },

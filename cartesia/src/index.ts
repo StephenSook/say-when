@@ -1,5 +1,5 @@
 // Shared and pure: safe to import in the browser, in Node and in a SpacetimeDB module.
-// Browser pages import "@say-when/cartesia/browser"; the sidecar and CLIs import "@say-when/cartesia/server".
+// Browser pages import this package's ./browser entry; the sidecar and CLIs import its ./server entry.
 
 export * from './constants.js';
 export * from './events.js';

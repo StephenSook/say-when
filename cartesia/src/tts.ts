@@ -2,6 +2,7 @@
 
 import { SONIC_MODEL } from './constants.js';
 import { emit, redact, type OnEvent } from './events.js';
+import { safeErrorCode } from './http.js';
 import { base64ToBytes, bytesPerSample, concatBytes, pcmDurationMs, pcmToFloat32, type PcmEncoding } from './pcm.js';
 import type { Utterance, UtteranceKind } from './tones.js';
 import {
@@ -12,6 +13,7 @@ import {
     socketUrl,
     uniqueId,
     waitForOpen,
+    withTimeout,
     type SocketFactory,
     type SocketLike,
     type Timers,
@@ -59,14 +61,16 @@ export class TtsCancelled extends Error {
     }
 }
 
+/** Every string on it is redacted or checked, so an echoed key or number cannot ride along on a property. */
 export class TtsError extends Error {
-    constructor(
-        message: string,
-        readonly statusCode: number | null,
-        readonly errorCode: string | null,
-    ) {
+    readonly statusCode: number | null;
+    readonly errorCode: string | null;
+
+    constructor(message: string, statusCode: unknown, errorCode: unknown) {
         super(redact(message).slice(0, 300));
         this.name = 'TtsError';
+        this.statusCode = typeof statusCode === 'number' && Number.isInteger(statusCode) ? statusCode : null;
+        this.errorCode = safeErrorCode(errorCode);
     }
 }
 
@@ -97,6 +101,8 @@ export interface TtsPlayerOptions {
     /** Fails a generation when nothing arrives for this long. */
     idleTimeoutMs?: number;
     openTimeoutMs?: number;
+    /** Gives up on getToken() after this long. */
+    tokenTimeoutMs?: number;
     onEvent?: OnEvent;
     timers?: Timers;
     now?: () => number;
@@ -161,11 +167,7 @@ function addWords(target: WordTiming[], raw: unknown): void {
 function errorFromMessage(message: Record<string, unknown>): TtsError {
     const title = typeof message.title === 'string' ? message.title : 'Speech error';
     const detail = typeof message.message === 'string' ? message.message : '';
-    return new TtsError(
-        detail ? `${title}: ${detail}` : title,
-        typeof message.status_code === 'number' ? message.status_code : null,
-        typeof message.error_code === 'string' ? message.error_code : null,
-    );
+    return new TtsError(detail ? `${title}: ${detail}` : title, message.status_code, message.error_code);
 }
 
 function streamText(text: string): string {
@@ -191,9 +193,22 @@ interface Waiter {
     reject: (error: Error) => void;
 }
 
+/** One job from the moment it is asked for, so a cancel reaches it while it waits for a slot, a token or a socket. */
 interface JobControl {
     cancelled: boolean;
     onCancel: (() => void) | null;
+    /** Rejects on cancel; raced against connection setup so a stalled token cannot hold the job. */
+    aborted: Promise<never>;
+    abort: (error: Error) => void;
+}
+
+function newControl(): JobControl {
+    let abort: (error: Error) => void = () => undefined;
+    const aborted = new Promise<never>((_resolve, reject) => {
+        abort = reject;
+    });
+    aborted.catch(() => undefined);
+    return { cancelled: false, onCancel: null, aborted, abort };
 }
 
 /**
@@ -209,8 +224,14 @@ export class TtsPlayer {
     private readonly maxActive: number;
     private readonly idleTimeoutMs: number;
     private readonly openTimeoutMs: number;
+    private readonly tokenTimeoutMs: number;
     private socket: SocketLike | null = null;
-    private opening: Promise<SocketLike> | null = null;
+    /** The socket being opened, tagged with the epoch it was started in. */
+    private opening: { epoch: number; promise: Promise<SocketLike> } | null = null;
+    private connecting: SocketLike | null = null;
+    /** Bumped by cancelAll() and close(), so an opening started before them is thrown away. */
+    private epoch = 0;
+    private readonly jobs = new Set<JobControl>();
     private readonly live = new Map<string, LiveContext>();
     private readonly waiters: Waiter[] = [];
     private active = 0;
@@ -226,6 +247,7 @@ export class TtsPlayer {
         this.maxActive = options.maxActive ?? 1;
         this.idleTimeoutMs = options.idleTimeoutMs ?? 10_000;
         this.openTimeoutMs = options.openTimeoutMs ?? 10_000;
+        this.tokenTimeoutMs = options.tokenTimeoutMs ?? 10_000;
         if (this.maxActive !== 1 && this.maxActive !== 2) throw new RangeError('maxActive is 1 or 2.');
     }
 
@@ -237,7 +259,7 @@ export class TtsPlayer {
     /** Generates a whole utterance in one request: continue false, no server buffering. */
     speak(u: Utterance, options: { onAudio?: (pcm: Uint8Array) => void } = {}): TtsJob {
         const contextId = uniqueId('tts', ++this.counter);
-        const control: JobControl = { cancelled: false, onCancel: null };
+        const control = newControl();
         const done = this.run(contextId, u.kind, options.onAudio, control, () => {
             if (!u.transcript.trim()) throw new TtsError('There is nothing to say.', null, 'empty');
             this.send(
@@ -268,7 +290,7 @@ export class TtsPlayer {
         const bufferMs = options.mode === 'tokens' ? (options.bufferMs ?? TOKEN_STREAM_BUFFER_MS) : WHOLE_TEXT_BUFFER_MS;
         if (!Number.isInteger(bufferMs) || bufferMs < 0 || bufferMs > 5000) throw new RangeError('bufferMs must be 0 to 5000.');
         const contextId = uniqueId('tts', ++this.counter);
-        const control: JobControl = { cancelled: false, onCancel: null };
+        const control = newControl();
         let markReady: () => void = () => undefined;
         const begun = new Promise<void>((resolve) => {
             markReady = resolve;
@@ -312,8 +334,22 @@ export class TtsPlayer {
         };
     }
 
-    /** Cancels whatever is generating or waiting. */
+    /**
+     * Cancels every job: generating, queued, or still waiting for a token or a socket. A socket that is still opening
+     * is closed and its opening thrown away, so nothing starts speaking afterward.
+     */
     cancelAll(): void {
+        this.epoch++;
+        const connecting = this.connecting;
+        this.connecting = null;
+        if (connecting) {
+            try {
+                connecting.close(1000, 'cancelled');
+            } catch {
+                // Already closed.
+            }
+        }
+        for (const control of [...this.jobs]) this.cancelJob(control);
         for (const id of [...this.live.keys()]) this.cancelLive(id);
         for (const waiter of this.waiters.splice(0)) waiter.reject(new TtsCancelled());
     }
@@ -339,12 +375,25 @@ export class TtsPlayer {
         control: JobControl,
         begin: () => void,
     ): Promise<Clip> {
+        this.jobs.add(control);
         return (async () => {
-            await this.acquire(control);
             try {
-                if (control.cancelled) throw new TtsCancelled();
-                await this.ensureSocket();
-                if (control.cancelled) throw new TtsCancelled();
+                await this.acquire(control);
+            } catch (error) {
+                this.jobs.delete(control);
+                throw error;
+            }
+            try {
+                if (control.cancelled || this.closed) throw new TtsCancelled();
+                control.onCancel = null;
+                // Raced against the cancel, so a token or socket that never arrives cannot hold the job.
+                try {
+                    await Promise.race([this.ensureSocket(), control.aborted]);
+                } catch (error) {
+                    if (control.cancelled || this.closed) throw new TtsCancelled();
+                    throw error;
+                }
+                if (control.cancelled || this.closed) throw new TtsCancelled();
                 return await new Promise<Clip>((resolve, reject) => {
                     const context: LiveContext = {
                         id: contextId,
@@ -370,6 +419,7 @@ export class TtsPlayer {
                 });
             } finally {
                 this.releaseSlot();
+                this.jobs.delete(control);
             }
         })();
     }
@@ -377,6 +427,7 @@ export class TtsPlayer {
     private cancelJob(control: JobControl): void {
         if (control.cancelled) return;
         control.cancelled = true;
+        control.abort(new TtsCancelled());
         control.onCancel?.();
     }
 
@@ -404,20 +455,45 @@ export class TtsPlayer {
         else this.active = Math.max(0, this.active - 1);
     }
 
-    private async ensureSocket(): Promise<SocketLike> {
-        if (this.socket && this.socket.readyState === SOCKET_OPEN) return this.socket;
-        if (!this.opening) {
-            this.opening = this.openSocket().finally(() => {
-                this.opening = null;
-            });
+    private ensureSocket(): Promise<SocketLike> {
+        if (this.socket && this.socket.readyState === SOCKET_OPEN) return Promise.resolve(this.socket);
+        let entry = this.opening;
+        // An opening from before a cancelAll() is never reused: a job started afterward gets a fresh one.
+        if (!entry || entry.epoch !== this.epoch) {
+            const fresh = { epoch: this.epoch, promise: this.openSocket(this.epoch) };
+            this.opening = fresh;
+            fresh.promise
+                .then(
+                    () => undefined,
+                    () => undefined,
+                )
+                .then(() => {
+                    if (this.opening === fresh) this.opening = null;
+                });
+            entry = fresh;
         }
-        return this.opening;
+        return entry.promise;
     }
 
-    private async openSocket(): Promise<SocketLike> {
-        const token = checkAccessToken(await this.options.getToken());
+    private async openSocket(epoch: number): Promise<SocketLike> {
+        const stale = () => epoch !== this.epoch || this.closed;
+        const token = checkAccessToken(await withTimeout(this.options.getToken(), this.tokenTimeoutMs, this.timers, 'No speech token arrived in time.'));
+        if (stale()) throw new TtsCancelled();
         const socket = this.factory(socketUrl('/tts/websocket', token));
-        await waitForOpen(socket, this.openTimeoutMs, this.timers);
+        this.connecting = socket;
+        try {
+            await waitForOpen(socket, this.openTimeoutMs, this.timers);
+        } finally {
+            if (this.connecting === socket) this.connecting = null;
+        }
+        if (stale()) {
+            try {
+                socket.close(1000, 'cancelled');
+            } catch {
+                // Already closed.
+            }
+            throw new TtsCancelled();
+        }
         socket.addEventListener('message', (event) => this.onMessage(event.data));
         socket.addEventListener('close', () => this.onClosed(socket));
         this.socket = socket;

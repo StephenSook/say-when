@@ -1,4 +1,4 @@
-# Say When: Plan and Coordination
+# NeuroLingo: Plan and Coordination
 
 > Living status doc for Stephen, Khadim, Shashank and Leon. Update it on every task change and push to `main`. This file is the single source of truth for who is working on what.
 
@@ -160,6 +160,12 @@ SpacetimeDB is the whole live backend, not a store behind an API:
 
 **Locked Oct 23 by Stephen. Design detail in `docs/spacetime.md`.**
 
+### D13: The product is called NeuroLingo
+
+It was "Say When" until Oct 23. Every screen, document and spoken line, including the outbound call's AI disclosure, now says NeuroLingo. Code identifiers (package names, the Moss session name, the SpacetimeDB database name) and the repo URL keep `say-when` until Stephen decides whether to rename the repo. Consent collected under the old name is confirmed again under the new name before any real call. The copy stays honest: the jaw clench is a muscle signal, the imagined squeeze is the brain test, and nothing claims to read thoughts.
+
+**Locked Oct 23 by Stephen.**
+
 ### D7: Three live dashboard screens
 
 All three update over SpacetimeDB subscriptions, so every laptop shows the same thing at the same moment. Stephen builds the UI. Every page stays very simple: one clear focus per screen, big labels, and nothing a judge has to decode. Style and layout follow `docs/ui.md`.
@@ -180,7 +186,7 @@ All three update over SpacetimeDB subscriptions, so every laptop shows the same 
 - [ ] **Q4:** Can the free Cartesia phone number be set up without a card? Needs Shashank.
 - [ ] **Q5:** Who plays the caller's recipient, and is their consent written down? Needs Leon.
 - [x] **Q6:** Voice clone? Decided Oct 23 by Stephen: no cloning. See D10.
-- [ ] **Q7:** Pitch opening: lead with ALS and the recent implant stories (implants need brain surgery; Say When uses a headband and the muscles and eyes people keep). Every implant fact must be checked and cited before it goes in the script. Needs Leon and Stephen.
+- [ ] **Q7:** Pitch opening: lead with ALS and the recent implant stories (implants need brain surgery; NeuroLingo uses a headband that reads jaw clenches and imagined hand squeezes). Every implant fact must be checked and cited before it goes in the script. Needs Leon and Stephen.
 - [ ] **Q8:** What does Khadim own now that all UI/UX moved to Stephen? Needs Stephen.
 - [ ] **Q9:** YES while idle opens the person's menu (Khadim recommends keeping it: it is the most brain-first piece, and a misfire only opens the menu). Default: keep. Needs Stephen to confirm.
 - [ ] **Q10:** Someone with ALS who loses the jaw has no way to CONFIRM. A brain-only confirm (for example two YES in a row after the read-back) is the next step; default: say it in the pitch as future work, do not build it this weekend. Needs Stephen to confirm.

@@ -1,4 +1,4 @@
-# Say When UI spec
+# NeuroLingo UI spec
 
 For Stephen, who builds all of the UI. How the dashboard and the partner phone view should look and behave. It is modeled on tube's UI and cut down to what we need.
 
@@ -46,7 +46,7 @@ Skip:
 
 ## Stack
 
-| Layer | Tube | Say When |
+| Layer | Tube | NeuroLingo |
 |---|---|---|
 | Framework | Vite 7.3.7, React 19.3.0. No router library: `main.tsx` picks a page from `location.pathname` and lazy loads it | Next.js App Router in `web/`, one route per screen |
 | Styling | Plain CSS with custom properties in four files: `base.css`, `styles.css`, `archive/archive.css`, `landing/landing.css`. No Tailwind, no CSS Modules, no component library | Plain CSS. Tokens in `app/globals.css`, one CSS Module per component. No Tailwind, no component kit |
@@ -217,7 +217,7 @@ Wireframe legend: `[v]` done, `[*]` running, `[ ]` not yet, `[x]` failed, `|` th
 
 ```
 +------------------------------------------------------------------------------+
-| Say When     Live data   Agents   Conversation        (o Live) (Headset on)  |
+| NeuroLingo   Live data   Agents   Conversation        (o Live) (Headset on)  |
 |                                   ============                               |
 +------------------------------------------------------------------------------+
 | Paused. Nothing will be sent.                        (only while paused)     |
@@ -228,7 +228,7 @@ Wireframe legend: `[v]` done, `[*]` running, `[ ]` not yet, `[x]` failed, `|` th
 +------------------------------------------------------------------------------+
 ```
 
-- Header: `--header-h` tall, `--s6` side padding, a `--divider` line under it. "Say When" at `--text-title`, weight 500.
+- Header: `--header-h` tall, `--s6` side padding, a `--divider` line under it. "NeuroLingo" at `--text-title`, weight 500.
 - Tabs: plain links at `--text`. The current one is `--fg` at weight 500 with a 2 px `--fg` underline and `aria-current="page"` (tube's archive tab uses a 1 px underline). Others are `--fg-muted`. Routes: `/live`, `/agents`, `/conversation`, and `/partner` for the phone. Keys 1, 2 and 3 switch screens in PLAN order (tube binds `/`, arrows and Space in `useKeyboard.ts`). Open question for Stephen: should `/` open Conversation, the demo screen?
 - Connection chip, driven by `useSpacetimeDB().isActive` and each screen's `useTable` `isReady`:
 
@@ -290,7 +290,7 @@ Focus: the step running now (outlined, bright). Finished steps show their payloa
 - Rows: `pipeline_event` (`stage`, `status`, `detail`, `ms`, `at`), plus `option` for the Plan step. What each step shows, from `detail`:
   - Listen: the partner's words.
   - Search: Apify rows, each `title` over `source · fetched <time>` (Search client contract).
-  - Retrieve: Moss hits, each text over `source · fetched <time>` (Moss doc metadata).
+  - Retrieve: Moss hits over `source · fetched <time>` (Moss doc metadata). A web hit shows its text. A memory shows its text only when the person marked that memory shareable (the hit carries `sharedText`); any other memory reads "Private memory" with its category. Memory text never reaches SpacetimeDB or a screen unless it was shared (see moss/README.md).
   - Plan: the options for this question, in `rank` order.
   - Speak: which option is being read. Play button only if `detail` has a clip URL.
   - Select, Errand, Call: one line. Errand and Call link to Agents.
@@ -378,7 +378,7 @@ Focus: one status sentence at the top, then the reply.
 
 ```
 +----------------------------------+
-| Say When                  o Live |
+| NeuroLingo                o Live |
 |                                  |
 | Reading the options              |   --text-lead
 |                                  |

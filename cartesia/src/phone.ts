@@ -2,13 +2,19 @@
 
 /**
  * A North American number in E.164 (+1 and ten digits), or null. Cartesia numbers only reach US destinations.
- * N11 codes (211 to 911) are service codes, never subscriber numbers, so they are refused as area codes or prefixes.
+ * With a plus sign the country code is written out, so it must be 1 followed by exactly ten digits; without one,
+ * ten digits (or 1 and ten digits) are read as a US number. N11 codes (211 to 911) are service codes, never
+ * subscriber numbers, so they are refused as area codes or prefixes.
  */
 export function toUsE164(raw: string): string | null {
     const cleaned = String(raw).trim();
     if (!/^\+?[\d\s().-]+$/.test(cleaned)) return null;
     let digits = cleaned.replace(/\D/g, '');
-    if (digits.length === 10) digits = `1${digits}`;
+    if (cleaned.startsWith('+')) {
+        if (!/^1\d{10}$/.test(digits)) return null;
+    } else if (digits.length === 10) {
+        digits = `1${digits}`;
+    }
     if (!/^1[2-9]\d{2}[2-9]\d{6}$/.test(digits)) return null;
     const area = digits.slice(1, 4);
     const prefix = digits.slice(4, 7);

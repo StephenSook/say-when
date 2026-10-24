@@ -6,7 +6,7 @@ import { describe, it } from 'node:test';
 import type { PipelineEvent } from '../src/events.js';
 import { stockUtterance, TESSA_VOICE_ID, utterance, voiceProfile } from '../src/tones.js';
 import { AudioOut, PhraseCache, TtsCancelled, TtsError, TtsPlayer, wordAt, type TtsPlayerOptions } from '../src/tts.js';
-import { FakeAudioContext, fakeClip, FakeSocket, flush, ManualTimers } from './fakes.js';
+import { deferred, FakeAudioContext, fakeClip, FakeSocket, flush, ManualTimers, settled } from './fakes.js';
 
 const profile = voiceProfile();
 const option = utterance({ kind: 'option', text: 'Absolutely, count me in!', tone: 'warm' }, profile);
@@ -225,6 +225,73 @@ describe('TtsPlayer', () => {
         socket.receive({ type: 'chunk', data: audio(2400), done: false, status_code: 206, step_time: 1, context_id: stream.contextId });
         socket.receive(done(stream.contextId));
         assert.equal((await stream.done).durationMs, 100);
+    });
+
+    it('drops an error code that could carry a key', async () => {
+        const { player } = setup();
+        const job = player.speak(option);
+        const socket = await opened();
+        socket.receive({ type: 'error', done: true, status_code: 400, error_code: 'sk_car_echoed', title: 'Bad', message: 'x', context_id: job.contextId });
+        const result = await settled(job.done);
+        assert.ok(result !== 'pending' && 'error' in result && result.error instanceof TtsError);
+        assert.equal(JSON.stringify(result.error).includes('sk_car_echoed'), false);
+    });
+});
+
+describe('TtsPlayer cancellation during setup', () => {
+    it('cancelAll while the token is on its way ends the job at once and opens nothing later', async () => {
+        const token = deferred<string>();
+        const { player } = setup({ getToken: () => token.promise });
+        const job = player.speak(option);
+        await flush();
+        player.cancelAll();
+        const result = await settled(job.done);
+        assert.ok(result !== 'pending' && 'error' in result && result.error instanceof TtsCancelled, String(result));
+        token.resolve('tok_late');
+        await flush();
+        assert.equal(FakeSocket.created.length, 0);
+    });
+
+    it('close while the socket is opening closes it and sends nothing', async () => {
+        const { player } = setup();
+        const job = player.speak(option);
+        await flush();
+        const socket = FakeSocket.last();
+        player.close();
+        const result = await settled(job.done);
+        assert.ok(result !== 'pending' && 'error' in result && result.error instanceof TtsCancelled);
+        assert.equal(socket.closedWith?.code, 1000);
+        assert.equal(socket.sent.length, 0);
+        assert.equal(player.speak(option).contextId.startsWith('tts-'), true);
+    });
+
+    it('a job started after cancelAll gets a fresh connection, not the cancelled one', async () => {
+        const first = deferred<string>();
+        let asked = 0;
+        const { player } = setup({ getToken: () => (++asked === 1 ? first.promise : Promise.resolve('tok_fresh')) });
+        const cancelled = player.speak(option);
+        await flush();
+        player.cancelAll();
+        const next = player.speak(option);
+        const socket = await opened();
+        assert.equal(new URL(socket.url).searchParams.get('access_token'), 'tok_fresh');
+        socket.receive(done(next.contextId));
+        const nextResult = await settled(next.done);
+        assert.ok(nextResult !== 'pending' && 'value' in nextResult);
+        const cancelledResult = await settled(cancelled.done);
+        assert.ok(cancelledResult !== 'pending' && 'error' in cancelledResult && cancelledResult.error instanceof TtsCancelled);
+        first.resolve('tok_late');
+        await flush();
+        assert.equal(FakeSocket.created.length, 1);
+    });
+
+    it('gives up on a token that never arrives', async () => {
+        const { player, timers } = setup({ getToken: () => new Promise<string>(() => undefined) });
+        const job = player.speak(option);
+        await flush();
+        timers.tick(10_000);
+        const result = await settled(job.done);
+        assert.ok(result !== 'pending' && 'error' in result && /token/.test(String(result.error)));
     });
 });
 

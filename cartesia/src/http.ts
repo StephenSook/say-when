@@ -28,20 +28,41 @@ export class CartesiaConfigError extends Error {
     }
 }
 
-/** A non-2xx answer. The message is redacted and never includes request headers, so the key cannot leak through it. */
-export class CartesiaHttpError extends Error {
-    readonly title: string;
+const ERROR_CODE = /^[a-z]+(?:_[a-z]+){0,7}$/;
+const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
-    constructor(
-        readonly status: number,
-        readonly errorCode: string | null,
-        title: string,
-        detail: string,
-        readonly requestId: string | null,
-    ) {
+/**
+ * Cartesia's error codes are short snake_case words (quota_exceeded, voice_not_found). Anything else, including
+ * anything with digits or shaped like a key, is dropped, so an echoed secret cannot ride along on the error.
+ */
+export function safeErrorCode(value: unknown): string | null {
+    return typeof value === 'string' && value.length <= 64 && ERROR_CODE.test(value) && redact(value) === value ? value : null;
+}
+
+/** Keeps only a UUID from a request id (WebSocket ids may add context after it); anything else is dropped. */
+export function safeRequestId(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const match = UUID.exec(value);
+    return match ? match[0].toLowerCase() : null;
+}
+
+/**
+ * A non-2xx answer. Every string on it is redacted or checked, and request headers are never copied, so neither the
+ * key nor a phone number the server echoed can leak through the message or a property.
+ */
+export class CartesiaHttpError extends Error {
+    readonly status: number;
+    readonly errorCode: string | null;
+    readonly title: string;
+    readonly requestId: string | null;
+
+    constructor(status: number, errorCode: unknown, title: string, detail: string, requestId: unknown) {
         super(redact(detail ? `${title}: ${detail}` : title).slice(0, 300));
         this.name = 'CartesiaHttpError';
-        this.title = redact(title);
+        this.status = Number.isInteger(status) ? status : 0;
+        this.errorCode = safeErrorCode(errorCode);
+        this.title = redact(title).slice(0, 120);
+        this.requestId = safeRequestId(requestId);
     }
 }
 

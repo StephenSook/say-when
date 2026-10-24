@@ -87,6 +87,23 @@ export function waitForOpen(socket: SocketLike, timeoutMs: number, timers: Timer
     });
 }
 
+/** Rejects with `message` if the promise has not settled within `ms`, for example a token that never arrives. */
+export function withTimeout<T>(promise: Promise<T>, ms: number, timers: Timers, message: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+        const timer = timers.set(() => reject(new Error(message)), ms);
+        promise.then(
+            (value) => {
+                timers.clear(timer);
+                resolve(value);
+            },
+            (error: unknown) => {
+                timers.clear(timer);
+                reject(error);
+            },
+        );
+    });
+}
+
 /** A unique context or request id. Cartesia does not allow reusing a context id after it expires. */
 export function uniqueId(prefix: string, counter: number): string {
     const random = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2);

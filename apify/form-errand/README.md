@@ -12,7 +12,7 @@ The model planning the answers never clicks. This Actor does the clicking, deter
 
 ## Who it is for
 
-It was built for [Say When](https://github.com/StephenSook/say-when), a screenless assistant for people who cannot speak or use their hands. The person hears the read-back in an earpiece and confirms with a head-worn switch, such as a jaw clench or a deliberate eye movement. Anyone building assistive or human-in-the-loop agents can use it the same way: preview, let a person confirm what they heard, then submit.
+It was built for [NeuroLingo](https://github.com/StephenSook/say-when), a screenless assistant for people who cannot speak or use their hands. The person hears the read-back in an earpiece and confirms with a head-worn switch, such as a jaw clench or a deliberate eye movement. Anyone building assistive or human-in-the-loop agents can use it the same way: preview, let a person confirm what they heard, then submit.
 
 ## Try it in a minute
 

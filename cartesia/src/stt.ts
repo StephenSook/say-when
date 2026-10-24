@@ -11,6 +11,7 @@ import {
     SOCKET_OPEN,
     socketUrl,
     waitForOpen,
+    withTimeout,
     type SocketFactory,
     type SocketLike,
     type Timers,
@@ -80,14 +81,14 @@ export interface AudioSource {
 
 // An AudioWorklet that hands each mono block to the page, as in Cartesia's browser STT example.
 const CAPTURE_WORKLET = `
-class SayWhenCapture extends AudioWorkletProcessor {
+class NeuroLingoCapture extends AudioWorkletProcessor {
     process(inputs) {
         const channel = inputs[0] && inputs[0][0];
         if (channel) this.port.postMessage(channel.slice(0));
         return true;
     }
 }
-registerProcessor('say-when-capture', SayWhenCapture);
+registerProcessor('neurolingo-capture', NeuroLingoCapture);
 `;
 
 /** Microphone capture with getUserMedia and an AudioWorklet, downsampled to 16 kHz 16-bit mono. */
@@ -121,7 +122,7 @@ export class MicCapture implements AudioSource {
         const downsampler = new Downsampler(context.sampleRate, STT_SAMPLE_RATE);
         const chunker = new PcmChunker((STT_SAMPLE_RATE * 2 * STT_CHUNK_MS) / 1000);
         this.chunker = chunker;
-        const node = new AudioWorkletNode(context, 'say-when-capture');
+        const node = new AudioWorkletNode(context, 'neurolingo-capture');
         node.port.onmessage = (event: MessageEvent<Float32Array>) => {
             if (this.stopped) return;
             for (const chunk of chunker.push(floatToPcm16(downsampler.push(event.data)))) onChunk(chunk);
@@ -182,6 +183,10 @@ export interface ListenOptions {
     onResume?: () => void;
     onTurn?: (text: string) => void;
     onEvent?: OnEvent;
+    /** Gives up on getToken() after this long. */
+    tokenTimeoutMs?: number;
+    /** After the button is let go (or the time limit), the session ends no later than this, connected or not. */
+    releaseDeadlineMs?: number;
 }
 
 export type ListenResult =
@@ -217,6 +222,7 @@ class ListenSession implements Listening {
     private stopReason: 'turn_end' | 'release' | 'timeout' | 'closed' | null = null;
     private maxTimer: unknown = null;
     private drainTimer: unknown = null;
+    private deadlineTimer: unknown = null;
     private audioBytes = 0;
     private droppedChunks = 0;
 
@@ -246,7 +252,8 @@ class ListenSession implements Listening {
         this.audio.start((chunk) => this.onAudio(chunk)).catch(() => this.fail('error', 'The microphone did not start.'));
         let socket: SocketLike;
         try {
-            const token = await this.options.getToken();
+            const token = await withTimeout(this.options.getToken(), this.options.tokenTimeoutMs ?? 10_000, this.timers, 'No speech token arrived in time.');
+            // Finished already (released past the deadline, aborted, or failed): open nothing and send nothing.
             if (this.finished) return;
             socket = (this.options.socket ?? browserSocketFactory)(
                 sttUrl(token, { keyterms: this.options.keyterms, turn: this.options.turn }),
@@ -321,7 +328,15 @@ class ListenSession implements Listening {
         this.streaming = false;
         this.timers.clear(this.maxTimer);
         this.sendClose();
-        if (reason === 'turn_end') this.finish();
+        if (reason === 'turn_end') {
+            this.finish();
+            return;
+        }
+        // A hard end, whether or not the socket ever opened: a stalled token cannot leave the session hanging.
+        this.deadlineTimer = this.timers.set(() => {
+            if (this.opened) this.finish();
+            else this.fail('error', 'Speech to text did not connect in time.');
+        }, this.options.releaseDeadlineMs ?? 5000);
     }
 
     private onMessage(data: unknown): void {
@@ -450,8 +465,10 @@ class ListenSession implements Listening {
     private clearTimers(): void {
         this.timers.clear(this.maxTimer);
         this.timers.clear(this.drainTimer);
+        this.timers.clear(this.deadlineTimer);
         this.maxTimer = null;
         this.drainTimer = null;
+        this.deadlineTimer = null;
     }
 
     private call<T extends unknown[]>(callback: ((...args: T) => void) | undefined, ...args: T): void {
