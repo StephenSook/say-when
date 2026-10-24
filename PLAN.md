@@ -38,10 +38,10 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⛔ blocked
 | 5.4 | Screen 3, Live conversation: question, options, pick, spoken reply | `web/` | Stephen | ✅ | 5.1 | Built and checked on live data |
 | 5.5 | Partner phone view | `web/` | Stephen | 🟡 | 5.1 | Status view live. Asking built: pairing, typed `ask_question` (passed the live keyboard run L1 on Oct 24) and Hold to ask with Cartesia Ink-2 (not run yet: needs the Cartesia key on the module, then L3 on the real phone) |
 | 5.6 | Station page: the wearer's laptop | `web/` | Stephen | 🟡 | 1.1, 2.1 | Built (`/station`). L1 on `say-when-dev`, Oct 24, silent keyboard mode: pairing, session label `keyboard-test`, a pick, a pick 52 ms late that still took the option heard, a yes or no answer, the refractory ignore, the dead-man pause and resume (hidden page simulated), reload and continue; 11 of 13 steps pass. Not run: the voiced read-back and CONFIRM (step 8) until the module has the Cartesia key; the decoder from Shashank (L4); a real hidden window (5.2) |
-| 5.7 | Speaker page: the room voice | `web/` | Stephen | 🟡 | 1.1 | Built (`/speaker`): says each released reply once, reports `reply_spoken`, shows Missed after 20 s. Not run live until the module has the Cartesia key (L2) |
-| 5.8 | Judge page | `web/` | Stephen | ⬜ | 5.1 | A three-minute itinerary with deep links, the live stats route and what is verified, no login |
+| 5.7 | Speaker page: the room voice | `web/` | Stephen | ✅ | 1.1 | Built (`/speaker`). L2 passed live on `say-when-dev`, Oct 24 about 10:02 to 10:20 AM (session 16, keyboard input, made-up content): each released reply said live without a reload and `reply_spoken` recorded, Missed after 20 s, the two-speakers warning (only after a reload: `approve_pairing` writes `online = false`, a module presence gap) |
+| 5.8 | Judge page | `web/` | Stephen | ✅ | 5.1 | Built (`/judge`, live on the Vercel site): a three-minute route, each database's public stats read live, and measured and not-measured lists, each line tested against the doc it cites |
 | 6.1 | Telemetry to Tiger Data (switch timing, latency) | `telemetry/` | Stephen | ✅ | 1.1 | Built: free Tiger service `neurolingo-telemetry` (TimescaleDB, us-east-1), schema verified live, pinned TLS, 134 tests. The writer reads switch events from SpacetimeDB, so the decoder needs no Tiger code. Not yet run during a real session. Telemetry only, no app state |
-| 6.2 | Tiger compression policy and a measured ratio on our own rows | `telemetry/` | Stephen | ⬜ | 6.1 | Compression is a core Timescale feature; measure it, do not quote it |
+| 6.2 | Tiger compression policy and a measured ratio on our own rows | `telemetry/` | Stephen | ✅ | 6.1 | Columnstore on all 5 hypertables with a policy after 3 days (`sql/050`), verify 73 checks, three Codex rounds. Measured only on synthetic rows, where page minimums dominate: not a quotable ratio |
 | 7.1 | User consult and consent per surface | - | Leon | ⬜ | - | |
 | 7.2 | Demo script and video | `docs/` | Leon | ⬜ | 4.2 | |
 | 7.3 | Devpost writeup | - | Stephen | ⬜ | 7.2 | |
@@ -198,7 +198,7 @@ All three update over SpacetimeDB subscriptions, so every laptop shows the same 
 ## Open Questions
 
 - [ ] **Q1:** Which headset are we using? It decides which signals are possible (a Muse cannot read an imagined movement). Needs Shashank.
-- [ ] **Q2:** Lock the SpacetimeDB table and reducer names in Shared Contracts. Needs Stephen (row 1.2); Shashank checks the decoder side.
+- [x] **Q2:** Lock the SpacetimeDB table and reducer names in Shared Contracts. Done Oct 24: the contracts point at the built module (`docs/spacetime.md`), and Shashank confirmed the decoder side (port 8765).
 - [ ] **Q3:** Demo form: a Google Form owned by the caregiver, or our own page on the dashboard domain? Needs Leon and Stephen.
 - [ ] **Q4:** Can the free Cartesia phone number be set up without a card? Needs Stephen (Cartesia account; the call agent and number do not exist yet).
 - [ ] **Q5:** Who plays the caller's recipient, and is their consent written down? Needs Leon.
