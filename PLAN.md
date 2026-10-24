@@ -32,11 +32,11 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⛔ blocked
 | 4.3 | Care team request form (demo target) | external | Leon | ⬜ | - | Owned by the consenting caregiver |
 | 4.4 | Outbound call agent (Cartesia Managed Agents) | `cartesia/` | Stephen | 🟡 | 1.1, 4.2 | Stephen, since Oct 23 9:30pm PT. Consenting number only. Claude implementing |
 | 5.0 | UI reference: `docs/ui.md` with tokens, wireframes and mockups | `docs/` | Stephen | ✅ | - | Open `docs/mockups/index.html`. Stephen builds the UI from it |
-| 5.1 | Dashboard shell: Next.js, SpacetimeDB WebSocket subscriptions, layout | `web/` | Stephen | ⬜ | 1.1 | Must work on any laptop with no login. See D7 |
-| 5.2 | Screen 1, Live data: each pipeline stage with its real payload as it flows | `web/` | Stephen | ⬜ | 5.1 | Reads `pipeline_event` |
-| 5.3 | Screen 2, Agents at work: form errand and phone call, step by step | `web/` | Stephen | ⬜ | 5.1, 4.1 | Reads `errand`, `call_request` |
-| 5.4 | Screen 3, Live conversation: question, options, pick, spoken reply | `web/` | Stephen | ⬜ | 5.1 | Reads `option`, command events |
-| 5.5 | Partner phone view | `web/` | Stephen | ⬜ | 5.1 | |
+| 5.1 | Dashboard shell: Next.js, SpacetimeDB WebSocket subscriptions, layout | `web/` | Stephen | 🟡 | 1.1 | Stephen, since Oct 23 10:20pm PT. Claude building. Must work on any laptop with no login. See D7 |
+| 5.2 | Screen 1, Live data: each pipeline stage with its real payload as it flows | `web/` | Stephen | 🟡 | 5.1 | Stephen, since Oct 23 10:20pm PT. Claude building. Reads `pipeline_event` |
+| 5.3 | Screen 2, Agents at work: form errand and phone call, step by step | `web/` | Stephen | 🟡 | 5.1, 4.1 | Stephen, since Oct 23 10:20pm PT. Claude building. Reads `errand`, `call_request` |
+| 5.4 | Screen 3, Live conversation: question, options, pick, spoken reply | `web/` | Stephen | 🟡 | 5.1 | Stephen, since Oct 23 10:20pm PT. Claude building. Reads `option`, command events |
+| 5.5 | Partner phone view | `web/` | Stephen | 🟡 | 5.1 | Stephen, since Oct 23 10:20pm PT. Claude building |
 | 6.1 | Telemetry to Tiger Data (switch timing, latency) | `telemetry/` | Shashank | ⬜ | 2.1 | Telemetry only, no app state |
 | 7.1 | User consult and consent per surface | - | Leon | ⬜ | - | |
 | 7.2 | Demo script and video | `docs/` | Leon | ⬜ | 4.2 | |
