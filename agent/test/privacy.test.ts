@@ -203,7 +203,7 @@ const COUNT_KEYS: ReadonlySet<string> = new Set([
     'hitCount', 'memoryAllowed', 'mossOpen', 'instant', 'mossMs', 'needsWeb', 'searches', 'rowCount', 'partial', 'rows',
     'chunks', 'indexMs', 'skippedRows', 'memoryHits', 'webHits', 'optionCount', 'final', 'yesNo', 'attempts', 'claudeMs',
     'inputTokens', 'outputTokens', 'cacheReadTokens', 'fallbackUsed', 'droppedCalls', 'problems', 'readBack', 'unmatched',
-    'missingRequired', 'previewMs', 'written', 'empty', 'added', 'updated', 'payloadTrimmed', 'draft',
+    'missingRequired', 'previewMs', 'written', 'empty', 'added', 'updated', 'payloadTrimmed', 'draft', 'pastRequests',
 ]);
 
 /** Checks every public event of a run: no content, only known labels and count keys. */

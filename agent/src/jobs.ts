@@ -265,7 +265,15 @@ export async function runOptionsJob(row: AgentQueueRow, attempt: number, deps: J
         }
 
         // 1. Memory first.
-        const recall = await recallMemory(deps.retrieval, events, row, signal, allowMemory);
+        // With the newest past request of each allowed form (src/requests.ts), so the same form can be filled again.
+        const recall = await recallMemory(
+            deps.retrieval,
+            events,
+            row,
+            signal,
+            allowMemory,
+            deps.forms.map((form) => form.formTitle),
+        );
         if (signal.aborted) throw new JobAbortedError();
 
         // 2 and 3. Decide (D8), then search while the memory-first options (or the draft) are read. Menu turns never

@@ -258,6 +258,11 @@ export class FakeMemory implements MemoryPort {
     recallDelayMs = 0;
     /** Wait this long before a write into memory lands. */
     writeBackDelayMs = 0;
+    /** What a past-request query (src/requests.ts) finds. None by default. */
+    pastRequestHits: MemoryHit[] = [];
+    /** Notes added with addNote: the past requests kept after a send. */
+    readonly notes: { text: string; shareable: false }[] = [];
+    noteError: Error | null = null;
 
     constructor(private readonly trace?: Trace) {}
 
@@ -271,7 +276,14 @@ export class FakeMemory implements MemoryPort {
         if (this.recallHang) await new Promise<never>(() => undefined);
         if (this.recallDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, this.recallDelayMs));
         if (this.recallError) throw this.recallError;
+        if (question.startsWith('Past request (')) return { hits: structuredClone(this.pastRequestHits), instant: [], mossMs: 1, wallMs: 1 };
         return structuredClone(this.recallResult);
+    }
+
+    async addNote(note: { text: string; shareable: false }) {
+        if (this.noteError) throw this.noteError;
+        this.notes.push({ ...note });
+        return { id: `mem:pref:note${this.notes.length}`, added: 1, updated: 0 };
     }
 
     async writeBack(confirmed: { question: string; reply: string; partnerId: string; shareable?: boolean }) {
@@ -357,6 +369,8 @@ export function errandResult(overrides: Partial<ErrandResult> = {}): ErrandResul
 export class FakeErrands implements ErrandPort {
     readonly previews: PreviewRequest[] = [];
     readonly submits: SubmitRequest[] = [];
+    /** Runs inside submit, before it answers (for example to revoke a consent while the form is sent). */
+    onSubmit: (() => void) | null = null;
     previewResult: ErrandResult | Error = errandResult();
     submitResult: ErrandResult | Error = errandResult({ status: 'submitted', mode: 'submit', confirmationText: 'Request received.', submittedAt: '2026-10-24T19:00:05Z' });
 
@@ -368,6 +382,7 @@ export class FakeErrands implements ErrandPort {
 
     async submit(request: SubmitRequest): Promise<ErrandResult> {
         this.submits.push(structuredClone(request));
+        this.onSubmit?.();
         if (this.submitResult instanceof Error) throw this.submitResult;
         return structuredClone(this.submitResult);
     }
@@ -509,6 +524,8 @@ export interface HarnessOptions {
     draftFirst?: boolean;
     /** The judge try sandbox's admission check (src/sandbox.ts); none by default. */
     admit?: OrchestratorOptions['admit'];
+    /** Run as the judge try sandbox (AGENT_TRY): the errand runner keeps no past request. Off by default. */
+    sandbox?: boolean;
 }
 
 export function harness(options: HarnessOptions = {}): Harness {
@@ -565,7 +582,15 @@ export function harness(options: HarnessOptions = {}): Harness {
         ...(options.confirmToDialMs !== undefined ? { confirmToDialMs: options.confirmToDialMs } : {}),
         ...(options.clockSkewMs !== undefined ? { clockSkewMs: options.clockSkewMs } : {}),
     });
-    const errandRunner = new ErrandRunner({ db, errands: deps.errands, previews, log, clock, retryMs: 5 });
+    const errandRunner = new ErrandRunner({
+        db,
+        errands: deps.errands,
+        previews,
+        log,
+        clock,
+        retryMs: 5,
+        pastRequests: { memory: deps.retrieval.memory, forms: deps.forms, timeZone: deps.timeZone, now: deps.now, sandbox: options.sandbox ?? false },
+    });
     const orchestrator = new Orchestrator(
         deps,
         { errands: errandRunner, calls: callRunner },

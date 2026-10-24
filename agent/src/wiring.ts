@@ -77,6 +77,9 @@ function memoryPort(run: MossRun, store: MemoryStore, reopen: boolean, log: Logg
         recall: (question, partnerId) => store.recall(question, partnerId),
         writeBack: (confirmed) => store.writeBack(confirmed),
         rank: (partnerId, options) => rankOptions(store, partnerId, options),
+        // A preference for every partner ("any"): the person's own request, whoever asked about it.
+        addNote: (note) =>
+            store.add([{ type: 'pref', text: note.text, shareable: note.shareable }]).then((result) => ({ id: result.ids[0] ?? '', added: result.added, updated: result.updated })),
     };
 }
 

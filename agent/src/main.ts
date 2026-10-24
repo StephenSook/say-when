@@ -180,7 +180,15 @@ async function run(result: ConfigResult, log: Logger): Promise<number> {
         draftFirst: config.speed.draftFirst,
     };
     calls = new CallRunner({ db, dialer: wired.dialer, log, clock: () => performance.now(), now: Date.now });
-    const errands = new ErrandRunner({ db, errands: wired.errands, previews, log, clock: () => performance.now() });
+    const errands = new ErrandRunner({
+        db,
+        errands: wired.errands,
+        previews,
+        log,
+        clock: () => performance.now(),
+        // Past requests (src/requests.ts): never in the judge try sandbox.
+        pastRequests: { memory: wired.memory, forms: wired.forms, timeZone: config.timeZone, now: Date.now, sandbox: config.sandbox !== null },
+    });
     const meter = config.sandbox ? new SandboxMeter(config.sandbox) : null;
     if (meter) log.info('judge try sandbox caps are on', { dailyCents: Math.round(meter.limits.dailyUsd * 100), partnersPerHour: meter.limits.partnersPerHour });
     const orchestrator = new Orchestrator(deps, { errands, calls }, { maxJobs: config.maxJobs, ...(meter ? { admit: (row) => meter.admit(row) } : {}) });

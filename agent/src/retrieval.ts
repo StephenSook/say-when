@@ -9,7 +9,7 @@
 // failing the job, because the person still needs options.
 
 import { ApifyHttpError, type QuestionClass, type SearchRow } from '@say-when/apify-client';
-import { MossCallError, MossRunError, type Recall, type WebHit } from '@say-when/moss';
+import { MossCallError, MossRunError, type MemoryHit, type Recall, type WebHit } from '@say-when/moss';
 
 import { DeadlineError, JobAbortedError, withDeadline } from './deadline.js';
 import type { Logger } from './log.js';
@@ -17,6 +17,7 @@ import { label, StaleAttemptError, type JobEvents } from './pipeline.js';
 import type { MemoryContext, WebContext } from './planner/types.js';
 import type { Classifier, MemoryPort, SearchPort, WebIndexPort } from './ports.js';
 import { excerpt, memoryHitPayload, searchRowPayload, sourceRefOf, webHitPayload, type PayloadHit } from './privacy.js';
+import { isPastRequest, pastRequestQuery } from './requests.js';
 import type { AgentQueueRow } from './types.js';
 
 export { JobAbortedError };
@@ -70,10 +71,45 @@ export function searchErrorLabel(kind: 'web' | 'maps', error: unknown, deadline:
     return label(kind, 'error');
 }
 
+/** At most this many allowed forms get a past-request query per question. */
+const MAX_PAST_REQUEST_FORMS = 4;
+
+/** The newest past request of one form among the hits, or null. */
+function newestPastRequest(hits: readonly MemoryHit[], formTitle: string): MemoryHit | null {
+    let newest: MemoryHit | null = null;
+    for (const hit of hits) {
+        if (hit.type !== 'pref' || !isPastRequest(hit.text, formTitle)) continue;
+        if (!newest || (hit.at ?? -Infinity) > (newest.at ?? -Infinity)) newest = hit;
+    }
+    return newest;
+}
+
 /**
- * Step 1: the person's memory for this question and this partner. Null when memory is off, closed or failed.
- * `allowed` reads the job's memory consent as the module shows it now: it is checked again after every wait, since
- * consent can be revoked while a job runs.
+ * The question's recall, plus the newest past request (src/requests.ts) of each allowed form, first, so the planner
+ * can offer to send the same form again. One local query per form, by the form's title. Older past requests the
+ * question's own recall found are left out: only the newest one is "last time". A past-request query that fails only
+ * leaves its form out.
+ */
+async function recallWithPastRequests(memory: MemoryPort, row: AgentQueueRow, formTitles: readonly string[]): Promise<{ recall: Recall; pastRequests: number }> {
+    const titles = [...new Set(formTitles)].slice(0, MAX_PAST_REQUEST_FORMS);
+    const [recall, ...found] = await Promise.all([
+        memory.recall(row.questionText, row.askedBy),
+        ...titles.map((title) =>
+            memory.recall(pastRequestQuery(title), row.askedBy).then(
+                (result) => newestPastRequest(result.hits, title),
+                () => null,
+            ),
+        ),
+    ]);
+    const past = found.filter((hit): hit is MemoryHit => hit !== null);
+    const rest = recall.hits.filter((hit) => !isPastRequest(hit.text));
+    return { recall: { ...recall, hits: [...past, ...rest] }, pastRequests: past.length };
+}
+
+/**
+ * Step 1: the person's memory for this question and this partner, with the newest past request of each allowed form
+ * (`formTitles`). Null when memory is off, closed or failed. `allowed` reads the job's memory consent as the module
+ * shows it now: it is checked again after every wait, since consent can be revoked while a job runs.
  */
 export async function recallMemory(
     deps: RetrievalDeps,
@@ -81,6 +117,7 @@ export async function recallMemory(
     row: AgentQueueRow,
     signal: AbortSignal,
     allowed: () => boolean = () => true,
+    formTitles: readonly string[] = [],
 ): Promise<Recall | null> {
     if (!row.memoryAllowed || !allowed()) {
         await events.instant('retrieve', 'ok', 'memory off', 0, { counts: { hitCount: 0, memoryAllowed: false } });
@@ -92,14 +129,15 @@ export async function recallMemory(
     }
     const step = await events.begin('retrieve', 'memory recall');
     try {
-        const recall = allowed() ? await withDeadline(deps.memory.recall(row.questionText, row.askedBy), mossDeadline(deps, 'recall'), 'memory recall', signal) : null;
+        const recalled = allowed() ? await withDeadline(recallWithPastRequests(deps.memory, row, formTitles), mossDeadline(deps, 'recall'), 'memory recall', signal) : null;
+        const recall = recalled?.recall ?? null;
         if (!recall || !allowed()) {
             // Revoked while the step started or while Moss answered: nothing from memory is used or shown.
             await step.ok('memory recall', { counts: { hitCount: 0, memoryAllowed: false } });
             return null;
         }
         await step.ok('memory recall', {
-            counts: { hitCount: recall.hits.length, instant: recall.instant.length, mossMs: recall.mossMs ?? undefined },
+            counts: { hitCount: recall.hits.length, instant: recall.instant.length, pastRequests: recalled?.pastRequests ?? 0, mossMs: recall.mossMs ?? undefined },
             payload: { hits: recall.hits.map(memoryHitPayload) },
             listKey: 'hits',
         });
