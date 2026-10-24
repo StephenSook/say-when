@@ -5,8 +5,10 @@
 // - A daily spend ceiling, counted with a fixed, conservative estimate per job (planner call, web search, errand
 //   preview plus its one submit) before the job runs. A job that would go past it is refused.
 // - Questions per partner device per hour, and new partner devices per hour (each judge's page is one partner).
+// - Remember jobs are always refused: the sandbox's memory holds only its sample notes, so one judge's words are never
+//   recalled for the next judge. (The module does not make them in the sandbox either; this is the backstop.)
 // A refused job is failed with the code `try_limit`, which the module shows on the board and the try page puts in
-// words. Remember jobs are never refused (no model call, and refusing one would only lose a saved reply).
+// words.
 //
 // The counters live in this process: a restart resets them. The module's caps live in the database and still hold.
 // The health endpoint (`GET /healthz` on PORT, for the host's checks and for anyone curious) answers with numbers
@@ -51,6 +53,7 @@ export const TRY_LIMIT_SAY = {
     spend: 'The try is closed for today: its spending limit is used up.',
     partner: 'This page has asked its questions for this hour. Try again later.',
     partners: 'Too many people are trying Eleven this hour. Try again later.',
+    memory: 'The try does not save replies to memory.',
 } as const;
 
 export type Admission = { ok: true; usd: number } | { ok: false; reasonCode: typeof TRY_LIMIT_CODE; reason: string; why: keyof typeof TRY_LIMIT_SAY };
@@ -92,7 +95,7 @@ export class SandboxMeter {
     admit(row: AgentQueueRow): Admission {
         const now = this.now();
         this.roll(now);
-        if (row.kind === 'remember') return { ok: true, usd: 0 };
+        if (row.kind === 'remember') return this.refuse('memory');
         const usd = this.estimate(row);
         if (this.spentUsd + usd > this.limits.dailyUsd + 1e-9) return this.refuse('spend');
         // Every options job counts against whoever asked (a menu turn's asker is the station), so no origin skips it.

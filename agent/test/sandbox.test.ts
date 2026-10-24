@@ -87,10 +87,11 @@ describe('the sandbox meter', () => {
         assert.equal(m.admit(a).ok, true);
     });
 
-    it('never refuses a remember job', () => {
-        const { m } = meter({ dailyUsd: 0.1, questionsPerPartnerPerHour: 1 });
-        assert.equal(m.admit(row()).ok, true);
-        assert.equal(m.admit(row({ kind: 'remember' })).ok, true);
+    it('refuses every remember job: one judge\'s words are never saved for the next judge', () => {
+        const { m } = meter();
+        const refused = m.admit(row({ kind: 'remember', replyText: 'Thai noodles' }));
+        assert.ok(!refused.ok && refused.why === 'memory' && refused.reasonCode === TRY_LIMIT_CODE);
+        assert.equal(m.usage().jobsToday, 0);
     });
 
     it('caps every options job by who asked, menu turns included', () => {
