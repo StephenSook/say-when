@@ -258,3 +258,11 @@
     margin-bottom: 0;
   }
 }
+
+/* A 720 px projector: the rows lose half their padding too, so the reply said out loud shows under the options. */
+@media (min-width: 721px) and (max-height: 760px) {
+  .option {
+    padding-top: var(--s1);
+    padding-bottom: var(--s1);
+  }
+}
