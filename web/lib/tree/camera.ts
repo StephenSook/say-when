@@ -110,7 +110,8 @@ function nearestAllowed(preferred: number, lo: number, hi: number, forbidden: re
 /**
  * The viewport that shows `target` whole, with a small margin, at the largest zoom in [minZoom, maxZoom] where no card
  * is cut by an edge of the `width` x `height` screen: each card is fully on screen or fully off it. Of the clean
- * placements at that zoom, the one whose center is nearest the target's center. null when no zoom in range allows it.
+ * placements at that zoom, the one whose shown cards sit most centered, so the picture is balanced rather than
+ * pushed to one side. null when no zoom in range allows it.
  */
 export function cleanViewport(target: Rect, cards: readonly Rect[], width: number, height: number, minZoom: number, maxZoom: number, step: number = 0.01): Viewport | null {
   if (width <= 0 || height <= 0) return null;
@@ -128,6 +129,28 @@ export function cleanViewport(target: Rect, cards: readonly Rect[], width: numbe
     const yMin = target.y + target.height + margin - vh;
     const yMax = target.y - margin;
     if (xMin > xMax || yMin > yMax) continue;
+
+    /** The box around the cards shown with this corner, or null when a card is cut. */
+    const shown = (x0: number, y0: number): Rect | null => {
+      let left = Infinity;
+      let top = Infinity;
+      let right = -Infinity;
+      let bottom = -Infinity;
+      for (const c of cards) {
+        const cr = c.x + c.width;
+        const cb = c.y + c.height;
+        if (!(c.x < x0 + vw - EPS && cr > x0 + EPS && c.y < y0 + vh - EPS && cb > y0 + EPS)) continue;
+        if (!(c.x >= x0 - EPS && cr <= x0 + vw + EPS && c.y >= y0 - EPS && cb <= y0 + vh + EPS)) return null;
+        left = Math.min(left, c.x);
+        top = Math.min(top, c.y);
+        right = Math.max(right, cr);
+        bottom = Math.max(bottom, cb);
+      }
+      return left === Infinity ? target : { x: left, y: top, width: right - left, height: bottom - top };
+    };
+    /** How far the shown cards sit from the middle of the screen, in canvas units. */
+    const offCenter = (x0: number, y0: number, box: Rect) => Math.hypot(x0 + vw / 2 - (box.x + box.width / 2), y0 + vh / 2 - (box.y + box.height / 2));
+
     const yPreferred = clamp(cy - vh / 2, yMin, yMax);
     // A clean left edge sits at a card's edge (or one view width from it); try those, and the centered spot.
     const xs = new Set<number>([clamp(cx - vw / 2, xMin, xMax), xMin, xMax]);
@@ -135,6 +158,20 @@ export function cleanViewport(target: Rect, cards: readonly Rect[], width: numbe
       for (const v of [c.x, c.x + c.width, c.x - vw, c.x + c.width - vw]) if (v >= xMin - EPS && v <= xMax + EPS) xs.add(clamp(v, xMin, xMax));
     }
     let best: { x0: number; y0: number; d: number } | null = null;
+    const consider = (x0: number, y0: number) => {
+      const box = shown(x0, y0);
+      if (box === null) return;
+      const d = offCenter(x0, y0, box);
+      if (best === null || d < best.d - EPS) best = { x0, y0, d };
+      // Then center the same cards, if that keeps every card whole.
+      const x1 = clamp(box.x + box.width / 2 - vw / 2, xMin, xMax);
+      const y1 = clamp(box.y + box.height / 2 - vh / 2, yMin, yMax);
+      const centered = shown(x1, y1);
+      if (centered !== null) {
+        const d1 = offCenter(x1, y1, centered);
+        if (d1 < best.d - EPS) best = { x0: x1, y0: y1, d: d1 };
+      }
+    };
     for (const x0 of xs) {
       // For this left edge, the tops that would cut a card: cards cut by a side edge must be off screen vertically;
       // cards wholly between the side edges must be fully in or fully out vertically.
@@ -148,11 +185,10 @@ export function cleanViewport(target: Rect, cards: readonly Rect[], width: numbe
         else forbidden.push({ lo: c.y - vh, hi: bottom });
       }
       const y0 = nearestAllowed(yPreferred, yMin, yMax, forbidden);
-      if (y0 === null) continue;
-      const d = Math.hypot(x0 + vw / 2 - cx, y0 + vh / 2 - cy);
-      if (best === null || d < best.d - EPS) best = { x0, y0, d };
+      if (y0 !== null) consider(x0, y0);
     }
-    if (best) return { x: -best.x0 * zoom, y: -best.y0 * zoom, zoom };
+    const chosen = best as { x0: number; y0: number; d: number } | null;
+    if (chosen) return { x: -chosen.x0 * zoom, y: -chosen.y0 * zoom, zoom };
   }
   return null;
 }
