@@ -2,9 +2,12 @@
 // Run: cd scripts && npm test
 
 import assert from 'node:assert/strict';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
-import { decodeCell, devicesToRevoke, missingConsents, parseSqlTable, run } from '../demo-owner.mjs';
+import { consentContactIds, decodeCell, devicesToRevoke, missingConsents, parseSqlTable, run } from '../demo-owner.mjs';
 
 // The exact shape `spacetime sql` printed for say-when-dev on Oct 24 (identities shortened in the fixtures below).
 const CONSENT_SQL = ` id | scope            | subject             | revoked_at
@@ -98,7 +101,7 @@ describe('consents', () => {
     it('the consents command calls grant_consent once per missing row, on the named database', () => {
         const { calls, spacetime } = fakeCli({ 'SELECT id, scope, subject, revoked_at FROM consent': CONSENT_SQL });
         const { lines, out } = capture();
-        assert.equal(run(['--db', 'say-when-demo', 'consents', '--call-contact', 'stephen'], { spacetime, out }), 0);
+        assert.equal(run(['--db', 'say-when-demo', 'consents', '--call-contact', 'stephen'], { spacetime, out, contacts: () => ['stephen'] }), 0);
         const grants = calls.filter((c) => c[0] === 'call');
         assert.deepEqual(
             grants.map((c) => c.slice(4)),
@@ -112,10 +115,36 @@ describe('consents', () => {
         assert.equal(lines.length, 3);
     });
 
-    it('refuses a contact id that is not an id', () => {
+    it('refuses a contact id that is not an id, without echoing what was typed', () => {
         const { calls, spacetime } = fakeCli();
-        assert.equal(run(['--db', 'say-when-demo', 'consents', '--call-contact', '+14155550123'], { spacetime, out: () => {} }), 2);
+        const { lines, out } = capture();
+        assert.equal(run(['--db', 'say-when-demo', 'consents', '--call-contact', '+14155550123'], { spacetime, out, contacts: () => ['stephen'] }), 2);
         assert.equal(calls.length, 0);
+        assert.ok(!lines.join(' ').includes('4155550123'));
+    });
+
+    it('grants a call row only for a contact in the private consent file', () => {
+        const unknown = fakeCli({ 'SELECT id, scope, subject, revoked_at FROM consent': CONSENT_SQL });
+        assert.equal(run(['--db', 'say-when-demo', 'consents', '--call-contact', 'leon'], { spacetime: unknown.spacetime, out: () => {}, contacts: () => ['stephen'] }), 2);
+        assert.equal(unknown.calls.length, 0, 'nothing granted, not even the other rows');
+        const unreadable = fakeCli();
+        assert.equal(run(['--db', 'say-when-demo', 'consents', '--call-contact', 'stephen'], { spacetime: unreadable.spacetime, out: () => {}, contacts: () => null }), 1);
+        assert.equal(unreadable.calls.length, 0);
+        const noCall = fakeCli();
+        run(['--db', 'say-when-demo', 'consents'], { spacetime: noCall.spacetime, out: () => {}, contacts: () => assert.fail('the file is read only when a call contact is named') });
+    });
+
+    it('reads only the ids from the consent file the env file names', () => {
+        const dir = mkdtempSync(join(tmpdir(), 'demo-owner-'));
+        const consent = join(dir, 'consent.json');
+        writeFileSync(consent, JSON.stringify([{ id: 'stephen', phone: '+14155550123' }, { id: 'sam', phone: '+14155550124' }, { phone: '+1415' }]));
+        writeFileSync(join(dir, 'env.local'), `OTHER=1\nCALL_CONSENT_FILE="${consent}"\n`);
+        assert.deepEqual(consentContactIds(join(dir, 'env.local')), ['stephen', 'sam']);
+        writeFileSync(join(dir, 'env2.local'), 'OTHER=1\n');
+        assert.equal(consentContactIds(join(dir, 'env2.local')), null);
+        assert.equal(consentContactIds(join(dir, 'missing')), null);
+        writeFileSync(join(dir, 'env3.local'), `CALL_CONSENT_FILE=${join(dir, 'nope.json')}\n`);
+        assert.equal(consentContactIds(join(dir, 'env3.local')), null);
     });
 });
 

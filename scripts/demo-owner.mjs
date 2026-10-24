@@ -16,7 +16,10 @@
 // a phone number or any content. docs/demo-runbook.md has the order of the morning.
 
 import { execFileSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const DATABASES = ['say-when-dev', 'say-when-demo'];
 
@@ -89,12 +92,30 @@ export function parseArgs(argv) {
     return args;
 }
 
+/**
+ * The contact ids in the private consent file that the repo's `.env.local` names in CALL_CONSENT_FILE, or null when
+ * either cannot be read. Only the ids are kept; the numbers in the file are never returned or printed.
+ */
+export function consentContactIds(envFile = process.env.DEMO_OWNER_ENV_FILE || join(dirname(fileURLToPath(import.meta.url)), '..', '.env.local')) {
+    try {
+        const line = readFileSync(envFile, 'utf8').split('\n').filter((l) => l.startsWith('CALL_CONSENT_FILE=')).pop();
+        if (!line) return null;
+        let path = line.slice('CALL_CONSENT_FILE='.length).trim().replace(/^(["'])(.*)\1$/, '$2');
+        if (path.startsWith('~/')) path = join(homedir(), path.slice(2));
+        const list = JSON.parse(readFileSync(path, 'utf8'));
+        if (!Array.isArray(list)) return null;
+        return list.map((entry) => (entry && typeof entry.id === 'string' ? entry.id : null)).filter((id) => id !== null);
+    } catch {
+        return null;
+    }
+}
+
 /** The CLI runner: `spacetime <args>` with the output returned. Tests pass their own. */
 export function cliRunner(args) {
     return execFileSync('spacetime', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000 });
 }
 
-export function run(argv, { spacetime = cliRunner, out = (line) => process.stdout.write(`${line}\n`) } = {}) {
+export function run(argv, { spacetime = cliRunner, out = (line) => process.stdout.write(`${line}\n`), contacts = consentContactIds } = {}) {
     const args = parseArgs(argv);
     if (!DATABASES.includes(args.db)) {
         out(`Refusing database "${args.db}": use --db say-when-dev or --db say-when-demo.`);
@@ -137,10 +158,22 @@ export function run(argv, { spacetime = cliRunner, out = (line) => process.stdou
             return 0;
         }
         case 'consents': {
-            const bad = args.callContacts.find((id) => !CONTACT_ID.test(id));
-            if (bad !== undefined) {
-                out(`--call-contact must be a contact id from the consent file (lowercase, starting with a letter), not "${bad}".`);
+            // The value is not echoed: someone may have typed a phone number.
+            if (args.callContacts.some((id) => !CONTACT_ID.test(id))) {
+                out('--call-contact takes a contact id from the private consent file (lowercase, starting with a letter), never a number.');
                 return 2;
+            }
+            if (args.callContacts.length > 0) {
+                const known = contacts();
+                if (known === null) {
+                    out('The private consent file (CALL_CONSENT_FILE in .env.local) cannot be read, so no call row was granted.');
+                    return 1;
+                }
+                const unknown = args.callContacts.filter((id) => !known.includes(id));
+                if (unknown.length > 0) {
+                    out(`Not in the private consent file: ${unknown.join(', ')}. A call row only counts for a contact who consented there; nothing was granted.`);
+                    return 2;
+                }
             }
             const missing = missingConsents(sql('SELECT id, scope, subject, revoked_at FROM consent'), args.callContacts);
             for (const c of missing) {
