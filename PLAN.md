@@ -30,6 +30,7 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⛔ blocked
 | 4.2 | Errand wiring: ERRAND, read-back, confirm_errand, submit | `agent/` | Shashank | ⬜ | 1.1, 4.1 | |
 | 4.3 | Care team request form (demo target) | external | Leon | ⬜ | - | Owned by the consenting caregiver |
 | 4.4 | Outbound call agent (Cartesia Managed Agents) | `agent/` | Shashank | ⬜ | 1.1, 4.2 | Consenting number only |
+| 5.0 | UI reference: `docs/ui.md` with tokens, wireframes and mockups | `docs/` | Stephen | 🟡 | - | Stephen, since Oct 23 9:10pm PT. Research done by Claude; Stephen and Khadim build the UI |
 | 5.1 | Dashboard shell: Next.js, SpacetimeDB WebSocket subscriptions, layout | `web/` | Khadim | ⬜ | 1.1 | Must work on any laptop with no login. See D7 |
 | 5.2 | Screen 1, Live data: each pipeline stage with its real payload as it flows | `web/` | Stephen | ⬜ | 5.1 | Reads `pipeline_event` |
 | 5.3 | Screen 2, Agents at work: form errand and phone call, step by step | `web/` | Stephen | ⬜ | 5.1, 4.1 | Reads `errand`, `call_request` |
@@ -114,7 +115,7 @@ Apify search, the form-errand Actor and Moss retrieval are Stephen's, alongside 
 
 ### D7: Three live dashboard screens
 
-All three update over SpacetimeDB subscriptions, so every laptop shows the same thing at the same moment.
+All three update over SpacetimeDB subscriptions, so every laptop shows the same thing at the same moment. Stephen and Khadim build the UI themselves. Every page stays very simple: one clear focus per screen, big labels, and nothing a judge has to decode. Style and layout follow `docs/ui.md`.
 
 1. **Live data.** The data actually flowing: the partner's words from Ink-2, the Apify rows that came back (with source and fetch time), the Moss hits, the options Claude drafted, the voice clip Sonic played, and how long each step took.
 2. **Agents at work.** The agents doing their jobs: the form-errand Actor's preview screenshot, the values it read back off the page, the digest, the confirm, and the confirmation text after submit. Then the call: who is being called, ringing, connected, the live transcript, and how it ended.
