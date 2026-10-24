@@ -106,13 +106,15 @@ function OptionBody({ node }: { node: OptionNode }) {
     <>
       <div className={styles.row}>
         <span className={styles.eyebrow}>{node.heading}</span>
-        {node.tag ? <span className={styles.tag}>{node.tag}</span> : null}
         {node.state === 'picked' || node.state === 'reading' ? <StatusBadge status={node.status} word={node.word} /> : null}
       </div>
       <p className={cx(styles.optionText, node.text === null && styles.muted)} title={node.text ?? undefined}>
         {node.text ?? 'Words not shared on this screen.'}
       </p>
-      {node.pickLine ? <p className={styles.pickLine}>{node.pickLine}</p> : node.source ? <p className={styles.source}>{node.source}</p> : null}
+      <div className={cx(styles.row, styles.bottom)}>
+        {node.tag ? <span className={styles.tag}>{node.tag}</span> : null}
+        {node.pickLine ? <p className={styles.pickLine}>{node.pickLine}</p> : node.source ? <p className={styles.source}>{node.source}</p> : null}
+      </div>
     </>
   );
 }
@@ -123,11 +125,17 @@ function StepBody({ node }: { node: StepNode }) {
       {node.eyebrow ? <p className={styles.eyebrow}>{node.eyebrow}</p> : null}
       <div className={styles.row}>
         <span className={styles.stepTitle}>{node.title}</span>
-        <StatusBadge status={node.status} word={node.word} since={node.since} until={node.until} />
+        <StatusBadge status={node.status} word={node.word} since={node.since} />
       </div>
       {node.meta ? (
         <p className={styles.stepMeta} title={node.meta}>
           {node.meta}
+          {node.status === 'waiting' && node.until !== null ? (
+            <>
+              {' '}
+              <Clock since={null} until={node.until} />
+            </>
+          ) : null}
         </p>
       ) : null}
       {node.text ? (

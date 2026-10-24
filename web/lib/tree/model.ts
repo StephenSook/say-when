@@ -857,7 +857,7 @@ function draftHub(ctx: Context, round: Round, optionCount: number, menu: boolean
     const ok = [...round.plan].reverse().find((event) => event.status === 'ok') ?? null;
     const reported = ok ? num(loose(ok.detail).optionCount) : null;
     const count = reported ?? optionCount;
-    meta = formatCount(count, followUp ? 'follow-up option' : 'option');
+    meta = formatCount(count, 'option');
     detail = joinMeta(meta, timeWords(run.ms));
   }
   return {
@@ -1028,13 +1028,13 @@ function errandBranch(ctx: Context, round: Round, errand: Errand, pickedRank: nu
     const e2 = steps[1]?.rect ?? steps[0]!.rect;
     let fields: Parameters<typeof step>[5];
     if (errand.status === 'sent') {
-      fields = { status: 'done', word: 'Sent', title: 'Sent', meta: screenText(errand.confirmationText) ?? 'Sent.' };
+      fields = { status: 'done', word: 'Sent', title: 'Send', meta: screenText(errand.confirmationText) ?? 'Sent.' };
     } else if (errand.status === 'unknown_outcome') {
-      fields = { status: 'failed', word: 'Unknown', title: 'Sending', meta: 'It may or may not have gone through. Nothing was sent again.' };
+      fields = { status: 'failed', word: 'Unknown', title: 'Send', meta: 'It may or may not have gone through. Nothing was sent again.' };
     } else if (ended) {
-      fields = { status: endedStatus(ended), title: 'Sending', meta: reason ? sentence(reason) : 'It was not sent.' };
+      fields = { status: endedStatus(ended), title: 'Send', meta: reason ? sentence(reason) : 'It was not sent.' };
     } else {
-      fields = { status: 'working', word: 'Sending', title: 'Sending', meta: 'Sending the form.', since: errand.confirmedAt };
+      fields = { status: 'working', word: 'Sending', title: 'Send', meta: 'Sending the form.', since: errand.confirmedAt };
     }
     steps.push(step(qid, round.index, pickedRank, 2, 'e3', fields, e2));
     if (errand.confirmedAt !== null) handoffs.push({ into: 2, key: `h:errand:${errand.id}:confirmed` });

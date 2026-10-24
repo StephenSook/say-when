@@ -166,7 +166,8 @@
 
 /* New nodes grow out of their parent once, when their row arrives (never on page load). */
 .entering {
-  animation: grow-in 340ms var(--ease-out) both;
+  /* backwards, not both: once grown, the card's own state (a dimmed option) takes over again. */
+  animation: grow-in 340ms var(--ease-out) backwards;
   animation-delay: var(--delay, 0ms);
 }
 
@@ -232,13 +233,13 @@
   flex: none;
   margin-left: auto;
   color: var(--fg-muted);
-  font-size: 22px;
+  font-size: 23px;
 }
 
 .tool {
   margin-top: auto;
   color: var(--fg-muted);
-  font-size: 22px;
+  font-size: 23px;
 }
 
 .muted {
@@ -263,7 +264,7 @@
 
 .childMeta {
   color: var(--fg-muted);
-  font-size: 22px;
+  font-size: 23px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -278,8 +279,13 @@
   overflow: hidden;
 }
 
-.source {
+.bottom {
   margin-top: auto;
+}
+
+.source {
+  flex: 1 1 auto;
+  min-width: 0;
   color: var(--fg-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -287,7 +293,8 @@
 }
 
 .pickLine {
-  margin-top: auto;
+  flex: 1 1 auto;
+  min-width: 0;
   color: var(--pick);
 }
 
@@ -297,7 +304,7 @@
   border: 1px solid var(--line);
   border-radius: var(--radius-pill);
   color: var(--fg);
-  font-size: 22px;
+  font-size: 23px;
   line-height: 30px;
 }
 
