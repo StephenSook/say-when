@@ -1,34 +1,22 @@
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 
+import ipaddr from 'ipaddr.js';
 import type { BrowserContext, Page } from 'playwright';
 
-/** Loopback, private, link-local, carrier-grade NAT, unspecified and multicast addresses. */
+/**
+ * True for anything that is not a global unicast address: private, loopback, link-local, carrier-grade NAT,
+ * multicast, reserved, and the IPv6 forms that embed an IPv4 address (6to4, NAT64, Teredo). IPv4-mapped IPv6
+ * is unwrapped first. Anything that does not parse counts as private.
+ */
 export function isPrivateAddress(address: string): boolean {
-    const ip = address.replace(/^\[|\]$/g, '').toLowerCase();
-    if (isIP(ip) === 4) {
-        const [a, b] = ip.split('.').map(Number);
-        return (
-            a === 0 ||
-            a === 10 ||
-            a === 127 ||
-            (a === 100 && b >= 64 && b <= 127) ||
-            (a === 169 && b === 254) ||
-            (a === 172 && b >= 16 && b <= 31) ||
-            (a === 192 && b === 168) ||
-            (a === 198 && (b === 18 || b === 19)) ||
-            a >= 224
-        );
+    const ip = address.replace(/^\[|\]$/g, '');
+    if (!ipaddr.isValid(ip)) return true;
+    try {
+        return ipaddr.process(ip).range() !== 'unicast';
+    } catch {
+        return true;
     }
-    if (isIP(ip) === 6) {
-        if (ip === '::' || ip === '::1') return true;
-        if (ip.startsWith('::ffff:')) {
-            const mapped = ip.slice(7);
-            return isIP(mapped) === 4 ? isPrivateAddress(mapped) : true;
-        }
-        return /^(fc|fd|fe[89ab]|ff)/.test(ip);
-    }
-    return false;
 }
 
 const LOCAL_NAMES = new Set(['localhost', '127.0.0.1', '::1']);
@@ -47,6 +35,13 @@ export class HostPolicy {
         private readonly allowLocal: boolean,
         private readonly resolve: Resolver = (host) => lookup(host, { all: true }),
     ) {}
+
+    /** For the address a response actually came from. Loopback passes only in tests and the demo. */
+    addressAllowed(address: string): boolean {
+        const ip = address.replace(/^\[|\]$/g, '');
+        if (this.allowLocal && (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1')) return true;
+        return !isPrivateAddress(ip);
+    }
 
     /** The checks that need no DNS: scheme, local names and IP literals. */
     syncAllowed(rawUrl: string): boolean {
@@ -84,12 +79,15 @@ export class HostPolicy {
 }
 
 /**
- * Blocks requests to private addresses before they leave the browser, and records every request
- * (including redirect hops, which route handlers do not see) so a page that reached one is refused.
+ * Blocks requests to private addresses before they leave the browser, records every request (including
+ * redirect hops, which route handlers do not see), blocks WebSockets, and checks the address each response
+ * actually came from, so a DNS answer that changes between our check and the browser's own lookup is still
+ * caught. A page that reached a private address is refused and never screenshotted.
  */
 export class NetworkGuard {
     private violated = false;
     private readonly hosts = new Set<string>();
+    private readonly addressChecks: Array<Promise<void>> = [];
 
     constructor(private readonly policy: HostPolicy) {}
 
@@ -97,6 +95,21 @@ export class NetworkGuard {
         await context.route('**/*', async (route) => {
             if (await this.policy.allowed(route.request().url())) await route.continue();
             else await route.abort('blockedbyclient');
+        });
+        // Forms do not need WebSockets, and page.route does not see them.
+        await context.routeWebSocket(/.*/, async (ws) => {
+            this.violated = this.violated || !this.policy.syncAllowed(ws.url());
+            await ws.close({ code: 1008, reason: 'blocked' });
+        });
+        context.on('response', (response) => {
+            this.addressChecks.push(
+                response
+                    .serverAddr()
+                    .then((server) => {
+                        if (server && !this.policy.addressAllowed(server.ipAddress)) this.violated = true;
+                    })
+                    .catch(() => undefined),
+            );
         });
         context.on('request', (request) => {
             const url = request.url();
@@ -113,8 +126,9 @@ export class NetworkGuard {
         });
     }
 
-    /** True when every request and every frame so far stayed on public hosts. */
+    /** True when every request, response address and frame so far stayed on public hosts. */
     async clean(page: Page): Promise<boolean> {
+        await Promise.all(this.addressChecks.splice(0));
         if (this.violated) return false;
         for (const frame of page.frames()) {
             const url = frame.url();

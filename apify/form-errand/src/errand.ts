@@ -122,6 +122,8 @@ export async function runErrand(input: ErrandInput, deps: ErrandDeps): Promise<E
         viewport: { width: 1000, height: 1300 },
         locale: 'en-US',
         acceptDownloads: false,
+        // A service worker could make requests our routes never see.
+        serviceWorkers: 'block',
     });
     // Bundlers that keep function names (esbuild, used by tsx) wrap functions in __name(); functions we run
     // inside the page carry that call with them, so give the page a no-op __name.

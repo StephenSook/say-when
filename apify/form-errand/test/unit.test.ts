@@ -104,7 +104,10 @@ describe('guards', () => {
 
 describe('network policy', () => {
     it('flags private, loopback, link-local and mapped addresses', () => {
-        for (const ip of ['10.0.0.1', '127.0.0.1', '169.254.169.254', '172.16.0.1', '192.168.1.1', '100.64.0.1', '0.0.0.0', '::1', 'fd00::1', 'fe80::1', '::ffff:10.0.0.1', '[::1]']) {
+        for (const ip of [
+            '10.0.0.1', '127.0.0.1', '169.254.169.254', '172.16.0.1', '192.168.1.1', '100.64.0.1', '0.0.0.0',
+            '::1', 'fd00::1', 'fe80::1', '::ffff:10.0.0.1', '[::1]', '64:ff9b::a00:1', '2002:a00:1::1', 'not-an-ip',
+        ]) {
             assert.equal(isPrivateAddress(ip), true, ip);
         }
         for (const ip of ['8.8.8.8', '1.1.1.1', '2606:4700::1111']) assert.equal(isPrivateAddress(ip), false, ip);
