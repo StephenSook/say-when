@@ -16,8 +16,8 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⛔ blocked
 | # | Component | File(s) | Owner | Status | Deps | Notes |
 |---|-----------|---------|-------|--------|------|-------|
 | 0.1 | Repo, PLAN.md, CI, hooks | `PLAN.md` | Stephen | ✅ | - | |
-| 1.1 | SpacetimeDB module: tables, reducers, views, scan clock, consent gate | `spacetime/` | Stephen | 🟡 | - | Stephen, since Oct 23 10:45pm PT. Claude building. Design in `docs/spacetime.md`; niche features in D12 |
-| 1.2 | Lock shared contracts (table and reducer names) | `PLAN.md` | Stephen | 🟡 | 1.1 | Stephen, since Oct 23 10:45pm PT. Locked from `docs/spacetime.md`; announce changes with ⚠️ CONTRACT |
+| 1.1 | SpacetimeDB module: tables, reducers, views, scan clock, consent gate | `spacetime/` | Stephen | ✅ | - | Built, 155 tests, four Codex rounds, live as `say-when-dev` (smoke 17 of 17). Gap fixes for the dashboard and sidecar in progress (module v2) plus a clean `say-when-demo` database. Design in `docs/spacetime.md`; niche features in D12 |
+| 1.2 | Lock shared contracts (table and reducer names) | `PLAN.md` | Stephen | ✅ | 1.1 | Locked Oct 24 from `docs/spacetime.md` (see Shared Contracts below); announce changes with ⚠️ CONTRACT |
 | 2.1 | Headset reader and four-command decoder | `switch/` | Shashank | ⬜ | - | Which headset? See Q1 |
 | 2.2 | Calibration: per-person signal map and thresholds | `switch/` | Shashank | ⬜ | 2.1 | Idle false-activation rate goes on the dashboard |
 | 2.3 | STOP, HEADSET-OFF watchdog and idle auto-pause | `switch/` | Shashank | ⬜ | 2.1 | 0.5 s packet watchdog; long jaw clench is STOP |
@@ -32,12 +32,16 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⛔ blocked
 | 4.3 | Care team request form (demo target) | external | Leon | ⬜ | - | Owned by the consenting caregiver |
 | 4.4 | Outbound call agent (Cartesia Managed Agents) | `cartesia/` | Stephen | 🟡 | 1.1, 4.2 | Code built and tested offline. Still needed: create the agent from `cartesia/agent/*.txt`, consent re-confirmed under the NeuroLingo name (D13), one live test call to a consenting number |
 | 5.0 | UI reference: `docs/ui.md` with tokens, wireframes and mockups | `docs/` | Stephen | ✅ | - | Open `docs/mockups/index.html`. Stephen builds the UI from it |
-| 5.1 | Dashboard shell: Next.js, SpacetimeDB WebSocket subscriptions, layout | `web/` | Stephen | 🟡 | 1.1 | Stephen, since Oct 23 10:20pm PT. Claude building. Must work on any laptop with no login. See D7 |
-| 5.2 | Screen 1, Live data: each pipeline stage with its real payload as it flows | `web/` | Stephen | 🟡 | 5.1 | Stephen, since Oct 23 10:20pm PT. Claude building. Reads `pipeline_event` |
-| 5.3 | Screen 2, Agents at work: form errand and phone call, step by step | `web/` | Stephen | 🟡 | 5.1, 4.1 | Stephen, since Oct 23 10:20pm PT. Claude building. Reads `errand`, `call_request` |
-| 5.4 | Screen 3, Live conversation: question, options, pick, spoken reply | `web/` | Stephen | 🟡 | 5.1 | Stephen, since Oct 23 10:20pm PT. Claude building. Reads `option`, command events |
-| 5.5 | Partner phone view | `web/` | Stephen | 🟡 | 5.1 | Stephen, since Oct 23 10:20pm PT. Claude building |
+| 5.1 | Dashboard shell: Next.js, SpacetimeDB WebSocket subscriptions, layout | `web/` | Stephen | ✅ | 1.1 | Built, 141 tests; reads the live module as an anonymous viewer, no login. See D7 |
+| 5.2 | Screen 1, Live data: each pipeline stage with its real payload as it flows | `web/` | Stephen | ✅ | 5.1 | Built and checked on live data |
+| 5.3 | Screen 2, Agents at work: form errand and phone call, step by step | `web/` | Stephen | ✅ | 5.1, 4.1 | Built; errands checked on live data, calls on the replay (live call fields come with module v2) |
+| 5.4 | Screen 3, Live conversation: question, options, pick, spoken reply | `web/` | Stephen | ✅ | 5.1 | Built and checked on live data |
+| 5.5 | Partner phone view | `web/` | Stephen | 🟡 | 5.1 | Status view built and live. Asking is not wired yet: Hold to ask (Cartesia Ink-2) and the typed fallback still need pairing and `ask_question` |
+| 5.6 | Station page: the wearer's laptop | `web/` | Stephen | ⬜ | 1.1, 2.1 | Pairs as Station; relays decoder events from `ws://127.0.0.1` to the `gesture` reducer (with a labeled keyboard fallback for testing); heartbeats the dead-man lease; plays each option into the earpiece with Cartesia Sonic (tokens from the module's procedure); reports read-back done and speak timings. Without it the headset cannot drive the system |
+| 5.7 | Speaker page: the room voice | `web/` | Stephen | ⬜ | 1.1 | Pairs as Speaker; says the released reply out loud with Cartesia Sonic and reports `reply_spoken` |
+| 5.8 | Judge page | `web/` | Stephen | ⬜ | 5.1 | A three-minute itinerary with deep links, the live stats route and what is verified, no login |
 | 6.1 | Telemetry to Tiger Data (switch timing, latency) | `telemetry/` | Stephen | ✅ | 1.1 | Built: free Tiger service `neurolingo-telemetry` (TimescaleDB, us-east-1), schema verified live, pinned TLS, 134 tests. The writer reads switch events from SpacetimeDB, so the decoder needs no Tiger code. Not yet run during a real session. Telemetry only, no app state |
+| 6.2 | Tiger compression policy and a measured ratio on our own rows | `telemetry/` | Stephen | ⬜ | 6.1 | Compression is a core Timescale feature; measure it, do not quote it |
 | 7.1 | User consult and consent per surface | - | Leon | ⬜ | - | |
 | 7.2 | Demo script and video | `docs/` | Leon | ⬜ | 4.2 | |
 | 7.3 | Devpost writeup | - | Stephen | ⬜ | 7.2 | |
@@ -61,17 +65,18 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⛔ blocked
 
 ## Shared Contracts
 
-> DRAFT until Shashank locks 1.2. Field names, data formats and API shapes more than one person depends on.
+> Locked Oct 24 from `docs/spacetime.md` (row 1.2, Stephen). Exact fields, reducers and views live there (Appendix A and the change sections); this table is the summary. Announce any change with ⚠️ CONTRACT.
 
 | Contract | Owner | Consumers | Definition |
 |----------|-------|-----------|------------|
-| Command event | Shashank | agent, web | Decoder calls reducer `record_gesture(command, confidence, window_id)`. `command` is one of `YES`, `NO`, `CONFIRM`, `STOP`, `HEADSET_OFF` (D11). One row per accepted gesture, consumed once. |
-| Option row | Shashank | web, agent | `option { id, question_id, version, rank, text, kind, sources }`. `kind` is `reply`, `errand` or `call`. `sources` is a list of `{ source, url or placeId, fetchedAt }`. |
-| Pipeline event | Shashank | web | `pipeline_event { id, session_id, stage, status, detail, ms, at }`. `stage` is `listen`, `search`, `retrieve`, `plan`, `speak`, `select`, `errand` or `call`. `status` is `started`, `ok` or `error`. The dashboard renders these live. |
+| Decoder event | Shashank | station page (Stephen) | The decoder sends `{ type: "gesture", id, command, onsetAgeMs, confidence, source }` and `{ type: "health", decoderHealthy }` (at least every 250 ms) over `ws://127.0.0.1:<port>` to the station page. `command` is `YES`, `NO`, `CONFIRM`, `STOP` or `HEADSET_OFF` (D11). The decoder never calls SpacetimeDB itself. |
+| Gesture reducer | Stephen | station page | `gesture(gesture_id, command, heard_step_seq, heard_option_id, heard_digest, confidence, source, onset_age_ms)`, Station role only, idempotent on `gesture_id`. A refused command is recorded as `ignored:<reason>`, not thrown. |
+| Options | Stephen | station, web | Private `answer_option` rows, written only by the sidecar through `agent_publish_options(job_id, attempt, ...)`: 1 to 4 options, exactly 2 for a yes or no question; `kind` is `reply`, `errand`, `call` or `menu`. |
+| Pipeline event | Stephen | web | Public, content-free `pipeline_event { stage, status, detail, ms, counts_json, ... }`; content lives in the private `pipeline_payload` and reaches the board only while sharing is on. |
 | Search client | Stephen | agent | `searchWeb(question)` and `searchPlaces(query, near)` return `{ rows, ms }`. Each row is `{ id, source, title, text, url or placeId, fetchedAt }`. See `apify/client/README.md`. |
 | Form-errand Actor | Stephen | agent | Standby `POST /preview { formUrl, fields }` returns `{ status, readBack, readBackText, previewDigest, screenshot }`. `POST /submit { formUrl, fields, confirmDigest }` returns `{ status, confirmationText }`. See `apify/form-errand/README.md`. |
-| Errand row | Shashank | agent, web | `errand { id, form, status, preview_digest, read_back_text, confirmation_text, screenshot_url }`. Reducer `confirm_errand(errand_id, digest)` accepts only when the row awaits confirmation, the window is open and the digest matches. |
-| Call request | Shashank | agent, web | `call_request { id, contact, script_digest, status }`. Consent and do-not-call list are private tables. One call per confirm, retries off. |
+| Errand row | Stephen | agent, web, station | Private `errand` row. A CONFIRM counts only after the read-back and the quiet hold, inside the window, with the digest the station played, once; then `claim_errand` and `complete_errand`. A lapsed submit lease is `unknown_outcome` and nothing resubmits. |
+| Call request | Stephen | agent, web, station | Private `call_request` row; consent per contact; one call at a time (`line_busy`); STOP hangs up. Consent, do-not-call and holds are checked again by the Dialer before the dial. |
 | Moss docs | Stephen | agent | One index per session. Doc `{ id, text, metadata }`, metadata values are strings: `source`, `url` or `placeId`, `fetchedAt`, `questionId`. |
 
 ---
@@ -189,7 +194,7 @@ All three update over SpacetimeDB subscriptions, so every laptop shows the same 
 - [ ] **Q1:** Which headset are we using? It decides which signals are possible (a Muse cannot read an imagined movement). Needs Shashank.
 - [ ] **Q2:** Lock the SpacetimeDB table and reducer names in Shared Contracts. Needs Stephen (row 1.2); Shashank checks the decoder side.
 - [ ] **Q3:** Demo form: a Google Form owned by the caregiver, or our own page on the dashboard domain? Needs Leon and Stephen.
-- [ ] **Q4:** Can the free Cartesia phone number be set up without a card? Needs Shashank.
+- [ ] **Q4:** Can the free Cartesia phone number be set up without a card? Needs Stephen (Cartesia account; the call agent and number do not exist yet).
 - [ ] **Q5:** Who plays the caller's recipient, and is their consent written down? Needs Leon.
 - [x] **Q6:** Voice clone? Decided Oct 23 by Stephen: no cloning. See D10.
 - [ ] **Q7:** Pitch opening: lead with ALS and the recent implant stories (implants need brain surgery; NeuroLingo uses a headband that reads jaw clenches and imagined hand squeezes). Every implant fact must be checked and cited before it goes in the script. Needs Leon and Stephen.
