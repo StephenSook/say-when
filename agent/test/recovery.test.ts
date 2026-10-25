@@ -251,21 +251,30 @@ describe('recovery', () => {
         assert.equal(requests, 1);
     });
 
-    it('runs a place search with a charge cap Apify accepts and a run limit inside the search deadline', async () => {
-        const urls: string[] = [];
-        const fetchFn = async (input: string) => {
-            urls.push(input);
-            return new Response('[]', { status: 201, headers: { 'content-type': 'application/json' } });
+    it('runs a place search for three places with a charge cap Apify accepts and a run limit inside the search deadline', async () => {
+        const calls: { url: string; method: string; body: unknown }[] = [];
+        const reply = (body: unknown, status: number) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+        const fetchFn = async (input: string, init: RequestInit = {}) => {
+            calls.push({ url: input, method: init.method ?? 'GET', body: typeof init.body === 'string' ? JSON.parse(init.body) : undefined });
+            // The start call answers with the run (ended here), the dataset read with its places.
+            return calls.length === 1 ? reply({ data: { id: 'RunId000000000001', status: 'SUCCEEDED', defaultDatasetId: 'DatasetId00000001' } }, 201) : reply([], 200);
         };
         // The sidecar's default search deadline (AGENT_SEARCH_TIMEOUT_MS).
         const port = searchPort({ token: 'apify_api_placeholder', ragWebBrowserUrl: 'https://rag.example.test' }, 20_000, fetchFn);
         const result = await port.places('lunch', { signal: new AbortController().signal, near: { lat: 37.8716, lng: -122.2727 } });
         assert.deepEqual(result.rows, []);
-        assert.equal(urls.length, 1);
-        const url = new URL(urls[0] ?? '');
+        assert.equal(calls.length, 2);
+        const start = new URL(calls[0]?.url ?? '');
+        assert.equal(calls[0]?.method, 'POST');
+        assert.equal(start.pathname, '/v2/actors/compass~crawler-google-places/runs');
         // Apify refuses a cap under $0.50 with HTTP 400 max-total-charge-usd-below-minimum (live test, Oct 24), and the
         // port passes no cap of its own, so the client's default must be one Apify accepts.
-        assert.ok(Number(url.searchParams.get('maxTotalChargeUsd')) >= 0.5, url.search);
-        assert.equal(url.searchParams.get('timeout'), '15');
+        assert.ok(Number(start.searchParams.get('maxTotalChargeUsd')) >= 0.5, start.search);
+        assert.equal(start.searchParams.get('timeout'), '15');
+        // Direct select offers at most three replies, so the run looks for three places and the read keeps three.
+        assert.equal((calls[0]?.body as { maxCrawledPlacesPerSearch?: unknown }).maxCrawledPlacesPerSearch, 3);
+        const read = new URL(calls[1]?.url ?? '');
+        assert.equal(read.pathname, '/v2/datasets/DatasetId00000001/items');
+        assert.equal(read.searchParams.get('limit'), '3');
     });
 });

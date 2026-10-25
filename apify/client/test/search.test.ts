@@ -5,7 +5,7 @@ import { ConfigError, type ApifyConfig } from '../src/config.js';
 import type { PipelineEvent } from '../src/events.js';
 import { ApifyHttpError } from '../src/http.js';
 import { searchPlaces, searchWeb } from '../src/search.js';
-import { TOKEN, fakeFetch, hang, json, networkError } from './fake-fetch.js';
+import { TOKEN, fakeFetch, hang, json, networkError, type Reply, type SeenCall } from './fake-fetch.js';
 import {
     PLACE_BARE,
     PLACE_GONE,
@@ -231,29 +231,46 @@ describe('searchWeb', () => {
 
 describe('searchPlaces', () => {
     const near = { lat: 37.8716, lng: -122.2727 };
+    const RUN_ID = 'HG7ML7M8z78YcAPEB';
+    const DATASET_ID = 'wmKPijuyDnPZAPRMk';
+    const START = 'https://api.apify.com/v2/actors/compass~crawler-google-places/runs';
+    const RUN = `https://api.apify.com/v2/actor-runs/${RUN_ID}`;
+    const ITEMS = `https://api.apify.com/v2/datasets/${DATASET_ID}/items`;
 
-    it('runs the Google Maps Scraper synchronously with memory, a time limit and a charge cap', async () => {
-        const { fetch, calls } = fakeFetch(json([PLACE_OPEN], 201));
-        await searchPlaces('lunch', { config, fetch, near, radiusKm: 1.5, maxPlaces: 5 });
-        const call = calls[0];
+    /** An Apify run object, as the start call (201) and the status call (200) send it. */
+    const run = (status: string, httpStatus = 201, data: Record<string, unknown> = {}): Reply =>
+        json({ data: { id: RUN_ID, actId: 'nwua9Gu5YrADL7ZDj', status, defaultDatasetId: DATASET_ID, ...data } }, httpStatus);
+    /** A run that has ended with `status` when the start call answers, then its dataset holding `places`. */
+    const ran = (places: unknown[], status = 'SUCCEEDED'): Reply[] => [run(status), json(places)];
+    const path = (call: SeenCall) => {
         const url = new URL(call.url);
-        assert.equal(call.method, 'POST');
-        assert.equal(
-            `${url.origin}${url.pathname}`,
-            'https://api.apify.com/v2/actors/compass~crawler-google-places/run-sync-get-dataset-items',
-        );
-        assert.equal(url.searchParams.get('timeout'), '120');
-        assert.equal(url.searchParams.get('memory'), '4096');
+        return `${call.method} ${url.origin}${url.pathname}`;
+    };
+    const starts = (calls: SeenCall[]) => calls.filter((call) => path(call) === `POST ${START}`);
+    async function until(check: () => boolean): Promise<void> {
+        for (let i = 0; i < 1_000 && !check(); i += 1) await new Promise((resolve) => setImmediate(resolve));
+        assert.ok(check(), 'the condition never held');
+    }
+
+    it('starts a Google Maps Scraper run with memory, a time limit, a charge cap and a wait, then reads its dataset', async () => {
+        const { fetch, calls } = fakeFetch(...ran([PLACE_OPEN]));
+        await searchPlaces('lunch', { config, fetch, near, radiusKm: 1.5, maxPlaces: 5 });
+        assert.equal(calls.length, 2);
+        const [start, items] = calls;
+
+        assert.equal(path(start), `POST ${START}`);
+        const params = new URL(start.url).searchParams;
+        assert.equal(params.get('timeout'), '120');
+        assert.equal(params.get('memory'), '4096');
         // Apify's minimum: a cap of 0.25 came back HTTP 400 max-total-charge-usd-below-minimum in the Oct 24 live test.
-        assert.equal(url.searchParams.get('maxTotalChargeUsd'), '0.5');
-        assert.deepEqual(url.searchParams.get('fields')?.split(','), [
-            'title', 'address', 'location', 'totalScore', 'reviewsCount', 'wasOpenAtScrapeTime', 'permanentlyClosed',
-            'temporarilyClosed', 'categoryName', 'phone', 'url', 'placeId', 'scrapedAt', 'additionalInfo',
-        ]);
-        assert.equal(url.searchParams.has('token'), false);
-        assert.equal(call.headers.authorization, `Bearer ${TOKEN}`);
-        assert.equal(call.headers['content-type'], 'application/json');
-        assert.deepEqual(call.body, {
+        assert.equal(params.get('maxTotalChargeUsd'), '0.5');
+        // The run's limit plus 5 s, within Apify's 60 s cap.
+        assert.equal(params.get('waitForFinish'), '60');
+        assert.equal(params.has('fields'), false);
+        assert.equal(params.has('token'), false);
+        assert.equal(start.headers.authorization, `Bearer ${TOKEN}`);
+        assert.equal(start.headers['content-type'], 'application/json');
+        assert.deepEqual(start.body, {
             searchStringsArray: ['lunch'],
             maxCrawledPlacesPerSearch: 5,
             language: 'en',
@@ -263,18 +280,37 @@ describe('searchPlaces', () => {
             scrapeReviewsPersonalData: false,
             customGeolocation: { type: 'Point', coordinates: [-122.2727, 37.8716], radiusKm: 1.5 },
         });
+
+        assert.equal(path(items), `GET ${ITEMS}`);
+        const read = new URL(items.url).searchParams;
+        assert.equal(read.get('format'), 'json');
+        assert.equal(read.get('clean'), 'true');
+        assert.equal(read.get('limit'), '5');
+        assert.deepEqual(read.get('fields')?.split(','), [
+            'title', 'address', 'location', 'totalScore', 'reviewsCount', 'wasOpenAtScrapeTime', 'permanentlyClosed',
+            'temporarilyClosed', 'categoryName', 'phone', 'url', 'placeId', 'scrapedAt', 'additionalInfo',
+        ]);
+        assert.equal(read.has('token'), false);
+        assert.equal(items.headers.authorization, `Bearer ${TOKEN}`);
+        assert.equal(items.body, undefined);
+
+        const short = fakeFetch(...ran([]));
+        await searchPlaces('lunch', { config, fetch: short.fetch, timeoutSecs: 20 });
+        assert.equal(new URL(short.calls[0].url).searchParams.get('waitForFinish'), '25');
     });
 
-    it('always sends a place count, and no geolocation without near', async () => {
-        const { fetch, calls } = fakeFetch(json([], 201));
-        await searchPlaces('lunch near the campanile', { config, fetch });
+    it('always sends a place count, no geolocation without near, and finds no places without failing', async () => {
+        const { fetch, calls } = fakeFetch(...ran([]));
+        const res = await searchPlaces('lunch near the campanile', { config, fetch });
         const body = calls[0].body as Record<string, unknown>;
         assert.equal(body.maxCrawledPlacesPerSearch, 8);
         assert.equal('customGeolocation' in body, false);
+        assert.deepEqual(res.rows, []);
+        assert.equal(res.partial, false);
     });
 
     it('builds rows from the fields present and never infers accessibility', async () => {
-        const { fetch } = fakeFetch(json([PLACE_OPEN, PLACE_UNKNOWN, PLACE_GONE, PLACE_SEATING_ONLY, PLACE_BARE], 201));
+        const { fetch } = fakeFetch(...ran([PLACE_OPEN, PLACE_UNKNOWN, PLACE_GONE, PLACE_SEATING_ONLY, PLACE_BARE]));
         const res = await searchPlaces('lunch', { config, fetch, near });
         assert.deepEqual(
             res.rows.map((r) => r.id),
@@ -329,7 +365,7 @@ describe('searchPlaces', () => {
 
     it('drops permanently closed places and reports the count', async () => {
         const events: PipelineEvent[] = [];
-        const { fetch } = fakeFetch(json([PLACE_GONE, PLACE_OPEN], 201));
+        const { fetch } = fakeFetch(...ran([PLACE_GONE, PLACE_OPEN]));
         const res = await searchPlaces('lunch', { config, fetch, onEvent: (e) => void events.push(e) });
         assert.equal(res.rows.length, 1);
         assert.equal(res.partial, false);
@@ -338,9 +374,71 @@ describe('searchPlaces', () => {
         assert.ok(!JSON.stringify(events).includes('Corner Cafe'));
     });
 
+    it('keeps the places a run found before its time limit, marked partial', async () => {
+        // Oct 25: "parks and gardens", 1 km around the venue, a 20 s limit: the run timed out with 4 places in its
+        // dataset, and the sync endpoint answered HTTP 400 with none of them.
+        const events: PipelineEvent[] = [];
+        const { fetch, calls } = fakeFetch(...ran([PLACE_OPEN, PLACE_UNKNOWN], 'TIMED-OUT'));
+        const res = await searchPlaces('parks and gardens', { config, fetch, near, maxPlaces: 3, timeoutSecs: 20, onEvent: (e) => void events.push(e) });
+        assert.deepEqual(
+            res.rows.map((r) => r.id),
+            ['maps:ChIJexample0000001', 'maps:ChIJexample0000002'],
+        );
+        assert.equal(res.partial, true);
+        assert.equal(calls.length, 2);
+        assert.equal(new URL(calls[1].url).searchParams.get('limit'), '3');
+        assert.deepEqual(
+            events.map((e) => [e.status, e.detail]),
+            [
+                ['started', 'maps'],
+                ['ok', 'maps partial'],
+            ],
+        );
+        assert.deepEqual(events[1].counts, { rows: 2, closed: 0, skipped: 0 });
+    });
+
+    it('treats a run that timed out with no places as a timeout', async () => {
+        const events: PipelineEvent[] = [];
+        const { fetch, calls } = fakeFetch(...ran([], 'TIMED-OUT'));
+        const error = await rejection(searchPlaces('lunch', { config, fetch, timeoutSecs: 20, onEvent: (e) => void events.push(e) }));
+        assert.ok(error instanceof ApifyHttpError);
+        assert.equal(error.kind, 'timeout');
+        assert.equal(error.status, null);
+        assert.equal(calls.length, 2);
+        assert.equal(events.at(-1)?.detail, 'maps timeout');
+    });
+
+    it('waits on a run that is still going, through its time-out, then reads its places', async () => {
+        const { fetch, calls } = fakeFetch(run('RUNNING'), run('TIMING-OUT', 200), run('TIMED-OUT', 200), json([PLACE_OPEN]));
+        const res = await searchPlaces('lunch', { config, fetch, timeoutSecs: 20 });
+        assert.equal(res.rows.length, 1);
+        assert.equal(res.partial, true);
+        assert.deepEqual(calls.map(path), [`POST ${START}`, `GET ${RUN}`, `GET ${RUN}`, `GET ${ITEMS}`]);
+        for (const poll of calls.slice(1, 3)) {
+            // What is left of the 50 s call (the run's 20 s plus 30 s), less 5 s for the reply and the dataset read.
+            const wait = Number(new URL(poll.url).searchParams.get('waitForFinish'));
+            assert.ok(wait >= 40 && wait <= 45, String(wait));
+            assert.equal(poll.headers.authorization, `Bearer ${TOKEN}`);
+        }
+    });
+
+    it('rejects a run that failed or was aborted without reading its dataset or aborting it', async () => {
+        for (const status of ['FAILED', 'ABORTED']) {
+            const events: PipelineEvent[] = [];
+            const { fetch, calls } = fakeFetch(run(status), json([PLACE_OPEN]));
+            const error = await rejection(searchPlaces('lunch', { config, fetch, onEvent: (e) => void events.push(e) }));
+            assert.ok(error instanceof ApifyHttpError);
+            assert.equal(error.kind, 'bad_response');
+            assert.equal(error.bodySnippet, `The run ended ${status}.`);
+            await new Promise((resolve) => setImmediate(resolve));
+            assert.equal(calls.length, 1);
+            assert.equal(events.at(-1)?.detail, 'maps bad response');
+        }
+    });
+
     it('treats 408 as a timeout and does not retry it', async () => {
-        const body = { error: { type: 'run-timeout-exceeded', message: 'Actor run exceeded the timeout of 300 seconds for this API endpoint' } };
-        const { fetch, calls } = fakeFetch(json(body, 408), json([PLACE_OPEN], 201));
+        const body = { error: { type: 'run-timeout-exceeded', message: 'Actor run exceeded the timeout' } };
+        const { fetch, calls } = fakeFetch(json(body, 408), ...ran([PLACE_OPEN]));
         const error = await rejection(searchPlaces('lunch', { config, fetch }));
         assert.ok(error instanceof ApifyHttpError);
         assert.equal(error.kind, 'timeout');
@@ -349,12 +447,109 @@ describe('searchPlaces', () => {
         assert.equal(calls.length, 1);
     });
 
-    it('never retries, since each POST can start another paid run', async () => {
+    it('never retries starting a run, since each POST can start another paid run', async () => {
         for (const reply of [json({}, 502), json({}, 429), networkError('ECONNRESET')]) {
-            const { fetch, calls } = fakeFetch(reply, json([PLACE_OPEN], 201));
+            const { fetch, calls } = fakeFetch(reply, ...ran([PLACE_OPEN]));
             await rejection(searchPlaces('lunch', { config, fetch }));
             assert.equal(calls.length, 1);
         }
+    });
+
+    it('tries a read once more after a 5xx, and never starts the run again', async () => {
+        const { fetch, calls } = fakeFetch(run('SUCCEEDED'), json({}, 503, { 'retry-after': '0' }), json([PLACE_OPEN]));
+        const res = await searchPlaces('lunch', { config, fetch });
+        assert.equal(res.rows.length, 1);
+        assert.deepEqual(calls.map(path), [`POST ${START}`, `GET ${ITEMS}`, `GET ${ITEMS}`]);
+
+        const twice = fakeFetch(run('SUCCEEDED'), json({}, 503, { 'retry-after': '0' }));
+        const error = await rejection(searchPlaces('lunch', { config, fetch: twice.fetch }));
+        assert.ok(error instanceof ApifyHttpError);
+        assert.equal(error.status, 503);
+        assert.equal(twice.calls.length, 3);
+        assert.equal(starts(twice.calls).length, 1);
+    });
+
+    it('aborts the run and rejects as cancelled when the caller cancels while it waits', async () => {
+        const events: PipelineEvent[] = [];
+        const controller = new AbortController();
+        const { fetch, calls } = fakeFetch(run('RUNNING'), hang, run('ABORTED', 200));
+        const pending = rejection(searchPlaces('lunch', { config, fetch, signal: controller.signal, onEvent: (e) => void events.push(e) }));
+        await until(() => calls.length === 2);
+        controller.abort();
+        const error = await pending;
+        assert.ok(error instanceof ApifyHttpError);
+        assert.equal(error.kind, 'aborted');
+        await until(() => calls.length === 3);
+        const abort = calls[2];
+        assert.equal(path(abort), `POST ${RUN}/abort`);
+        assert.equal(abort.headers.authorization, `Bearer ${TOKEN}`);
+        assert.equal(abort.body, undefined);
+        assert.equal(new URL(abort.url).searchParams.has('token'), false);
+        assert.equal(starts(calls).length, 1);
+        assert.equal(events.at(-1)?.detail, 'maps aborted');
+
+        // Cancelled before the start: nothing is sent at all.
+        const early = fakeFetch(...ran([PLACE_OPEN]));
+        const before = await rejection(searchPlaces('lunch', { config, fetch: early.fetch, signal: AbortSignal.abort() }));
+        assert.ok(before instanceof ApifyHttpError);
+        assert.equal(before.kind, 'aborted');
+        assert.equal(before.attempts, 0);
+        assert.equal(early.calls.length, 0);
+    });
+
+    it('gives up on a run that never ends after a bounded number of waits, and aborts it', async () => {
+        const { fetch, calls } = fakeFetch(run('RUNNING'), run('RUNNING', 200));
+        const error = await rejection(searchPlaces('lunch', { config, fetch, timeoutSecs: 20 }));
+        assert.ok(error instanceof ApifyHttpError);
+        assert.equal(error.kind, 'timeout');
+        await until(() => calls.some((call) => path(call) === `POST ${RUN}/abort`));
+        assert.equal(calls.filter((call) => path(call) === `GET ${RUN}`).length, 8);
+        assert.equal(starts(calls).length, 1);
+        assert.equal(calls.length, 10);
+    });
+
+    it('refuses a run reply it cannot use, and aborts a run whose status reply is not that run', async () => {
+        const bad = [
+            { id: '../../v2/users/me', status: 'SUCCEEDED', defaultDatasetId: DATASET_ID },
+            { id: RUN_ID, status: 'SUCCEEDED' },
+            { id: RUN_ID, status: 'PAUSED', defaultDatasetId: DATASET_ID },
+            { id: RUN_ID, status: 'SUCCEEDED', defaultDatasetId: 'x/../y' },
+        ];
+        for (const data of bad) {
+            const { fetch, calls } = fakeFetch(json({ data }, 201), json([PLACE_OPEN]));
+            const error = await rejection(searchPlaces('lunch', { config, fetch }));
+            assert.ok(error instanceof ApifyHttpError);
+            assert.equal(error.kind, 'bad_response');
+            await new Promise((resolve) => setImmediate(resolve));
+            assert.equal(calls.length, 1, JSON.stringify(data));
+        }
+
+        const other = fakeFetch(run('RUNNING'), run('SUCCEEDED', 200, { id: 'SomeOtherRun00001' }), json({}));
+        const error = await rejection(searchPlaces('lunch', { config, fetch: other.fetch }));
+        assert.ok(error instanceof ApifyHttpError);
+        assert.equal(error.kind, 'bad_response');
+        await until(() => other.calls.length === 3);
+        assert.equal(path(other.calls[2]), `POST ${RUN}/abort`);
+    });
+
+    it('names the route in an error, never the run or dataset id', async () => {
+        const { fetch, calls } = fakeFetch(run('SUCCEEDED'), json({ error: { type: 'record-not-found', message: 'Dataset was not found.' } }, 404));
+        const error = await rejection(searchPlaces('lunch', { config, fetch }));
+        assert.ok(error instanceof ApifyHttpError);
+        assert.equal(error.kind, 'http');
+        assert.equal(error.status, 404);
+        assert.equal(error.endpoint, 'GET api.apify.com/v2/datasets/:datasetId/items');
+        assert.equal(error.attempts, 2);
+        assert.equal(calls.length, 2);
+        for (const text of [error.message, error.endpoint, error.bodySnippet]) {
+            assert.ok(!text.includes(RUN_ID) && !text.includes(DATASET_ID), text);
+        }
+
+        const failed = fakeFetch(run('RUNNING'), run('FAILED', 200));
+        const ended = await rejection(searchPlaces('lunch', { config, fetch: failed.fetch }));
+        assert.ok(ended instanceof ApifyHttpError);
+        assert.equal(ended.endpoint, 'GET api.apify.com/v2/actor-runs/:runId');
+        assert.ok(!ended.message.includes(RUN_ID));
     });
 
     it('keeps no more places than asked for and caps every field', async () => {
@@ -368,8 +563,9 @@ describe('searchPlaces', () => {
             phone: huge,
             url: `https://www.google.com/maps/${huge}`,
         }));
-        const { fetch } = fakeFetch(json(many.slice(0, 3), 201));
+        const { fetch, calls } = fakeFetch(...ran(many.slice(0, 3)));
         const res = await searchPlaces('lunch', { config, fetch, maxPlaces: 1 });
+        assert.equal(new URL(calls[1].url).searchParams.get('limit'), '1');
         assert.equal(res.rows.length, 1);
         const [row] = res.rows;
         assert.ok(row.title.length <= 300);
@@ -379,22 +575,23 @@ describe('searchPlaces', () => {
         assert.equal(row.url, undefined);
         assert.ok(row.text.length < 1_000, String(row.text.length));
 
-        const longId = fakeFetch(json([{ ...PLACE_BARE, placeId: 'z'.repeat(500) }], 201));
+        const longId = fakeFetch(...ran([{ ...PLACE_BARE, placeId: 'z'.repeat(500) }]));
         const [bare] = (await searchPlaces('lunch', { config, fetch: longId.fetch })).rows;
         assert.equal(bare.placeId, undefined);
         assert.match(bare.id, /^maps:[0-9a-f]{16}$/);
     });
 
-    it('refuses a reply over 4 MiB while it streams in', async () => {
-        const { fetch } = fakeFetch(json(Array.from({ length: 20 }, () => ({ ...PLACE_OPEN, title: 'y'.repeat(250_000) })), 201));
+    it('refuses a dataset reply over 4 MiB while it streams in', async () => {
+        const { fetch, calls } = fakeFetch(...ran(Array.from({ length: 20 }, () => ({ ...PLACE_OPEN, title: 'y'.repeat(250_000) }))));
         const error = await rejection(searchPlaces('lunch', { config, fetch }));
         assert.ok(error instanceof ApifyHttpError);
         assert.equal(error.kind, 'bad_response');
         assert.match(error.bodySnippet, /larger than/);
+        assert.equal(calls.length, 2);
     });
 
     it('checks its arguments before any request', async () => {
-        const { fetch, calls } = fakeFetch(json([], 201));
+        const { fetch, calls } = fakeFetch(...ran([]));
         await assert.rejects(searchPlaces('', { config, fetch }), RangeError);
         await assert.rejects(searchPlaces('lunch', { config, fetch, maxPlaces: 0 }), RangeError);
         await assert.rejects(searchPlaces('lunch', { config, fetch, maxPlaces: 51 }), RangeError);
@@ -410,11 +607,11 @@ describe('searchPlaces', () => {
     });
 
     it('sends a charge cap the caller sets, from the $0.50 minimum up to 5', async () => {
-        const { fetch, calls } = fakeFetch(json([], 201), json([], 201));
+        const { fetch, calls } = fakeFetch(...ran([]), ...ran([]));
         await searchPlaces('lunch', { config, fetch, maxChargeUsd: 0.5 });
         await searchPlaces('lunch', { config, fetch, maxChargeUsd: 5 });
         assert.deepEqual(
-            calls.map((call) => new URL(call.url).searchParams.get('maxTotalChargeUsd')),
+            starts(calls).map((call) => new URL(call.url).searchParams.get('maxTotalChargeUsd')),
             ['0.5', '5'],
         );
     });

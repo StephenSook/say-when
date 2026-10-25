@@ -145,7 +145,7 @@ For Moss (the "Moss docs" contract in PLAN.md): metadata values are strings, so 
 
 ## Size limits
 
-A reply is counted while it streams in and refused, before any parsing, once it passes its limit: 16 MiB for RAG Web Browser, 4 MiB for the Google Maps Scraper and 16 MiB for the form errand (room for an inline screenshot). A declared `Content-Length` over the limit fails before anything is read. An oversized reply is `ApifyHttpError` with `kind: 'bad_response'` and is not retried.
+A reply is counted while it streams in and refused, before any parsing, once it passes its limit: 16 MiB for RAG Web Browser, 4 MiB for a Google Maps Scraper dataset (1 MiB for a run object) and 16 MiB for the form errand (room for an inline screenshot). A declared `Content-Length` over the limit fails before anything is read. An oversized reply is `ApifyHttpError` with `kind: 'bad_response'` and is not retried.
 
 The pieces are copied into one buffer that never grows past the limit, so a reply sent one byte at a time takes no more memory than one sent whole. When a read stops early (too large, timed out or cancelled), the body is cancelled and its reader released, and a body that arrives only after we gave up is cancelled unread.
 
@@ -161,8 +161,12 @@ Web search:
 
 Places:
 
-- `timeoutSecs` (default 120) is the run's own limit, and we wait up to 30 s longer for the reply. The sync API gives up at 300 s with HTTP 408, reported as `kind: 'timeout'`.
-- The API docs do not say what comes back when a run hits its own limit. `partial` is set when the call took the whole limit and returned fewer places than asked, as a hint.
+- A place search is three steps: start a run (`POST /v2/actors/compass~crawler-google-places/runs` with `timeout`, `memory`, `maxTotalChargeUsd` and `waitForFinish`), wait for it to end, then read its dataset (`GET /v2/datasets/<defaultDatasetId>/items?format=json&clean=true&fields=...&limit=<maxPlaces>`). Apify holds each reply until the run ends or the wait runs out (60 s at most); a run still going is asked again (`GET /v2/actor-runs/<id>?waitForFinish=...`), at most 8 times.
+- `timeoutSecs` (default 120) is the run's own limit. The first wait is that limit plus 5 s (at most 60), and the whole call, start to places, gets the limit plus 30 s. Past that it is `kind: 'timeout'`.
+- **A run that reaches its own limit keeps the places it found.** Apify marks it `TIMED-OUT`; we read its dataset anyway and return those places with `partial: true` (event `maps partial`). A `TIMED-OUT` run with no places is `kind: 'timeout'`. We moved off the sync endpoint (`run-sync-get-dataset-items`) for this: on Oct 25 a 20 s run timed out with 4 places in its dataset, and the sync endpoint answered HTTP 400 with none of them.
+- A `SUCCEEDED` run with no places resolves with no rows: nothing matched. A run that ended `FAILED` or `ABORTED` rejects with `kind: 'bad_response'` and `bodySnippet` "The run ended FAILED." (or ABORTED), without reading its dataset.
+- When the caller cancels, our deadline passes, or a status reply is unusable while the run is still going, we ask Apify to abort that run (`POST /v2/actor-runs/<id>/abort`, once, not awaited, failures ignored), so it stops charging. A run whose start was cancelled before Apify answered cannot be aborted, since we never learned its id; its own limit and charge cap still hold.
+- Run and dataset ids are checked to be short and alphanumeric before they go into a URL path, and errors name the route (`GET api.apify.com/v2/actor-runs/:runId`), never the ids: the run object and its storages can be read with the id alone.
 
 ## Errors and retries
 
@@ -173,7 +177,7 @@ Places:
 | `ApifyHttpError` | `kind` is `http` (see `status`), `timeout`, `network`, `aborted` or `bad_response`. The message names the service, method, host and path, never the query string or the token. `bodySnippet` holds up to 300 characters of the reply with every configured token scrubbed out, whatever its length. `attempts` counts requests actually sent. |
 | `UnknownOutcomeError` | Submit only; see the table above. |
 
-Web search, inspect and preview retry after a 429, a 5xx or a network error, waiting 500 ms, then 1 s, doubling up to 4 s, as Apify's API docs suggest; the default is 2 retries. A `Retry-After` of 4 s or less is followed; a longer one fails at once. Timeouts and oversized replies are never retried. Place search never retries: each POST can start a new paid run, and after a dropped connection the first run may still be going. Submit never retries.
+Web search, inspect and preview retry after a 429, a 5xx or a network error, waiting 500 ms, then 1 s, doubling up to 4 s, as Apify's API docs suggest; the default is 2 retries. A `Retry-After` of 4 s or less is followed; a longer one fails at once. Timeouts and oversized replies are never retried. Place search never retries starting a run: each POST can start a new paid run, and after a dropped connection the first run may still be going. Its reads (the run's status and its dataset) change nothing and are tried once more after a 429, a 5xx or a network error, inside the call's deadline. Submit never retries.
 
 ## Events
 
@@ -182,7 +186,7 @@ Web search, inspect and preview retry after a 429, a 5xx or a network error, wai
 | Call | started | ok | error |
 |---|---|---|---|
 | `searchWeb` | `web` | `web` or `web partial`, counts `{ rows, skipped }` | `web timeout`, `web http 502`, `web network` |
-| `searchPlaces` | `maps` | `maps` or `maps partial`, counts `{ rows, closed, skipped }` | `maps timeout`, `maps http 402` |
+| `searchPlaces` | `maps` | `maps` or `maps partial`, counts `{ rows, closed, skipped }` | `maps timeout`, `maps http 402`, `maps bad response` (also a run that ended `FAILED` or `ABORTED`), `maps aborted` |
 | errand | `preview` | `preview previewed`, counts `{ questions, readBack, unmatched, missingRequired }` | `preview refused: captcha`, `preview bad response`, `submit unknown outcome (click_uncertain)` |
 
 Events never carry the question, page text, answers, form values, URLs, digests or reply bodies. A listener that throws is ignored. `counts` is not a column in the `pipeline_event` contract; fold it into `detail` or leave it out.
@@ -220,7 +224,8 @@ Only the first 2,000 characters are classified (`MAX_QUESTION_CHARS`, leading sp
 ## What was checked, and against what
 
 - RAG Web Browser query parameters, item fields, how failed and timed-out pages are marked, and the "Timed out." reply: read in its source, [apify/actor-rag-web-browser](https://github.com/apify/actor-rag-web-browser), on Oct 24, 2026. One detail from that source: Standby passes query values through as strings, so `removeCookieWarnings: false` is sent as an empty value, the only one that reads as false there.
-- The Apify API run-sync path (`/v2/actors/`), its 201 success status, the `{ error: { type, message } }` body, 408 at 300 s and the `fields` parameter: read in Apify's OpenAPI spec, [apify/apify-docs](https://github.com/apify/apify-docs), on Oct 24, 2026.
+- The Apify API `/v2/actors/` prefix, the 201 success status, the `{ error: { type, message } }` body and the `fields` parameter: read in Apify's OpenAPI spec, [apify/apify-docs](https://github.com/apify/apify-docs), on Oct 24, 2026.
+- The run API used by place search: read in Apify's API reference on Oct 25, 2026. Run Actor (`POST /v2/actors/:actorId/runs`) takes `timeout`, `memory`, `maxTotalChargeUsd` and `waitForFinish` (0 to 60 s) and answers 201 with `{ data: run }`, where the run has `id`, `status` and `defaultDatasetId`; statuses are `READY`, `RUNNING`, `SUCCEEDED`, `FAILED`, `TIMING-OUT`, `TIMED-OUT`, `ABORTING` and `ABORTED`. Get run (`GET /v2/actor-runs/:runId`) takes the same `waitForFinish`. Get dataset items (`GET /v2/datasets/:datasetId/items`) takes `format`, `clean`, `fields` and `limit` and answers with a JSON array. Abort run is `POST /v2/actor-runs/:runId/abort`. That the dataset of a `TIMED-OUT` run holds the places it found is from the Oct 25 run above, not from the docs.
 - Google Maps Scraper input and output fields: from the Actor's README, its only public description, since the Actor is closed source.
 - Form-errand routes and result types: [apify/form-errand](../form-errand/README.md) in this repo.
-- No test calls Apify; they run against a fake `fetch` with fixtures shaped like the sources above. Nothing here has run against live Apify yet, so make one real call of each before the demo.
+- No test calls Apify; they run against a fake `fetch` with fixtures shaped like the sources above. The run, wait and dataset steps of place search have not run against live Apify yet, so make one real place search before the demo.

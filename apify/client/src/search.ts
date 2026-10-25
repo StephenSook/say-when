@@ -2,7 +2,16 @@ import { createHash } from 'node:crypto';
 
 import { APIFY_API_BASE, ConfigError, loadConfig, parseRagBaseUrl, type ApifyConfig } from './config.js';
 import { elapsedMs, emit, type EventSink } from './events.js';
-import { ApifyHttpError, endpointOf, requestJson, type FetchLike, type Verdict } from './http.js';
+import {
+    ApifyHttpError,
+    endpointOf,
+    requestJson,
+    type FetchLike,
+    type HttpErrorInit,
+    type HttpErrorKind,
+    type HttpResult,
+    type Verdict,
+} from './http.js';
 
 export type SearchSource = 'web' | 'maps';
 
@@ -93,7 +102,10 @@ export interface PlaceSearchOptions extends CallOptions {
     maxPlaces?: number;
     /** Result language. Default "en". */
     language?: string;
-    /** The run's time limit in seconds, 10 to 290 (the sync API gives up at 300). Default 120. */
+    /**
+     * The run's time limit in seconds, 10 to 290. Default 120. A run that reaches it keeps the places it found
+     * (`partial: true`). The whole call, start to places, may take up to 30 s longer.
+     */
     timeoutSecs?: number;
     /** Run memory in MB, a power of 2 of at least 128. Default 4096. */
     memoryMbytes?: number;
@@ -318,10 +330,69 @@ export async function searchWeb(question: string, opts: WebSearchOptions = {}): 
     }
 }
 
-// ---------- Place search: Google Maps Scraper, run synchronously ----------
+// ---------- Place search: Google Maps Scraper, started as a run whose dataset is then read ----------
 
-// 408: the run passed the sync API's 300 s limit. Nothing is retried here (see searchPlaces).
+// 408: the API gave up on the request; not worth repeating, the caller's time is spent. Starting a run (and
+// aborting one) is never retried, since each POST can start or change a paid run (see searchPlaces).
 const mapsClassify = (status: number): Verdict => (status === 408 ? 'timeout' : 'fail');
+// Reading a run's status or its dataset changes nothing, so a 429 or a 5xx is tried again, inside the deadline.
+const mapsReadClassify = (status: number): Verdict => (status === 408 ? 'timeout' : status === 429 || status >= 500 ? 'retry' : 'fail');
+
+/** Apify's longest server-side wait for a run to finish, on the start call and on the status call. */
+const MAPS_WAIT_MAX_SECS = 60;
+/** The first wait asks for the run's limit plus this, so a run that starts a little late can still end inside it. */
+const MAPS_WAIT_EXTRA_SECS = 5;
+/** Kept back from every later wait, for its reply and for reading the dataset after the run ends. */
+const MAPS_REPLY_MARGIN_MS = 5_000;
+/** The whole call may take the run's limit plus this: starting the run, waiting for it and reading its places. */
+const MAPS_CLIENT_MARGIN_SECS = 30;
+/** Status calls after the start, at most. Waits of up to 60 s cover the longest run limit (290 s) in six. */
+const MAPS_MAX_POLLS = 8;
+/** A run object is a few KB; a far bigger one is refused while it streams in. */
+const MAPS_RUN_MAX_BYTES = 1024 * 1024;
+/** The best-effort abort of a run we stopped waiting for gets this long, on its own. */
+const MAPS_ABORT_TIMEOUT_MS = 5_000;
+/** Apify run and dataset ids are short and alphanumeric. They go into URL paths, so nothing else is accepted. */
+const APIFY_ID = /^[A-Za-z0-9]{1,64}$/;
+const RUN_STATUSES = new Set(['READY', 'RUNNING', 'SUCCEEDED', 'FAILED', 'TIMING-OUT', 'TIMED-OUT', 'ABORTING', 'ABORTED']);
+const RUN_FINISHED = new Set(['SUCCEEDED', 'FAILED', 'TIMED-OUT', 'ABORTED']);
+// Endpoints as errors name them. A run id or dataset id is a capability (the run object and its storages can be
+// read with the id alone), so errors name the route, never the ids.
+const MAPS_START_ENDPOINT = endpointOf('POST', `${APIFY_API_BASE}/v2/actors/${MAPS_ACTOR}/runs`);
+const MAPS_RUN_ENDPOINT = endpointOf('GET', `${APIFY_API_BASE}/v2/actor-runs/:runId`);
+const MAPS_ITEMS_ENDPOINT = endpointOf('GET', `${APIFY_API_BASE}/v2/datasets/:datasetId/items`);
+
+interface MapsRun {
+    id: string;
+    status: string;
+    datasetId: string;
+}
+
+/** The fields of an Apify run object we use, or null when any of them is missing or malformed. */
+function mapsRun(body: unknown): MapsRun | null {
+    const data = record(record(body)?.data);
+    if (!data) return null;
+    const { id, status, defaultDatasetId } = data;
+    if (typeof id !== 'string' || !APIFY_ID.test(id)) return null;
+    if (typeof status !== 'string' || !RUN_STATUSES.has(status)) return null;
+    if (typeof defaultDatasetId !== 'string' || !APIFY_ID.test(defaultDatasetId)) return null;
+    return { id, status, datasetId: defaultDatasetId };
+}
+
+/** Asks Apify to stop a run we no longer wait for, so it stops charging. Never awaited; a failure is ignored. */
+function abortRunQuietly(runId: string, token: string, fetchFn: FetchLike | undefined): void {
+    requestJson({
+        service: 'google-maps',
+        method: 'POST',
+        url: `${APIFY_API_BASE}/v2/actor-runs/${runId}/abort`,
+        token,
+        timeoutMs: MAPS_ABORT_TIMEOUT_MS,
+        maxBytes: MAPS_RUN_MAX_BYTES,
+        idempotent: false,
+        classify: mapsClassify,
+        fetch: fetchFn,
+    }).catch(() => undefined);
+}
 
 function hasWheelchairEntrance(additionalInfo: unknown): boolean {
     const list = record(additionalInfo)?.Accessibility;
@@ -393,8 +464,10 @@ function placeRow(raw: unknown, position: number): SearchRow | 'closed' | null {
 }
 
 /**
- * Finds places with the Google Maps Scraper, run synchronously with a memory setting, a time limit and a
- * charge cap on every call. Places Google lists as permanently closed are dropped.
+ * Finds places with the Google Maps Scraper. Starts a run with a memory setting, a time limit and a charge cap,
+ * waits for it to end (Apify holds each reply up to 60 s), then reads the places from the run's dataset. A run
+ * that reaches its own time limit keeps the places it found, with `partial: true`; one that found none, failed
+ * or was aborted rejects. Places Google lists as permanently closed are dropped.
  */
 export async function searchPlaces(query: string, opts: PlaceSearchOptions = {}): Promise<SearchResult> {
     const q = cleanQuery(query, 'query');
@@ -437,34 +510,94 @@ export async function searchPlaces(query: string, opts: PlaceSearchOptions = {})
         timeout: String(timeoutSecs),
         memory: String(memory),
         maxTotalChargeUsd: String(maxCharge),
-        fields: MAPS_FIELDS.join(','),
+        // Apify holds the reply until the run ends or this many seconds pass, whichever comes first.
+        waitForFinish: String(Math.min(MAPS_WAIT_MAX_SECS, timeoutSecs + MAPS_WAIT_EXTRA_SECS)),
     });
-    const url = `${APIFY_API_BASE}/v2/actors/${MAPS_ACTOR}/run-sync-get-dataset-items?${params}`;
+    const startUrl = `${APIFY_API_BASE}/v2/actors/${MAPS_ACTOR}/runs?${params}`;
+    const itemParams = new URLSearchParams({ format: 'json', clean: 'true', fields: MAPS_FIELDS.join(','), limit: String(maxPlaces) });
 
     const started = performance.now();
     emit(opts.onEvent, { stage: 'search', status: 'started', detail: 'maps', ms: 0 });
-    try {
-        const res = await requestJson({
-            service: 'google-maps',
-            method: 'POST',
-            url,
-            token: config.token,
-            body: input,
-            // The run's limit plus time to start it and return the items, never past the sync API's 300 s.
-            timeoutMs: Math.min(timeoutSecs + 30, 310) * 1000,
-            maxBytes: MAPS_MAX_BYTES,
-            // Never retried: each POST can start a new paid run, and after a dropped connection the first run
-            // may still be going, with its own charge cap.
-            idempotent: false,
-            classify: mapsClassify,
-            signal: opts.signal,
-            fetch: opts.fetch,
-        });
-        if (!Array.isArray(res.body)) {
-            throw badShape('google-maps', 'POST', url, res.status, res.attempts, 'Expected a JSON array of places.');
+
+    // One deadline for the whole call (the start, every status wait and the dataset read), beside the caller's signal.
+    const budgetMs = (timeoutSecs + MAPS_CLIENT_MARGIN_SECS) * 1000;
+    const caller = opts.signal;
+    const stop = new AbortController();
+    const onCallerAbort = () => stop.abort();
+    if (caller?.aborted) stop.abort();
+    else caller?.addEventListener('abort', onCallerAbort, { once: true });
+    const timer = setTimeout(() => stop.abort(), budgetMs);
+    const leftMs = () => budgetMs - (performance.now() - started);
+    // Requests sent so far, for `attempts` on an error.
+    let sent = 0;
+    const fail = (kind: HttpErrorKind, endpoint: string, status: number | null, extra: Partial<HttpErrorInit> = {}) =>
+        new ApifyHttpError({ service: 'google-maps', endpoint, kind, status, attempts: sent, ...extra });
+
+    /** One request inside the deadline. Its errors name the route rather than the ids, and count every request. */
+    const send = async (endpoint: string, method: 'GET' | 'POST', url: string, read: boolean, maxBytes: number, body?: unknown): Promise<HttpResult> => {
+        try {
+            const res = await requestJson({
+                service: 'google-maps',
+                method,
+                url,
+                token: config.token,
+                ...(body !== undefined ? { body } : {}),
+                timeoutMs: Math.max(1, Math.ceil(leftMs())),
+                maxBytes,
+                // Starting a run is never retried: each POST can start a new paid run, and after a dropped connection
+                // the first run may still be going, with its own charge cap. Reads change nothing and get one retry.
+                idempotent: read,
+                retries: read ? 1 : 0,
+                classify: read ? mapsReadClassify : mapsClassify,
+                signal: stop.signal,
+                fetch: opts.fetch,
+            });
+            sent += res.attempts;
+            return res;
+        } catch (error) {
+            if (!(error instanceof ApifyHttpError)) throw error;
+            sent += error.attempts;
+            // Our deadline stops a request the way the caller's signal does; only the caller's is a cancellation.
+            const kind: HttpErrorKind = error.kind === 'aborted' && !caller?.aborted ? 'timeout' : error.kind;
+            throw fail(kind, endpoint, error.status, {
+                bodySnippet: error.bodySnippet,
+                ...(error.code ? { code: error.code } : {}),
+                ...(kind === 'timeout' && error.status === null ? { timeoutMs: budgetMs } : {}),
+            });
         }
+    };
+    const runOf = (res: HttpResult, endpoint: string, expectId?: string): MapsRun => {
+        const next = mapsRun(res.body);
+        if (!next || (expectId !== undefined && next.id !== expectId)) {
+            throw fail('bad_response', endpoint, res.status, { bodySnippet: 'Expected the Apify run with its id, status and dataset id.' });
+        }
+        return next;
+    };
+
+    let run: MapsRun | null = null;
+    try {
+        let res = await send(MAPS_START_ENDPOINT, 'POST', startUrl, false, MAPS_RUN_MAX_BYTES, input);
+        let runEndpoint = MAPS_START_ENDPOINT;
+        run = runOf(res, runEndpoint);
+        for (let polls = 0; !RUN_FINISHED.has(run.status); polls += 1) {
+            const waitSecs = Math.min(MAPS_WAIT_MAX_SECS, Math.floor((leftMs() - MAPS_REPLY_MARGIN_MS) / 1000));
+            if (waitSecs < 1 || polls >= MAPS_MAX_POLLS) throw fail('timeout', MAPS_RUN_ENDPOINT, null, { timeoutMs: budgetMs });
+            runEndpoint = MAPS_RUN_ENDPOINT;
+            res = await send(runEndpoint, 'GET', `${APIFY_API_BASE}/v2/actor-runs/${run.id}?waitForFinish=${waitSecs}`, true, MAPS_RUN_MAX_BYTES);
+            run = runOf(res, runEndpoint, run.id);
+        }
+        if (run.status === 'FAILED' || run.status === 'ABORTED') {
+            throw fail('bad_response', runEndpoint, res.status, { bodySnippet: `The run ended ${run.status}.` });
+        }
+        const itemsRes = await send(MAPS_ITEMS_ENDPOINT, 'GET', `${APIFY_API_BASE}/v2/datasets/${run.datasetId}/items?${itemParams}`, true, MAPS_MAX_BYTES);
+        if (!Array.isArray(itemsRes.body)) {
+            throw fail('bad_response', MAPS_ITEMS_ENDPOINT, itemsRes.status, { bodySnippet: 'Expected a JSON array of places.' });
+        }
+        const timedOut = run.status === 'TIMED-OUT';
+        // A run that reached its own limit keeps the places it found. With none, it is a timeout like any other.
+        if (timedOut && itemsRes.body.length === 0) throw fail('timeout', MAPS_START_ENDPOINT, null, { timeoutMs: timeoutSecs * 1000 });
         // Never more than we asked for, however many items the reply holds.
-        const items = res.body.slice(0, maxPlaces);
+        const items = itemsRes.body.slice(0, maxPlaces);
         const rows: SearchRow[] = [];
         const seen = new Set<string>();
         let closed = 0;
@@ -479,9 +612,8 @@ export async function searchPlaces(query: string, opts: PlaceSearchOptions = {})
             }
         });
         const ms = elapsedMs(started);
-        // The API docs do not say what a run that hits its own time limit returns. If it returns the places
-        // found so far, the run took the whole limit and came back short, so flag that as a hint.
-        const partial = skipped > 0 || (items.length < maxPlaces && ms >= timeoutSecs * 1000);
+        // A run cut off by its time limit may have had more places to find.
+        const partial = timedOut || skipped > 0;
         emit(opts.onEvent, {
             stage: 'search',
             status: 'ok',
@@ -491,7 +623,12 @@ export async function searchPlaces(query: string, opts: PlaceSearchOptions = {})
         });
         return { rows, ms, query: q, partial };
     } catch (error) {
+        // A run we stop waiting for would go on to its own limit and charge for it, so ask Apify to stop it.
+        if (run && !RUN_FINISHED.has(run.status)) abortRunQuietly(run.id, config.token, opts.fetch);
         emit(opts.onEvent, { stage: 'search', status: 'error', detail: `maps ${errorLabel(error)}`, ms: elapsedMs(started) });
         throw error;
+    } finally {
+        clearTimeout(timer);
+        caller?.removeEventListener('abort', onCallerAbort);
     }
 }
