@@ -115,7 +115,7 @@ function freePort() {
     });
 }
 
-const PASSING_CHECK = `printf '%s\\n' 'consent list: 1 people' 'published agent: matches cartesia/agent/ exactly' 'calling hours now: yes, for everyone on the list' 'contacts every call would refuse: none'`;
+const PASSING_CHECK = `printf '%s\\n' 'consent list: 1 people' 'published agent: matches cartesia/agent/ exactly' 'contacts every call would refuse: none'`;
 
 describe('which database', () => {
     for (const db of ['say-when-try', 'say-when-try-dev', 'say-when', 'prod']) {
@@ -235,11 +235,12 @@ describe('calls', () => {
         assert.match(r.text, /lists a contact every call would refuse/);
     });
 
-    it('says so when it is outside calling hours, and still checks everything else', async () => {
-        const check = `printf '%s\\n' 'calling hours now: no (9 AM to 9 PM in their time zone and in Pacific time)' 'contacts every call would refuse: none'`;
-        const r = demoUp(['--db', 'say-when-demo', '--calls', '--port', String(await freePort()), '--dry-run'], setup(), { DEMO_UP_CALL_CHECK: check });
+    it('turns calls on with no calling-hours line or note: calls are not limited to 9 AM to 9 PM (PLAN D20)', async () => {
+        const r = demoUp(['--db', 'say-when-demo', '--calls', '--port', String(await freePort()), '--dry-run'], setup(), { DEMO_UP_CALL_CHECK: PASSING_CHECK });
         assert.equal(r.code, 0, r.text);
-        assert.match(r.text, /outside calling hours/);
+        assert.match(r.text, /calls on/);
+        assert.doesNotMatch(r.text, /calling hours/i);
+        assert.doesNotMatch(r.text, /refuses calls until/);
     });
 });
 

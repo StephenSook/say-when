@@ -169,6 +169,12 @@ SpacetimeDB is the whole live backend, not a store behind an API:
 
 **Locked Oct 23 by Stephen. Design detail in `docs/spacetime.md`.**
 
+### D20: Calls are not limited to 9 AM to 9 PM (Oct 24, Stephen)
+
+The Dialer no longer refuses a call for the time of day. Consent (only consented contacts, with consent expiry), the AI disclosure, the read-back plus a fresh CONFIRM (digest and freshness), never calling emergency numbers, the do-not-call list, the hold list, the duration cap and the bad-number checks all still apply, at prepare and again right before the dial. The recipient's time zone stays in the consent file because the call says the sent time in it; a zone the Dialer cannot read refuses the call. Code: `cartesia/src/call.ts` (the hours check and `outside_hours` are gone), `call:check` and `scripts/demo-up.sh` (no calling-hours line or note). The module keeps `outside_hours` in its public code list only so an older row still shows its code. The removed code comment had cited California PUC 2872(c) for the 9 PM to 9 AM bar; that was not re-checked for this decision.
+
+**Locked Oct 24 by Stephen.**
+
 ### D19: The scan waits for the person: silence never moves on (Oct 24, team)
 
 In the scan, each option (or the yes or no prompt) now waits for an answer. YES picks it, NO moves to the next option, and silence at the end of the response window reads the same option again instead of moving on. The option stays current from its first read, so a YES or NO given during any read of it lands on it. NO on the last option still starts the next pass, and the session's idle pause (two minutes with no accepted command) still ends a wait with nothing said. Rationale: imagined movement needs about 2 s of steady imagery to decode, and with a 3.5 s window per option the cursor moved on before the person could answer. Logic only in the module (`repeatOption` in `spacetime/src/clock.ts`, the StepEnd tick in `index.ts`); no table changes, so a republish keeps the data. `scanPolicy.silenceRepeats = false` restores the D11 timed scan.

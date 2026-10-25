@@ -299,9 +299,7 @@ prepare_calls() {
     sed 's/^/  /' "$check_log"
     [ "$status" -eq 0 ] || die "call:check failed (exit $status). Nothing was started. Start without --calls, or fix the setup above."
     grep -q '^contacts every call would refuse: none$' "$check_log" || die "call:check lists a contact every call would refuse. Nothing was started. Start without --calls, or fix the setup above."
-    if ! grep -q '^calling hours now: yes' "$check_log"; then
-        echo "Note: outside calling hours right now (9 AM to 9 PM). The dialer refuses calls until then."
-    fi
+    # No calling-hours note: calls are not limited to 9 AM to 9 PM any more (PLAN D20).
     export AGENT_CALLS=on
 }
 

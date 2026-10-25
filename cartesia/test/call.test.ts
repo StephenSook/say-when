@@ -15,7 +15,6 @@ import {
     DEFAULT_ERRAND_TITLES,
     deleteCallData,
     Dialer,
-    insideCallingHours,
     isUsableTimeZone,
     loadCallLists,
     parseConsentList,
@@ -58,6 +57,8 @@ const VOICE = 'db6b0ed5-d5d3-463d-ae85-518a07d3c2b4';
 const script = loadAgentScript();
 // 11:00 AM Pacific Daylight Time on Saturday, October 24, 2026.
 const MORNING = Date.parse('2026-10-24T18:00:00Z');
+// 11:00 PM Pacific Daylight Time on Saturday, October 24, 2026 (2:00 AM Eastern on Sunday).
+const NIGHT = Date.parse('2026-10-25T06:00:00Z');
 
 /** Voicemail detection with no message, and the end_call tool the agent hangs up with: what the published agent has. */
 const VOICEMAIL_OFF = { description: null, pre_tool_speech: 'off', message: null };
@@ -318,23 +319,51 @@ describe('consent and do-not-call lists', () => {
     });
 });
 
-describe('calling hours', () => {
-    it('only calls when the whole call fits inside 9 AM to 9 PM Pacific', () => {
-        const pacific = 'America/Los_Angeles';
-        assert.equal(insideCallingHours(Date.parse('2026-10-24T16:00:00Z'), 0, pacific), true);
-        assert.equal(insideCallingHours(Date.parse('2026-10-24T15:59:00Z'), 0, pacific), false);
-        assert.equal(insideCallingHours(Date.parse('2026-10-25T03:55:00Z'), 205_000, pacific), true);
-        assert.equal(insideCallingHours(Date.parse('2026-10-25T03:57:00Z'), 205_000, pacific), false);
+describe('no calling-hours limit (PLAN D20)', () => {
+    it('places a call prepared at 11 PM Pacific to a consented contact, and still refuses one who did not consent', async () => {
+        const h = harness({ now: NIGHT });
+        const stranger = h.dialer.prepare(request(h.clock, { contactId: 'stranger' }));
+        assert.deepEqual(stranger, { ok: false, refusal: { code: 'not_consented', reason: REFUSALS.not_consented } });
+        assert.equal(dials(h.fetch.calls), 0);
+        const outcome = await prepareAndPlace(h).handle.done;
+        assert.equal(outcome.refusal, null);
+        assert.equal(outcome.result, 'answered');
+        assert.equal(dials(h.fetch.calls), 1);
     });
 
-    it("uses the recipient's own time zone too", () => {
-        // 02:30 UTC on October 25 is 7:30 PM Pacific (PDT) and 10:30 PM Eastern (EDT).
-        const evening = Date.parse('2026-10-25T02:30:00Z');
-        assert.equal(insideCallingHours(evening, 0, 'America/Los_Angeles'), true);
-        assert.equal(insideCallingHours(evening, 0, 'America/New_York'), false);
-        // 9:30 AM Eastern is 6:30 AM Pacific: still too early for the venue rule.
-        assert.equal(insideCallingHours(Date.parse('2026-10-24T13:30:00Z'), 0, 'America/New_York'), false);
-        assert.equal(insideCallingHours(evening, 0, 'Not/AZone'), false);
+    it("calls an Eastern recipient at 2 AM their time too, and says the sent time in their zone", async () => {
+        const h = harness({ now: NIGHT, consent: consentFor({ timeZone: 'America/New_York' }) });
+        const outcome = await prepareAndPlace(h).handle.done;
+        assert.equal(outcome.result, 'answered');
+        assert.equal(dialVariables(h.fetch.calls).message, "Shashank's Care team request was sent at 1:59 AM");
+    });
+
+    it('keeps every other guard at 11 PM: do-not-call, expired consent and a stale errand still refuse', () => {
+        const code = (h: ReturnType<typeof harness>, extra: Record<string, unknown> = {}) => {
+            const result = h.dialer.prepare(request(h.clock, extra));
+            return result.ok ? 'ok' : result.refusal.code;
+        };
+        assert.equal(code(harness({ now: NIGHT, dnc: [LEON] })), 'do_not_call');
+        assert.equal(code(harness({ now: NIGHT, consent: consentFor({ expiresAt: '2026-10-25T05:00:00Z' }) })), 'consent_expired');
+        assert.equal(code(harness({ now: NIGHT }), { errand: { title: 'Care team request', sentAt: NIGHT - 11 * 60_000 } }), 'errand_stale');
+        assert.equal(code(harness({ now: NIGHT, holds: [[LEON, 'leon']] })), 'opt_out_hold');
+    });
+
+    it('refuses, without throwing, a contact whose time zone cannot be read, and the setup check flags it', async () => {
+        const h = harness();
+        h.lists.consent[0]!.timeZone = 'Not/AZone';
+        assert.deepEqual(h.dialer.prepare(request(h.clock)), { ok: false, refusal: { code: 'bad_request', reason: REFUSALS.bad_request } });
+        const report = await h.dialer.preflight();
+        assert.equal(report.ok, false);
+        assert.deepEqual(report.unreachable, [{ contact: 'leon', code: 'bad_request' }]);
+        assert.equal(dials(h.fetch.calls), 0);
+    });
+
+    it('the setup check reports ready at 11 PM Pacific and has no calling-hours field', async () => {
+        const report = await harness({ now: NIGHT }).dialer.preflight();
+        assert.equal(report.ok, true);
+        assert.deepEqual(report.unreachable, []);
+        assert.equal('insideHoursNow' in report, false);
     });
 });
 
@@ -351,20 +380,6 @@ describe('Dialer guards', () => {
         const expired = harness({ consent: consentFor({ expiresAt: '2026-10-24T17:00:00Z' }) });
         const result = expired.dialer.prepare(request(expired.clock));
         assert.ok(!result.ok && result.refusal.code === 'consent_expired');
-    });
-
-    it('refuses outside calling hours, counting the whole call', () => {
-        const late = harness({ now: Date.parse('2026-10-25T03:57:00Z') });
-        const result = late.dialer.prepare(request(late.clock));
-        assert.ok(!result.ok && result.refusal.code === 'outside_hours');
-        const early = harness({ now: Date.parse('2026-10-24T15:59:00Z') });
-        assert.ok(!early.dialer.prepare(request(early.clock)).ok);
-    });
-
-    it('refuses an Eastern recipient at 10:30 PM their time', () => {
-        const h = harness({ now: Date.parse('2026-10-25T02:30:00Z'), consent: consentFor({ timeZone: 'America/New_York' }) });
-        const result = h.dialer.prepare(request(h.clock));
-        assert.ok(!result.ok && result.refusal.code === 'outside_hours');
     });
 
     it('only reports a request sent in the last ten minutes', () => {
@@ -883,7 +898,6 @@ describe('Dialer calls', () => {
             holdsReadable: true,
             scriptProblems: [],
             agent: { ok: true },
-            insideHoursNow: true,
             unreachable: [],
         });
         assert.equal(dials(h.fetch.calls), 0);
@@ -934,13 +948,16 @@ describe('Dialer review fixes', () => {
         assert.equal(dials(h.fetch.calls), 0);
     });
 
-    it('checks the hours and the age of the confirm again right before dialing', async () => {
-        const late = harness({
-            now: Date.parse('2026-10-25T03:54:00Z'),
-            scenario: { agentHook: ({ clock }) => void (clock.t = Date.parse('2026-10-25T03:58:00Z')) },
+    it('checks the age of the confirm again right before dialing, and a check that crosses 9 PM still dials', async () => {
+        // 8:59:50 PM Pacific when confirmed, 9:00:10 PM at the dial: no hours rule since PLAN D20.
+        const crossing = harness({
+            now: Date.parse('2026-10-25T03:59:50Z'),
+            scenario: { agentHook: ({ clock }) => void (clock.t += 20_000) },
         });
-        assert.equal((await prepareAndPlace(late).handle.done).refusal?.code, 'outside_hours');
-        assert.equal(dials(late.fetch.calls), 0);
+        const crossed = await prepareAndPlace(crossing).handle.done;
+        assert.equal(crossed.refusal, null);
+        assert.equal(crossed.result, 'answered');
+        assert.equal(dials(crossing.fetch.calls), 1);
         const slow = harness({ scenario: { agentHook: ({ clock }) => void (clock.t += 31_000) } });
         assert.equal((await prepareAndPlace(slow).handle.done).refusal?.code, 'expired');
         assert.equal(dials(slow.fetch.calls), 0);

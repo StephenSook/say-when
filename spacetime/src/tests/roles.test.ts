@@ -276,15 +276,15 @@ test('board_calls hides the name, the end reason and outside sentences unless sh
   expect(gesture(db, 'CONFIRM', { heardDigest: CALL_DIGEST }).outcome).toBe('accepted:confirm');
   as(db, AGENT, (x) => m.claimCall(x, { callId: c.id, digest: CALL_DIGEST }));
   as(db, AGENT, (x) =>
-    m.reportCallStatus(x, { callId: c.id, attempt: 1, status: 'failed', result: 'failed', endReason: 'jane_doe_hung_up', reasonCode: 'Outside Hours', reason: 'Jane Doe was asleep, so I did not call.' }),
+    m.reportCallStatus(x, { callId: c.id, attempt: 1, status: 'failed', result: 'failed', endReason: 'jane_doe_hung_up', reasonCode: 'Do Not Call', reason: 'Jane Doe asked not to be called, so I did not call.' }),
   );
-  expect(db.db.callRequest.id.find(c.id)!.reasonCode).toBe('outside_hours'); // a listed Dialer code, kept
+  expect(db.db.callRequest.id.find(c.id)!.reasonCode).toBe('do_not_call'); // a listed Dialer code, kept
   const off = m.boardCalls(db.anonymousViewContext())[0]!;
-  expect([off.status.tag, off.contactName, off.endReason, off.reasonCode, off.reason]).toEqual(['Failed', 'Contact', '', 'outside_hours', '']);
+  expect([off.status.tag, off.contactName, off.endReason, off.reasonCode, off.reason]).toEqual(['Failed', 'Contact', '', 'do_not_call', '']);
   grantConsent(db, 'board_text');
   as(db, OWNER, (x) => m.setBoardSharing(x, { on: true }));
   const on = m.boardCalls(db.anonymousViewContext())[0]!;
-  expect([on.contactName, on.endReason, on.reason]).toEqual(['Leon', 'jane_doe_hung_up', 'Jane Doe was asleep, so I did not call.']);
+  expect([on.contactName, on.endReason, on.reason]).toEqual(['Leon', 'jane_doe_hung_up', 'Jane Doe asked not to be called, so I did not call.']);
 });
 
 test('public tables carry no conversation content', () => {

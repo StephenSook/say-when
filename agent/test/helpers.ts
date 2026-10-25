@@ -431,9 +431,9 @@ export class FakeDialer implements DialerPort {
     refusePlace = false;
     handle: FakeHandle | null = null;
 
-    prepare(request: CallRequest): { ok: true; call: PreparedCall } | { ok: false; refusal: { code: 'outside_hours'; reason: string } } {
+    prepare(request: CallRequest): { ok: true; call: PreparedCall } | { ok: false; refusal: { code: 'consent_expired'; reason: string } } {
         this.prepared.push(request);
-        if (this.refusePrepare) return { ok: false, refusal: { code: 'outside_hours', reason: 'It is too late or too early to call.' } };
+        if (this.refusePrepare) return { ok: false, refusal: { code: 'consent_expired', reason: 'Their agreement to calls has expired, so I did not call.' } };
         return {
             ok: true,
             call: {
