@@ -8,12 +8,16 @@ import { z } from 'zod/v4';
 
 import { TONES } from '../types.js';
 
+// Direct select (docs/direct-select.md) adds `label`, the 1 to 3 words the earpiece reads, the `search` and `category`
+// kinds, and `query`, the search words a category option stands for (empty on every other kind).
 export const PlanReplySchema = z.object({
     answer_mode: z.enum(['pick', 'yes_no']),
     options: z.array(
         z.object({
+            label: z.string(),
             text: z.string(),
-            kind: z.enum(['reply', 'errand', 'call']),
+            kind: z.enum(['reply', 'errand', 'call', 'search', 'category']),
+            query: z.string(),
             tone: z.enum(TONES),
             laugh: z.boolean(),
             sources: z.array(z.string()),

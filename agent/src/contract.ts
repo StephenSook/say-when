@@ -148,9 +148,40 @@ export const DIGEST_PATTERN = /^[0-9a-f]{16}$/;
 export const STAGES = ['listen', 'search', 'retrieve', 'plan', 'speak', 'select', 'errand', 'call'] as const;
 export const STATUSES = ['started', 'ok', 'error'] as const;
 
+/**
+ * Direct select (docs/direct-select.md section 4, PLAN D18): the module names the agent depends on that the module
+ * track is still settling on branch `direct-select-module`. Everything the direct select code reads from the module
+ * goes through this one object and `toAgentQueueRow` (src/db/spacetime-db.ts), so a rename is one edit here.
+ */
+export const DIRECT = {
+    /**
+     * The module's JobKind variants, snake-cased the way `tagOf` reads them, to the sidecar's job kinds. A variant that
+     * is not listed is a ContractError, so its rows are skipped and logged instead of run as the wrong job.
+     */
+    jobKindTags: {
+        options: 'options',
+        errand_preview: 'errand_preview',
+        remember: 'remember',
+        categories: 'categories',
+        category_search: 'category_search',
+    },
+    /** The `agent_queue` column with the Category option the person picked (`category_search` jobs). Optional until the bindings carry it. */
+    categoryField: 'category',
+    /**
+     * Whether a Category option carries its search words in `action_json` (`{"query": "..."}`). Off while the module
+     * refuses `action_json` on everything but errands and calls; the sidecar then keeps them itself (CategoryBook).
+     */
+    categoryActionJson: false,
+} as const;
+
+/** Direct select earpiece labels: at most 3 words, or 5 for a place name (docs/direct-select.md section 3). */
+export const LABEL_LIMITS = { words: 3, placeWords: 5, chars: 48 } as const;
+
 /** Limits the module enforces, so the sidecar fails early with a clear error instead of a refused reducer. */
 export const LIMITS = {
     optionText: 200,
+    /** `answer_option.label`, a guess until the module track documents it: the earpiece reads it whole. */
+    optionLabel: 60,
     maxOptions: 4,
     countsJsonChars: 2048,
     countsKeyChars: 40,

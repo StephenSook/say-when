@@ -144,6 +144,7 @@ async function run(result: ConfigResult, log: Logger): Promise<number> {
         effort: config.planner.effort,
         yesNoFast: config.speed.yesNoFast,
         draftFirst: config.speed.draftFirst,
+        direct: config.inputMode === 'direct',
     });
 
     const db = await connect(result, log);
@@ -185,6 +186,8 @@ async function run(result: ConfigResult, log: Logger): Promise<number> {
         requestId: () => `call-${randomUUID().replace(/-/g, '').slice(0, 24)}`,
         yesNoFast: config.speed.yesNoFast,
         draftFirst: config.speed.draftFirst,
+        // Direct select (docs/direct-select.md): a Search option, and the search only once the person asks for it.
+        direct: config.inputMode === 'direct',
     };
     calls = new CallRunner({ db, dialer: wired.dialer, log, clock: () => performance.now(), now: Date.now });
     const errands = new ErrandRunner({

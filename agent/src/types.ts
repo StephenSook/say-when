@@ -14,13 +14,21 @@ export { TONES, type Tone };
 export type Stage = 'listen' | 'search' | 'retrieve' | 'plan' | 'speak' | 'select' | 'errand' | 'call';
 export type StageStatus = 'started' | 'ok' | 'error';
 
-export type JobKind = 'options' | 'errand_preview' | 'remember';
+/**
+ * `categories` and `category_search` are the direct select follow-ups (docs/direct-select.md section 4): after a
+ * confirmed Search pick the module asks for up to four categories, and after a Category pick for the search itself.
+ */
+export type JobKind = 'options' | 'errand_preview' | 'remember' | 'categories' | 'category_search';
 export type JobStatus = 'pending' | 'claimed' | 'done' | 'failed' | 'cancelled';
 export type Origin = 'partner' | 'menu';
 export type MenuItem = 'none' | 'need' | 'request' | 'call' | 'say';
 export type AnswerMode = 'pick' | 'yes_no';
-/** What the planner may offer. `menu` options are made by the module, never by the sidecar. */
-export type OptionKind = 'reply' | 'errand' | 'call';
+/**
+ * What the planner may offer. `menu` options are made by the module, never by the sidecar. `search` and `category`
+ * are direct select (docs/direct-select.md): a Search pick asks for a confirm and then for categories; a Category pick
+ * runs the search.
+ */
+export type OptionKind = 'reply' | 'errand' | 'call' | 'search' | 'category';
 /** `stock`: the yes or no fast path's own Yes and No (src/fastpath.ts), written by no model. */
 export type Provenance = 'memory' | 'web' | 'maps' | 'model' | 'stock';
 
@@ -59,7 +67,12 @@ export interface SourceRef {
 /** One option as `agent_publish_options` takes it (`OptionInput` in spacetime/src/schema.ts). */
 export interface OptionInput {
     kind: OptionKind;
-    /** 1 to 200 characters: what the person hears in the earpiece and may say. */
+    /**
+     * Direct select: the short words the earpiece reads ("Good", "Search the web", "Palace of Fine Arts"), 1 to 3
+     * words (a place name up to 5). Empty means the module reads `text`.
+     */
+    label: string;
+    /** 1 to 200 characters: what the room voice says for a reply (and, in scan mode, what the earpiece reads). */
     text: string;
     /** One of the Cartesia tones, or empty. */
     tone: Tone | '';
@@ -100,6 +113,8 @@ export interface AgentQueueRow {
     /** The newest Submitted errand of the last 10 minutes, which a call option needs. Empty when there is none. */
     recentErrandTitle: string;
     recentErrandSentAtMs: number | null;
+    /** A `category_search` job: the Category option the person picked (its label or text). Empty otherwise. */
+    category: string;
     createdAtMs: number;
 }
 
