@@ -653,26 +653,25 @@ export function pickDirect(ctx: Ctx, s: ScanState, session: Session, q: Question
 // ---------- D18 follow-up turns: categories after a confirmed search, places after a category ----------
 
 /**
- * Whether a new Options job may search the web. In Scan mode, as before, whenever web search consent is on. In
- * Direct mode never (D18): a search starts only after the person picks Search and confirms it, so only a Search
- * job (made by a Category pick on the categories turn that confirm opened) carries the permission.
+ * A pause (STOP, HEADSET_OFF, the dead-man lease, idle, operator) voids every search the person started whose
+ * Search job is still Pending or Claimed (D18): the search turn is cancelled with the pause's code and its job with
+ * it, so nothing can claim it, requeue it or publish from it after the pause (a claimed job's later writes are
+ * `stale attempt`). A web call already in flight cannot be recalled, but nothing it finds is offered.
  */
-export function optionsJobMaySearch(ctx: Ctx): boolean {
-  return !isDirect(ctx.db) && hasConsent(ctx.db, 'WebSearch', '');
-}
-
-/**
- * A pause voids a search the person started but the agent has not (D18): every search turn whose Search job is
- * still Pending is cancelled with the pause's code, as an unclaimed confirmed errand is. A claimed one is already
- * searching, like a submitting errand, and is left to finish.
- */
-export function voidUnstartedSearches(ctx: Ctx, sessionId: bigint, code: string, actor: Actor): void {
+export function voidSearchTurns(ctx: Ctx, sessionId: bigint, code: string, actor: Actor): void {
   for (const q of [...ctx.db.question.questionBySession.filter(sessionId)]) {
-    if (q.via !== 'category' || (q.status.tag !== 'Drafting' && q.status.tag !== 'Ready')) continue;
-    const jobs = [...ctx.db.agentJob.jobByQuestion.filter(q.id)].filter((j) => j.kind.tag === 'Search');
-    if (!jobs.some((j) => j.status.tag === 'Pending') || jobs.some((j) => j.status.tag === 'Claimed')) continue;
+    if (q.via !== 'category' || !['Drafting', 'Ready', 'Scanning'].includes(q.status.tag)) continue;
+    const live = [...ctx.db.agentJob.jobByQuestion.filter(q.id)].some((j) => j.kind.tag === 'Search' && (j.status.tag === 'Pending' || j.status.tag === 'Claimed'));
+    if (!live) continue;
     closeQuestion(ctx, q, { status: 'Cancelled', outcome: 'Cancelled', reason: code, actor, cue: 'not_sent' });
   }
+}
+
+/** The pause code (`stop`, `headset_off`, ...) of a paused session, or '' when it is not paused. */
+export function pausedCode(db: ReadDb, sessionId: bigint): string {
+  const s = db.scanState.sessionId.find(sessionId);
+  if (!s || s.phase.tag !== 'Paused') return '';
+  return s.pauseReason ? PAUSE_CODE[s.pauseReason.tag] : 'operator';
 }
 
 /** A categories turn: opened by a confirmed Search. Only its options may be Category options. */
@@ -859,7 +858,7 @@ function pickMenuItem(ctx: Ctx, s: ScanState, session: Session, menuQ: Question,
   createJob(ctx, 'Options', {
     sessionId: session.id,
     questionId: follow.id,
-    webSearchAllowed: optionsJobMaySearch(ctx),
+    webSearchAllowed: hasConsent(ctx.db, 'WebSearch', ''),
     memoryAllowed: hasConsent(ctx.db, 'Memory', ''),
   });
   appendLedger(ctx, session.id, 'question', 'Station', { questionId: follow.id, optionId: o.id, gestureId, outcome: `menu:${o.menuItem.tag.toLowerCase()}` });
@@ -943,7 +942,7 @@ export function pause(ctx: Ctx, s: ScanState, reason: PauseReason['tag'], opts: 
     stepEndsAt: ctx.timestamp,
   });
   voidPending(ctx, s.sessionId, PAUSE_CODE[reason], opts.actor);
-  voidUnstartedSearches(ctx, s.sessionId, PAUSE_CODE[reason], opts.actor);
+  voidSearchTurns(ctx, s.sessionId, PAUSE_CODE[reason], opts.actor);
   appendLedger(ctx, s.sessionId, 'pause', opts.actor, {
     questionId: s.questionId,
     gestureId: opts.gestureId,

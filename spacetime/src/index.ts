@@ -39,8 +39,8 @@ import {
   initialScanState,
   isScanActive,
   isSignalPause,
-  optionsJobMaySearch,
   optionsOf,
+  pausedCode,
   pause,
   pushIdle,
   recordWordTimings,
@@ -531,7 +531,8 @@ export const askQuestion = spacetimedb.reducer(
     createJob(ctx, 'Options', {
       sessionId: session.id,
       questionId: q.id,
-      webSearchAllowed: optionsJobMaySearch(ctx), // D18: never in Direct mode, where a search needs its confirm
+      // In Direct mode (D18) this means the agent may OFFER a Search option; it makes no web call in an Options job.
+      webSearchAllowed: hasConsent(ctx.db, 'WebSearch', ''),
       memoryAllowed: hasConsent(ctx.db, 'Memory', ''),
     });
     writePipeline(ctx, {
@@ -771,6 +772,8 @@ export const agentClaim = spacetimedb.reducer({ jobId: t.u64() }, (ctx, { jobId 
   requireRole(ctx, 'Agent');
   const job = ctx.db.agentJob.id.find(jobId);
   const sessionId = job ? (ctx.db.question.id.find(job.questionId)?.sessionId ?? 0n) : 0n;
+  // D18: a web search never starts while the person's session is paused (a pause also cancels its search turns).
+  if (job && job.kind.tag === 'Search' && pausedCode(ctx.db, sessionId)) throw new SenderError('session paused');
   claimJob(ctx, jobId, sessionId);
 });
 

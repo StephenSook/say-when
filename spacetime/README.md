@@ -55,7 +55,7 @@ Node 22. From this folder:
 ```bash
 npm ci
 npm run typecheck              # the module, the scripts and the generated bindings
-npm test                       # vitest with the 2.12+ module test harness: 229 tests, no server needed
+npm test                       # vitest with the 2.12+ module test harness: 233 tests, no server needed
 spacetime build --module-path .
 ```
 

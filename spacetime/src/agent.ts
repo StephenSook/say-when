@@ -1,6 +1,6 @@
 // The agent sidecar's fenced writes (docs/spacetime.md 3.6, 4.5): progress, options, failures, lapsed leases.
 import { SenderError } from 'spacetimedb/server';
-import { closeQuestion, enterPreparing, isScanActive } from './clock';
+import { closeQuestion, enterPreparing, isScanActive, pausedCode } from './clock';
 import { getConfig, isDirect } from './config';
 import { checkCallAction, checkErrandAction, failDraftedErrand } from './consent';
 import type { Ctx } from './ctx';
@@ -251,10 +251,22 @@ function stillWanted(ctx: Ctx, job: AgentJob): boolean {
   }
 }
 
-/** `lease_expired`, already fenced: requeue while attempts remain, else fail; cancel work nobody wants. */
+/**
+ * `lease_expired`, already fenced: requeue while attempts remain, else fail; cancel work nobody wants. A Search or
+ * Categories job whose session is paused is never requeued (D18): the job is cancelled and its turn closed with the
+ * pause's code, so a search the person paused cannot start later.
+ */
 export function leaseLapsed(ctx: Ctx, job: AgentJob): void {
   const cfg = getConfig(ctx.db);
   const sessionId = sessionOf(ctx, job);
+  const paused = job.kind.tag === 'Search' || job.kind.tag === 'Categories' ? pausedCode(ctx.db, sessionId) : '';
+  if (paused) {
+    endJob(ctx, job, 'Cancelled', paused);
+    appendLedger(ctx, sessionId, 'job_failed', 'Scheduler', { jobId: job.id, questionId: job.questionId, reason: paused });
+    const q = ctx.db.question.id.find(job.questionId);
+    if (q && OPEN_STATUSES.includes(q.status.tag)) closeQuestion(ctx, q, { status: 'Cancelled', outcome: 'Cancelled', reason: paused, actor: 'Scheduler' });
+    return;
+  }
   if (!stillWanted(ctx, job)) {
     endJob(ctx, job, 'Cancelled', 'not_wanted');
     return;

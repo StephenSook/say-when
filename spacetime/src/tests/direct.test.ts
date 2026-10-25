@@ -723,21 +723,11 @@ function categoryPicked(db: Test) {
   return [...db.db.question.questionBySession.filter(scan(db).sessionId)].find((x) => x.via === 'category')!;
 }
 
-test('in direct mode an options job may not search the web, whatever the consent; scan mode keeps it', () => {
+test('in direct mode an options job carries web search consent, so the agent may offer Search (it does not search there)', () => {
   const db = newDb('direct');
+  expect(claim(db, ask(db).id).webSearchAllowed).toBe(false); // no consent: Search is never offered
   grantConsent(db, 'web_search');
-  const q = ask(db);
-  const job = claim(db, q.id);
-  expect(job.webSearchAllowed).toBe(false);
-  expect(
-    failure(() =>
-      as(db, AGENT, (ctx) => m.agentProgress(ctx, { jobId: job.id, attempt: job.attempt, eventKey: `${job.id}:1:search`, stage: 'search', status: 'started', detail: 'web', ms: 0, countsJson: '', payloadJson: '' })),
-    ),
-  ).toBe('web search is not allowed for this job');
-
-  const scanDb = newDb();
-  grantConsent(scanDb, 'web_search');
-  expect(claim(scanDb, ask(scanDb).id).webSearchAllowed).toBe(true);
+  expect(claim(db, ask(db, 'Plans today?').id).webSearchAllowed).toBe(true);
 });
 
 test('a pause voids a search turn the agent has not claimed yet, and a resume does not bring it back', () => {
@@ -747,18 +737,89 @@ test('a pause voids a search turn the agent has not claimed yet, and a resume do
   expect([question(db, places.id).status.tag, scan(db).phase.tag]).toEqual(['Cancelled', 'Paused']);
   const job = jobsOf(db, places.id).find((j) => j.kind.tag === 'Search')!;
   expect(job.status.tag).toBe('Cancelled');
-  expect(failure(() => as(db, AGENT, (ctx) => m.agentClaim(ctx, { jobId: job.id })))).toBe('not pending');
+  expect(failure(() => as(db, AGENT, (ctx) => m.agentClaim(ctx, { jobId: job.id })))).toBe('session paused');
   live(db, 3500); // healthy contact: the automatic resume
   expect([scan(db).phase.tag, question(db, places.id).status.tag]).toEqual(['Idle', 'Cancelled']);
+  expect(failure(() => as(db, AGENT, (ctx) => m.agentClaim(ctx, { jobId: job.id })))).toBe('not pending');
 });
 
-test('a search turn the agent already claimed is left to finish after a pause, like a submitting errand', () => {
+test('STOP while the search turn waits for the agent stops it: the Search job is cancelled and cannot be claimed', () => {
+  const db = newDb('direct');
+  const places = categoryPicked(db);
+  settle(db);
+  beat(db);
+  expect(gesture(db, 'STOP').outcome).toBe('accepted:stop');
+  expect(question(db, places.id).status.tag).toBe('Stopped');
+  const job = jobsOf(db, places.id).find((j) => j.kind.tag === 'Search')!;
+  expect(job.status.tag).toBe('Cancelled');
+  expect(failure(() => as(db, AGENT, (ctx) => m.agentClaim(ctx, { jobId: job.id })))).toBe('not pending');
+});
+
+test('HEADSET_OFF while the agent is searching cancels the search turn: its later writes are stale', () => {
   const db = newDb('direct');
   const places = categoryPicked(db);
   const job = claim(db, places.id, 'Search');
-  as(db, OWNER, (ctx) => m.operatorPause(ctx, {}));
-  expect(question(db, places.id).status.tag).toBe('Drafting');
-  expect(db.db.agentJob.id.find(job.id)!.status.tag).toBe('Claimed');
+  expect(gesture(db, 'HEADSET_OFF').outcome).toBe('accepted:pause');
+  expect([question(db, places.id).status.tag, db.db.agentJob.id.find(job.id)!.status.tag]).toEqual(['Cancelled', 'Cancelled']);
+  expect(
+    failure(() =>
+      as(db, AGENT, (ctx) => m.agentProgress(ctx, { jobId: job.id, attempt: job.attempt, eventKey: `${job.id}:1:search`, stage: 'search', status: 'ok', detail: 'maps', ms: 900, countsJson: '', payloadJson: '' })),
+    ),
+  ).toBe('stale attempt');
+  expect(
+    failure(() => as(db, AGENT, (ctx) => m.agentPublishOptions(ctx, { jobId: job.id, attempt: job.attempt, answerMode: 'pick', options: [opt('reply', 'Zoo', "Let's go to the zoo!")], final: true }))),
+  ).toBe('stale attempt');
+  live(db, 3500); // the automatic resume brings nothing back
+  expect([scan(db).phase.tag, question(db, places.id).status.tag]).toEqual(['Idle', 'Cancelled']);
+});
+
+test('the dead-man pause cancels a claimed search turn too', () => {
+  const db = newDb('direct');
+  const places = categoryPicked(db);
+  const job = claim(db, places.id, 'Search');
+  const lease = [...db.db.livenessLease.sessionId.filter(scan(db).sessionId)].pop()!;
+  db.clock.set(timerAt(lease));
+  internal(db, (ctx) => m.livenessExpired(ctx, { job: lease }));
+  expect([scan(db).pauseReason?.tag, db.db.agentJob.id.find(job.id)!.status.tag, question(db, places.id).status.tag]).toEqual(['HeadsetLost', 'Cancelled', 'Cancelled']);
+});
+
+test('a Search job is never claimed or requeued while the session is paused', () => {
+  const db = newDb('direct');
+  const places = categoryPicked(db);
+  const job = jobsOf(db, places.id).find((j) => j.kind.tag === 'Search')!;
+  // Paused behind the reducers' back, so the pause's own cancel did not run: the claim guard and the lease guard
+  // must hold on their own.
+  const paused = { ...scan(db), phase: { tag: 'Paused' as const }, pauseReason: { tag: 'Stop' as const } };
+  db.db.scanState.sessionId.update(paused);
+  expect(failure(() => as(db, AGENT, (ctx) => m.agentClaim(ctx, { jobId: job.id })))).toBe('session paused');
+
+  const db2 = newDb('direct');
+  const places2 = categoryPicked(db2);
+  const claimed = claim(db2, places2.id, 'Search');
+  db2.db.scanState.sessionId.update({ ...scan(db2), phase: { tag: 'Paused' }, pauseReason: { tag: 'Stop' } });
+  const leaseRow = [...db2.db.jobLease.jobId.filter(claimed.id)][0]!;
+  db2.clock.set(timerAt(leaseRow));
+  internal(db2, (ctx) => m.leaseExpired(ctx, { job: leaseRow }));
+  const after = db2.db.agentJob.id.find(claimed.id)!;
+  expect([after.status.tag, after.reason]).toEqual(['Cancelled', 'stop']);
+  expect(question(db2, places2.id).status.tag).toBe('Cancelled');
+  expect(jobsOf(db2, places2.id).filter((j) => j.status.tag === 'Pending')).toHaveLength(0);
+});
+
+test('a Categories job whose lease lapses while paused is cancelled with its turn, not requeued', () => {
+  const db = newDb('direct');
+  const { r } = searchAwaiting(db);
+  gesture(db, 'PICK_1', { heardDigest: r.digest });
+  const cats = searchOf(db).followUpQuestionId;
+  const job = claim(db, cats, 'Categories');
+  settle(db);
+  expect(gesture(db, 'HEADSET_OFF').outcome).toBe('accepted:pause');
+  expect(db.db.agentJob.id.find(job.id)!.status.tag).toBe('Claimed'); // a categories turn makes no web call
+  const leaseRow = [...db.db.jobLease.jobId.filter(job.id)][0]!;
+  db.clock.set(timerAt(leaseRow));
+  internal(db, (ctx) => m.leaseExpired(ctx, { job: leaseRow }));
+  const after = db.db.agentJob.id.find(job.id)!;
+  expect([after.status.tag, after.reason, question(db, cats).status.tag]).toEqual(['Cancelled', 'headset_off', 'Cancelled']);
 });
 
 test('a category pick needs good contact now: after the dead-man deadline it starts nothing', () => {
