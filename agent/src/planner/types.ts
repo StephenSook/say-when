@@ -62,6 +62,11 @@ export interface PlanInput {
     searchOffer?: boolean;
     /** `category_search` task: the category the person picked. */
     category?: string;
+    /**
+     * `categories` task: a place question whose search is the maps search centred on the venue (AGENT_PLACES_NEAR), so
+     * each category's search words name only what to find, never a city.
+     */
+    placesNear?: boolean;
     maxOptions: number;
     nowMs: number;
     timeZone: string;

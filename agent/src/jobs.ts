@@ -21,6 +21,7 @@ import type { DialerPort, ErrandPort, MemoryPort } from './ports.js';
 import type { ConsentMark, MemoryWatch } from './requests.js';
 import { withDeadline } from './deadline.js';
 import { runDirectOptionsJob, type CategoryBook } from './direct.js';
+import type { SearchPrefetch } from './prefetch.js';
 import { JobAbortedError, memoryContext, mossDeadline, recallMemory, retrieveStep, searchStep, type RetrievalDeps } from './retrieval.js';
 import type { AgentQueueRow, AllowedForm, CallContact, OptionInput } from './types.js';
 
@@ -204,6 +205,14 @@ export interface JobDeps {
     direct?: boolean;
     /** The categories this sidecar offered and their search words (src/direct.ts). Made on first use when unset. */
     categoryBook?: CategoryBook;
+    /**
+     * Search prefetch (AGENT_SEARCH_PREFETCH, on by default in the config; src/prefetch.ts): direct select starts the
+     * search for each offered category as the categories are published, and a Category pick takes over its run. Off
+     * when unset.
+     */
+    prefetch?: boolean;
+    /** The prefetched runs (src/prefetch.ts). Made on first use when unset. */
+    prefetches?: SearchPrefetch;
 }
 
 /**

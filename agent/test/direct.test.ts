@@ -445,7 +445,8 @@ describe('the category search job (after a Category pick)', () => {
         });
         const jobId = h.db.addFollowUpJob({ kind: 'category_search', questionText: FUN_QUESTION, parentQuestionId: 90n, category: 'Nature' });
         await waitFor(() => h.db.job(jobId)?.status === 'done');
-        assert.deepEqual(h.search.calls, [{ kind: 'maps', query: 'hiking trails in San Francisco', near: { lat: 37.87, lng: -122.27 } }]);
+        // Maps is centred on the venue, so the planner's words go out without their city.
+        assert.deepEqual(h.search.calls, [{ kind: 'maps', query: 'hiking trails', near: { lat: 37.87, lng: -122.27 } }]);
         const key = `q${h.db.questionOf(jobId)}`;
         assert.ok(h.web.indexed.has(key), 'the rows went into the question\'s web index');
         assert.deepEqual(h.web.forgotten, [key], 'and are forgotten once it is answered');
@@ -522,7 +523,7 @@ describe('the category search job (after a Category pick)', () => {
         h.api.reply({ answer_mode: 'pick', options: [reply({ label: 'Pharmacy 1', text: "Let's go to Pharmacy 1!", sources: ['w1'], tone: 'warm' })] });
         const jobId = h.db.addFollowUpJob({ kind: 'category_search', questionText: FUN_QUESTION, parentQuestionId: 91n, category: 'Fun' });
         await waitFor(() => h.db.job(jobId)?.status === 'done');
-        assert.equal(h.search.calls[0]?.query, 'arcades and museums in San Francisco');
+        assert.equal(h.search.calls[0]?.query, 'arcades and museums');
         for (const n of [0, 1]) assert.ok(!h.api.userMessage(n).includes('PRIVMEM'), `planner call ${n} carried no memory`);
         assert.ok(h.search.calls.every((c) => !c.query.includes('PRIVMEM')));
     });

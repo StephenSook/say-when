@@ -23,11 +23,22 @@
  * Each play start goes to the heard log, and each read's word timings go to `report_word_timings` when the bindings
  * have it (module v2); without it the station does not report them.
  *
+ * The partner's question (lib/station/question.ts, `playQuestion`): said on this channel before its list, only while
+ * the scan has not begun reading that question (Preparing, or the scan row not here yet). It never cuts a read-back,
+ * and it waits while a stock phrase plays on the other channel; a read of an older question is cut, since the module
+ * moved on from it. While it plays, each read the module's clock starts is queued instead of played, its heard log
+ * entry held (lib/station/heard.ts); when the question ends the queued reads play one after another, each counting
+ * as heard from its real play start, until the earpiece has caught up with the clock. A queued read that is no longer
+ * on the current list (another question or version, Idle) is dropped as unheard. A pause, `stopOptions` or anything
+ * that stops the question drops the queue too. The question is not a read: it is not in the heard log and not
+ * reported to the module.
+ *
  * Silent test mode: nothing is synthesized, played or reported; the heard log uses arrival times.
  */
 import { callErrorKind, callErrorText, sendWithResend } from '../role/calls';
 import type { ReportWordTimingsArgs } from '../role/calls';
 import type { HeardLog, HeardPhase } from './heard';
+import type { QuestionPlay } from './question';
 
 /** The parts of a cartesia `Clip` the station uses. */
 export interface ClipLike {
@@ -36,7 +47,7 @@ export interface ClipLike {
   words: ReadonlyArray<{ word: string; startMs: number; endMs: number }>;
 }
 
-export type ChannelUse = 'option' | 'prompt' | 'readback' | 'phrase';
+export type ChannelUse = 'option' | 'prompt' | 'readback' | 'question' | 'phrase';
 
 /**
  * One `AudioOut` and what it is playing. `AudioOut.play()` stops whatever that output was playing, so options and
@@ -171,8 +182,22 @@ export interface EarpieceDeps<Clip extends ClipLike = ClipLike> {
   waitForLive(timeoutMs: number): Promise<boolean>;
   /** A synthesis failed for a reason other than a cancel (credits, outage, a refused token). */
   onVoiceError?(error: unknown): void;
+  /** A stock phrase plays on the phrase channel now: the partner's question waits for it. Default false. */
+  promptsBusy?(): boolean;
   onChange?(): void;
   sleep?(ms: number): Promise<void>;
+}
+
+/** A read the module's clock started while the partner's question played: it plays once the question ends. */
+interface QueuedRead<Clip extends ClipLike> {
+  questionId: bigint;
+  version: number;
+  optionStartSeq: bigint;
+  optionId: bigint;
+  rank: number;
+  kind: 'option' | 'prompt';
+  /** Null until known: an option's clip still being voiced, or the yes or no prompt not fetched yet. */
+  clip: Clip | null;
 }
 
 export interface NowPlaying {
@@ -197,6 +222,10 @@ export interface EarpieceState {
   wordTimingsOff: boolean;
   /** The yes or no prompt is longer than `yes_no_cue_ms`, in ms; null when it fits or is unknown. */
   yesNoPromptMs: number | null;
+  /** The partner question whose words play now (lib/station/question.ts), or null. */
+  question?: bigint | null;
+  /** Reads queued behind the partner's question, still to play. */
+  queued?: number;
 }
 
 function key(id: bigint): string {
@@ -219,6 +248,16 @@ export class Earpiece<Clip extends ClipLike = ClipLike> {
   private nowPlaying: NowPlaying | null = null;
   private yesNoPromptMs: number | null = null;
   private answerHint: { questionId: bigint; mode: 'pick' | 'yes_no' } | null = null;
+  /**
+   * Set from the moment the partner's question starts until the reads queued behind it have all played. `leadIn`
+   * while the question itself plays. `gen` ties each play's end to this state, so a late end of an older one is
+   * ignored.
+   */
+  private behind: { gen: number; questionId: bigint; leadIn: boolean } | null = null;
+  private gen = 0;
+  private queue: QueuedRead<Clip>[] = [];
+  /** The first queued read waits for its clip (or the yes or no prompt). */
+  private queueWaiting = false;
 
   constructor(private readonly deps: EarpieceDeps<Clip>) {}
 
@@ -233,6 +272,8 @@ export class Earpiece<Clip extends ClipLike = ClipLike> {
       waitingFor: this.pending?.optionId ?? null,
       wordTimingsOff: this.timingsOff,
       yesNoPromptMs: this.yesNoPromptMs,
+      question: this.behind?.leadIn ? this.behind.questionId : null,
+      queued: this.queue.length,
     };
   }
 
@@ -270,6 +311,8 @@ export class Earpiece<Clip extends ClipLike = ClipLike> {
     }
     for (const id of [...this.clips.keys()]) if (!present.has(id)) this.clips.delete(id);
     this.pump();
+    // A queued read waiting for a clip that left with its row moves on.
+    this.resumeQueue();
     this.deps.onChange?.();
   }
 
@@ -305,6 +348,7 @@ export class Earpiece<Clip extends ClipLike = ClipLike> {
         break;
       case 'paused':
         this.pending = null;
+        this.endBehind();
         this.deps.options.stop();
         break;
       default:
@@ -313,14 +357,43 @@ export class Earpiece<Clip extends ClipLike = ClipLike> {
         else if (this.pending && this.pending.optionStartSeq !== scan.optionStartSeq) this.pending = null;
         break;
     }
+    // Reads queued behind the question that this step took off the list (Idle, a new version) never play.
+    if (this.behind) this.pruneQueue();
     if (previous?.questionId !== scan.questionId || previous?.version !== scan.version) this.pump();
     this.deps.onChange?.();
   }
 
-  /** Stop option audio at once (input went unhealthy, the link went stale, a safety cue). */
+  /**
+   * The partner's question (lib/station/question.ts), said before its list. 'late': the scan has begun reading that
+   * question (or is paused, or moved on to a newer one), so it is not said and nothing is cut. 'wait': a read-back on
+   * this channel or a stock phrase on the other is playing. 'played': it plays now, cutting only a read of an older
+   * question, and the reads the module's clock starts meanwhile wait behind it.
+   */
+  playQuestion(questionId: bigint, clip: Clip): QuestionPlay {
+    if (this.deps.silent()) return 'late';
+    const s = this.scan;
+    if (s && (s.phase === 'paused' || s.questionId > questionId || (s.questionId === questionId && s.phase !== 'preparing'))) return 'late';
+    if (this.deps.options.use() === 'readback' || this.deps.promptsBusy?.()) return 'wait';
+    this.endBehind();
+    this.pending = null;
+    const gen = this.gen;
+    this.behind = { gen, questionId, leadIn: true };
+    this.deps.options.play(clip, 'question').then(
+      (how) => this.questionEnded(gen, how),
+      (error: unknown) => {
+        console.error('Eleven: the earpiece could not play the question', error);
+        this.questionEnded(gen, 'stopped');
+      },
+    );
+    this.deps.onChange?.();
+    return 'played';
+  }
+
+  /** Stop option audio at once (input went unhealthy, the link went stale, a safety cue), the question too. */
   stopOptions(): void {
     this.pending = null;
-    this.deps.options.stop(['option', 'prompt']);
+    this.endBehind();
+    this.deps.options.stop(['option', 'prompt', 'question']);
     this.deps.onChange?.();
   }
 
@@ -330,6 +403,7 @@ export class Earpiece<Clip extends ClipLike = ClipLike> {
     this.timingsSent.clear();
     this.timingsOff = false;
     this.pending = null;
+    this.endBehind();
     this.nowPlaying = null;
     this.deps.heard.clear();
     this.deps.onChange?.();
@@ -337,6 +411,7 @@ export class Earpiece<Clip extends ClipLike = ClipLike> {
 
   /** Drop every clip and job (the speed changed, or the page is closing). */
   dispose(): void {
+    this.endBehind();
     if (this.job) this.job.job.cancel();
     this.job = null;
     this.clips.clear();
@@ -355,11 +430,15 @@ export class Earpiece<Clip extends ClipLike = ClipLike> {
     return 'pick';
   }
 
-  /** The next option to synthesize: the late clip first, then current Pick options by rank, then the pending version. */
+  /**
+   * The next option to synthesize: the late clip first (or the queued read waiting for its clip), then current Pick
+   * options by rank, then the pending version.
+   */
   private next(): OptionRowLite | undefined {
     const usable = (r: OptionRowLite) => !this.clips.has(key(r.optionId)) && (this.failed.get(key(r.optionId)) ?? 0) === 0;
-    if (this.pending) {
-      const late = this.rows.find((r) => r.optionId === this.pending!.optionId);
+    const lateId = this.pending?.optionId ?? (this.queueWaiting && this.queue[0]?.kind === 'option' ? this.queue[0].optionId : null);
+    if (lateId !== null) {
+      const late = this.rows.find((r) => r.optionId === lateId);
       if (late && usable(late)) return late;
     }
     const byRank = (a: OptionRowLite, b: OptionRowLite) => a.rank - b.rank;
@@ -404,6 +483,7 @@ export class Earpiece<Clip extends ClipLike = ClipLike> {
       this.report(row.optionId, clip);
       if (this.pending && this.pending.optionId === row.optionId) this.playLate();
     }
+    this.resumeQueue();
     this.pump();
     this.deps.onChange?.();
   }
@@ -423,6 +503,8 @@ export class Earpiece<Clip extends ClipLike = ClipLike> {
         this.deps.onVoiceError?.(error);
       }
     }
+    // A queued read whose clip failed for good moves on; one being retried keeps waiting.
+    this.resumeQueue();
     this.pump();
     this.deps.onChange?.();
   }
@@ -450,6 +532,13 @@ export class Earpiece<Clip extends ClipLike = ClipLike> {
       return;
     }
     const clip = this.clips.get(key(row.optionId));
+    if (this.isBehind()) {
+      // The partner's question (or reads queued behind it) still plays: this read waits its turn, clip or not.
+      this.pending = null;
+      this.enqueue(scan, row.optionId, row.rank, 'option', clip ?? null);
+      if (!clip) this.pump();
+      return;
+    }
     if (clip) {
       this.pending = null;
       this.start(clip, scan.optionStartSeq, row.optionId, row.rank, 'option');
@@ -461,6 +550,10 @@ export class Earpiece<Clip extends ClipLike = ClipLike> {
 
   private readPrompt(scan: ScanLite): void {
     this.pending = null;
+    if (this.isBehind()) {
+      this.enqueue(scan, 0n, 0, 'prompt', null);
+      return;
+    }
     const seq = scan.optionStartSeq;
     this.deps.yesNoPrompt().then(
       (clip) => {
@@ -488,20 +581,175 @@ export class Earpiece<Clip extends ClipLike = ClipLike> {
   }
 
   private start(clip: Clip, optionStartSeq: bigint, optionId: bigint, rank: number, kind: 'option' | 'prompt'): void {
+    // A prompt fetched while the question started: it waits behind the question like any other read.
+    if (this.isBehind() && this.scan) {
+      this.enqueue(this.scan, optionId, rank, kind, clip);
+      return;
+    }
+    void this.begin(clip, optionStartSeq, optionId, rank, kind, true);
+  }
+
+  /** Plays one read now: the heard log, the now-playing view, the lag (unless it waited behind the question), the word timings. */
+  private begin(clip: Clip, optionStartSeq: bigint, optionId: bigint, rank: number, kind: 'option' | 'prompt', countLag: boolean): Promise<'ended' | 'stopped'> {
     const playStart = this.deps.now() + Math.max(0, this.deps.latencyMs());
-    void this.deps.options.play(clip, kind).catch((error: unknown) => {
+    const played = this.deps.options.play(clip, kind);
+    played.catch((error: unknown) => {
       console.error('Eleven: the earpiece could not play a clip', error);
     });
     this.deps.heard.played(optionStartSeq, playStart, kind === 'option' ? optionId : undefined);
     this.nowPlaying = { kind, optionId, rank, optionStartSeq, startedAt: playStart };
     const arrival = this.arrivals.get(key(optionStartSeq));
     if (arrival !== undefined) {
-      this.lags.push(Math.max(0, playStart - arrival));
-      if (this.lags.length > 20) this.lags.shift();
+      // A read that waited behind the partner's question is late by design, not by the voice: it is not a lag sample.
+      if (countLag) {
+        this.lags.push(Math.max(0, playStart - arrival));
+        if (this.lags.length > 20) this.lags.shift();
+      }
       this.arrivals.delete(key(optionStartSeq));
     }
     if (this.scan) this.sendWordTimings(this.scan.sessionId, optionStartSeq, optionId, clip);
     this.deps.onChange?.();
+    return played;
+  }
+
+  // ---------- Reads queued behind the partner's question ----------
+
+  /**
+   * Whether reads must wait. Also heals a state whose end was never delivered: a question no longer on the channel
+   * (stopped or replaced), or a queued read that no longer plays while nothing is awaited.
+   */
+  private isBehind(): boolean {
+    const b = this.behind;
+    if (!b) return false;
+    const use = this.deps.options.use();
+    if (b.leadIn ? use !== 'question' : !this.queueWaiting && use !== 'option' && use !== 'prompt') {
+      this.endBehind();
+      return false;
+    }
+    return true;
+  }
+
+  private enqueue(scan: ScanLite, optionId: bigint, rank: number, kind: 'option' | 'prompt', clip: Clip | null): void {
+    this.queue.push({ questionId: scan.questionId, version: scan.version, optionStartSeq: scan.optionStartSeq, optionId, rank, kind, clip });
+    this.deps.heard.hold(scan.optionStartSeq);
+    this.deps.onChange?.();
+  }
+
+  /** The queued read is still on the current list: same question and version, Reading or the wait after it. */
+  private listed(read: QueuedRead<Clip>): boolean {
+    const s = this.scan;
+    return s !== null && s.questionId === read.questionId && s.version === read.version && (s.phase === 'reading' || s.phase === 'window');
+  }
+
+  /** Drop the queued reads that left the list; they are unheard. A head that was waiting is replaced by the next read. */
+  private pruneQueue(): void {
+    const head = this.queue[0];
+    this.queue = this.queue.filter((read) => {
+      if (this.listed(read)) return true;
+      this.deps.heard.release(read.optionStartSeq);
+      return false;
+    });
+    const b = this.behind;
+    if (this.queueWaiting && this.queue[0] !== head) {
+      this.queueWaiting = false;
+      if (b && !b.leadIn) this.drain(b.gen);
+    }
+  }
+
+  /** Look at the queue again when the read at its head was waiting (a clip came, failed or left). */
+  private resumeQueue(): void {
+    const b = this.behind;
+    if (!b || b.leadIn || !this.queueWaiting || this.queue[0]?.kind === 'prompt') return;
+    this.queueWaiting = false;
+    this.drain(b.gen);
+  }
+
+  /** Forget the question and every queued read (the queued ones are unheard). Ends of older plays are ignored. */
+  private endBehind(): void {
+    this.gen++;
+    this.behind = null;
+    this.queueWaiting = false;
+    for (const read of this.queue.splice(0)) this.deps.heard.release(read.optionStartSeq);
+  }
+
+  private questionEnded(gen: number, how: 'ended' | 'stopped'): void {
+    if (!this.behind || this.behind.gen !== gen) return;
+    if (how !== 'ended') {
+      // Stopped by a pause, a safety cue, a read-back taking the channel, or the audio stopping: the queue goes too.
+      this.endBehind();
+      this.deps.onChange?.();
+      return;
+    }
+    this.behind.leadIn = false;
+    this.drain(gen);
+  }
+
+  /** Plays the queued reads one after another; once none is left, reads play as the module's clock starts them again. */
+  private drain(gen: number): void {
+    while (this.behind && this.behind.gen === gen && !this.behind.leadIn) {
+      const read = this.queue[0];
+      if (!read) {
+        this.behind = null;
+        this.deps.onChange?.();
+        return;
+      }
+      if (!this.listed(read)) {
+        this.queue.shift();
+        this.deps.heard.release(read.optionStartSeq);
+        continue;
+      }
+      const clip = read.clip ?? (read.kind === 'option' ? this.clips.get(key(read.optionId)) : undefined);
+      if (clip) {
+        this.queue.shift();
+        this.playQueued(gen, read, clip);
+        return;
+      }
+      if (read.kind === 'prompt') {
+        this.queueWaiting = true;
+        const settle = (c: Clip | null) => {
+          if (this.behind?.gen !== gen || this.queue[0] !== read) return;
+          this.queueWaiting = false;
+          if (c) read.clip = c;
+          else {
+            this.queue.shift();
+            this.deps.heard.release(read.optionStartSeq);
+          }
+          this.drain(gen);
+        };
+        this.deps.yesNoPrompt().then(settle, (error: unknown) => {
+          this.deps.onVoiceError?.(error);
+          settle(null);
+        });
+        return;
+      }
+      // The option's clip is still being voiced: wait for it, unless its row left or it failed for good.
+      if (this.rows.some((r) => r.optionId === read.optionId) && (this.failed.get(key(read.optionId)) ?? 0) === 0) {
+        this.queueWaiting = true;
+        this.pump();
+        this.deps.onChange?.();
+        return;
+      }
+      this.queue.shift();
+      this.deps.heard.release(read.optionStartSeq);
+    }
+  }
+
+  private playQueued(gen: number, read: QueuedRead<Clip>, clip: Clip): void {
+    this.begin(clip, read.optionStartSeq, read.optionId, read.rank, read.kind, false).then(
+      (how) => {
+        if (this.behind?.gen !== gen) return;
+        if (how === 'ended') this.drain(gen);
+        else {
+          this.endBehind();
+          this.deps.onChange?.();
+        }
+      },
+      () => {
+        if (this.behind?.gen !== gen) return;
+        this.endBehind();
+        this.deps.onChange?.();
+      },
+    );
   }
 
   private sendWordTimings(sessionId: bigint, stepSeq: bigint, optionId: bigint, clip: Clip): void {

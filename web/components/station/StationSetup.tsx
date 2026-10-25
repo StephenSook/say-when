@@ -79,6 +79,10 @@ export function StationSetup({ s, engine, compact = false }: StationSetupProps) 
       {!s.setup.silent ? (
         <>
           <StartAudio state={s.audio} onStart={() => void engine?.startAudio()} labels={EARPIECE_LABELS} />
+          <label className={styles.check}>
+            <input type="checkbox" checked={s.setup.readQuestion !== false} onChange={(e) => engine?.setReadQuestion(e.currentTarget.checked)} />
+            <span>Read the partner&apos;s question in the earpiece before its options.</span>
+          </label>
           <Speeds s={s} engine={engine} />
         </>
       ) : null}

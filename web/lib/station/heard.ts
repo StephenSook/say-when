@@ -12,7 +12,9 @@
  *   Preparing, Veto, Idle, Paused   option 0, from the arrival time
  *
  * A read whose audio never started is marked unheard once its step is over, and the lookup skips it for good (fail
- * closed). Silent test mode has no audio, so every entry counts from its arrival time.
+ * closed). A read the earpiece holds (it waits behind the partner's question, lib/station/earpiece.ts) is not marked
+ * unheard by later steps: it counts from when its audio really starts, or is released as unheard if it never plays.
+ * Silent test mode has no audio, so every entry counts from its arrival time.
  *
  * All times are on one clock: `performance.now()` in the browser, the same base as a keydown's `event.timeStamp`.
  */
@@ -58,6 +60,8 @@ export interface HeardLogOptions {
 
 export class HeardLog {
   private entries: HeardEntry[] = [];
+  /** `option_start_seq` of reads that will play late: later steps do not mark them unheard. */
+  private readonly held = new Set<bigint>();
   private silent: boolean;
   private readonly marginMs: number;
   private readonly keepMs: number;
@@ -91,6 +95,7 @@ export class HeardLog {
     for (const entry of this.entries) {
       if (entry.heardFrom !== null || entry.unheard) continue;
       if (sameRead && entry.optionStartSeq === step.optionStartSeq) continue;
+      if (this.held.has(entry.optionStartSeq)) continue;
       entry.unheard = true;
     }
 
@@ -124,6 +129,7 @@ export class HeardLog {
    * Returns false when the read is unknown or already over (it was marked unheard).
    */
   played(optionStartSeq: bigint, playStart: number, optionId?: bigint): boolean {
+    this.held.delete(optionStartSeq);
     const read = this.readOf(optionStartSeq);
     if (!read || read.unheard) return false;
     const from = playStart + this.marginMs;
@@ -146,8 +152,30 @@ export class HeardLog {
     return NOTHING_HEARD;
   }
 
+  /**
+   * The read that began at `optionStartSeq` will start late (it waits behind the partner's question): until it plays
+   * or is released, later steps do not mark it unheard. Returns false when the read is unknown, over, or already
+   * playing.
+   */
+  hold(optionStartSeq: bigint): boolean {
+    const read = this.readOf(optionStartSeq);
+    if (!read || read.unheard || read.heardFrom !== null) return false;
+    this.held.add(optionStartSeq);
+    return true;
+  }
+
+  /** A held read will not play after all: if its audio never started, it is unheard from now on. */
+  release(optionStartSeq: bigint): void {
+    if (!this.held.delete(optionStartSeq)) return;
+    for (const entry of this.entries) {
+      if (entry.optionStartSeq !== optionStartSeq || entry.heardFrom !== null) continue;
+      if (entry.phase === 'reading' || entry.phase === 'window') entry.unheard = true;
+    }
+  }
+
   clear(): void {
     this.entries = [];
+    this.held.clear();
   }
 
   private readOf(optionStartSeq: bigint): HeardEntry | undefined {

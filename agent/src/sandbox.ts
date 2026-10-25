@@ -80,6 +80,8 @@ export class SandboxMeter {
     constructor(
         readonly limits: SandboxLimits,
         private readonly now: () => number = Date.now,
+        /** Searches a categories job starts for its categories (search prefetch, src/prefetch.ts), each counted. */
+        private readonly prefetchSearches = 0,
     ) {}
 
     /** The estimate for one job, before it runs. */
@@ -88,8 +90,9 @@ export class SandboxMeter {
         const isMenu = row.origin === 'menu' && row.menuItem !== 'none';
         if (row.kind === 'options') return this.limits.usdPerPlan + (row.webSearchAllowed && !isMenu ? this.limits.usdPerSearch : 0);
         if (row.kind === 'errand_preview') return this.limits.usdPerErrand;
-        // Direct select (src/direct.ts): categories are one plan, a category search is a search and a plan.
-        if (row.kind === 'categories') return this.limits.usdPerPlan;
+        // Direct select (src/direct.ts): categories are one plan (and the prefetched searches, when they are on), a
+        // category search is a search and a plan (a prefetched one may still search again if its run failed).
+        if (row.kind === 'categories') return this.limits.usdPerPlan + this.prefetchSearches * this.limits.usdPerSearch;
         if (row.kind === 'category_search') return this.limits.usdPerPlan + this.limits.usdPerSearch;
         return 0;
     }

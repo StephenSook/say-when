@@ -42,6 +42,8 @@ export interface StationSetup {
   learningSwitch: boolean;
   assistantSpeed: number | null;
   optionSpeed: number | null;
+  /** Say a new partner question in the earpiece before its options (lib/station/question.ts); on unless turned off. */
+  readQuestion?: boolean;
 }
 
 export interface DecoderView {
@@ -135,8 +137,8 @@ export interface StationSnapshot {
   /** The current version's options, in rank order. */
   options: readonly OptionView[];
   earpiece: EarpieceState;
-  /** What the options channel plays now. */
-  playing: 'option' | 'prompt' | 'readback' | 'phrase' | null;
+  /** What the options channel plays now ('question': the partner's question, before its options). */
+  playing: 'option' | 'prompt' | 'readback' | 'question' | 'phrase' | null;
   readback: ReadbackState & { windowStartedWall: number | null };
   work: WorkView;
   commands: readonly CommandEntry[];

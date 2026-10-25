@@ -69,15 +69,17 @@ def test_suppression_blocks_hands():
 def test_the_imagery_defaults_are_the_d21_numbers():
     c = HandConfig()
     assert (c.yes_threshold, c.no_threshold, c.fallback_s, c.fallback_threshold, c.fallback_min) == \
-        (0.90, 0.96, 10.0, 0.65, 3)
+        (0.90, 0.96, 0.0, 0.65, 3)                       # the fallback is off by default (Oct 24, Stephen)
     assert (c.instant("right"), c.instant("left")) == (0.90, 0.96)
 
 
 def test_live_prints_the_imagery_settings_at_startup():
     import live
     line = live.imagery_settings(HandConfig())
+    assert "fallback off" in line
+    on = live.imagery_settings(HandConfig(fallback_s=10.0))
     for part in (">= 0.90 (right fist)", ">= 0.96 (left fist)", "every 10 s", ">= 0.65", "at least 3"):
-        assert part in line, part
+        assert part in on, part
     # Direct select is the default: the same per-hand thresholds, named by the word each hand sends.
     assert line.startswith("Imagery: PICK_2 at once at >= 0.90 (right fist), PICK_1 at once at >= 0.96 (left fist);")
     assert live.imagery_settings(HandConfig(), mode="scan").startswith(
@@ -113,7 +115,7 @@ def test_fallback_after_10_s_picks_the_hand_with_more_confident_moments():
         if k % 25 == 3:
             return p(left=0.80)                          # 4 left moments
         return [p(right=0.6), p(left=0.6), p(right=0.3, left=0.3), REST][k % 4]   # sub-threshold, not counted
-    dec = HandDecoder(HandConfig(ema=0.0))
+    dec = HandDecoder(HandConfig(ema=0.0, fallback_s=10.0))
     events = run_frames(dec, frames(fn, 12.0))
     assert len(events) == 1
     ev = events[0]
@@ -125,14 +127,14 @@ def test_fallback_after_10_s_picks_the_hand_with_more_confident_moments():
 
 
 def test_fallback_tie_or_too_few_sends_nothing():
-    tie = HandDecoder(HandConfig(ema=0.0))
+    tie = HandDecoder(HandConfig(ema=0.0, fallback_s=10.0))
     seq = frames(lambda t: p(right=0.7) if t in (1.0, 2.0, 3.0, 4.0) else
                  p(left=0.7) if t in (5.0, 6.0, 7.0, 8.0) else REST, 12.0)
     assert run_frames(tie, seq) == []
     assert tie.counts == {"left": 0, "right": 0} and tie.window_start == 10.0   # the window started again
-    few = HandDecoder(HandConfig(ema=0.0))
+    few = HandDecoder(HandConfig(ema=0.0, fallback_s=10.0))
     assert run_frames(few, frames(lambda t: p(right=0.7) if t in (1.0, 2.0) else REST, 12.0)) == []
-    assert run_frames(HandDecoder(HandConfig(ema=0.0, fallback_min=2)),
+    assert run_frames(HandDecoder(HandConfig(ema=0.0, fallback_s=10.0, fallback_min=2)),
                       frames(lambda t: p(right=0.7) if t in (1.0, 2.0) else REST, 12.0))[0]["hand"] == "right"
 
 
@@ -145,10 +147,18 @@ def test_the_window_restarts_after_a_command():
         if t in (8.0, 8.5, 9.0, 9.5, 10.5):
             return p(right=0.7)
         return REST
-    dec = HandDecoder(HandConfig(ema=0.0))
+    dec = HandDecoder(HandConfig(ema=0.0, fallback_s=10.0))
     events = run_frames(dec, frames(fn, 16.0))
     assert [(e["hand"], e["how"], e["t"]) for e in events] == [("right", "instant", 5.0), ("right", "fallback", 15.0)]
     assert events[1]["counts"] == {"left": 0, "right": 5}
+
+
+def test_no_fallback_by_default_steady_noise_sends_nothing():
+    # A steady 0.70 right (a confident moment, under the 0.90 at-once threshold) for 30 s: with the fallback off,
+    # nothing is sent. With it on, this sent a stray pick every 10 s (Oct 24 live session).
+    steady = frames(lambda t: p(right=0.70), 30.0)
+    assert run_frames(HandDecoder(HandConfig(ema=0.0)), steady) == []
+    assert len(run_frames(HandDecoder(HandConfig(ema=0.0, fallback_s=10.0)), steady)) == 3
 
 
 def test_the_live_defaults_still_fire_through_smoothing():
@@ -346,7 +356,8 @@ def run_steady(bursts, total_s=26.0, model=None, mode=None):
         return raw[:, i:i + 13], ts[i:i + 13]
 
     extra = {} if mode is None else {"mode": mode}
-    eng = Engine(model or SteadyModel(), meta, HandConfig(), settle_s=0, log=lambda *a: None,
+    # These engine runs exercise the D21 fallback window, so they turn it on (it is off by default).
+    eng = Engine(model or SteadyModel(), meta, HandConfig(fallback_s=10.0), settle_s=0, log=lambda *a: None,
                  reader=reader, opener=lambda: object(), closer=lambda b: None, **extra)
     eng.start()
     out = []
