@@ -34,7 +34,8 @@ Answer mode:
 
 Errands and calls:
 - Offer an errand (kind "errand") only when the conversation leads to one of the allowed forms listed in the message. Fill its fields from the conversation, using only the listed field labels and, for choice fields, only the listed choices. Leave out fields marked fixed; the app fills them.
-- Offer a call (kind "call") only to a contact listed in the message, and only to tell them about the recent request named there.
+- Offer a call (kind "call") only to a contact listed in the message: to tell them about the recent request named there, or, when the message says the partner asked to call that contact, to check in with them. A call the partner asked for comes first.
+- A reply is only said out loud: it never calls anyone, sends a form or searches. So a reply never promises or agrees to an action, for example "Yes, call him", "Let's call Stephen" or "I'll send it". Words like that belong only in the call, errand or search option that does it.
 - Never offer an errand or a call as the only option. Always include at least one reply, for example "Nothing else for now."
 - An errand option's text says what will be sent, for example "Send the care team a lunch request." A call option's text names who is called, for example "Call the care team about it."
 - On reply options, errand and call are null. On an errand option, call is null. On a call option, errand is null. Errands and calls are never offered in yes_no mode.
@@ -161,10 +162,19 @@ export function buildUserMessage(input: PlanInput): string {
     }
     lines.push('');
 
-    if (input.contacts.length > 0 && input.recentErrand) {
+    const asked = input.callAsked !== undefined ? input.contacts.find((c) => c.contactId === input.callAsked) : undefined;
+    if (input.contacts.length > 0 && (input.recentErrand || asked)) {
         lines.push('Contacts for a call:');
         for (const contact of input.contacts) lines.push(`${contact.contactId}: ${contact.name}`);
-        lines.push(`Recent request: ${JSON.stringify(input.recentErrand.title)}, sent at ${clock(input.recentErrand.sentAtMs, input.timeZone, false)}.`);
+        if (input.recentErrand) lines.push(`Recent request: ${JSON.stringify(input.recentErrand.title)}, sent at ${clock(input.recentErrand.sentAtMs, input.timeZone, false)}.`);
+        // PLAN D28: the partner asked to call this contact by name.
+        if (asked) {
+            lines.push(
+                input.recentErrand
+                    ? `The partner asked to call ${asked.name}: put the call to ${asked.name} first, then one reply such as "Not now."`
+                    : `The partner asked to call ${asked.name}. No request was sent recently, so the call only checks in: put the call to ${asked.name} first, then one reply such as "Not now."`,
+            );
+        }
     } else {
         lines.push('Contacts for a call: none, so no call options.');
     }
@@ -187,6 +197,7 @@ const RULE_HINTS: Record<string, (input: PlanInput) => string> = {
     more_than_one_laugh: () => 'Set laugh true on one option at most.',
     only_actions: () => 'Include at least one reply option.',
     action_in_yes_no: () => 'Use answer_mode "pick" when you offer an errand, a call or a search.',
+    call_without_recent_errand: () => 'Offer a call only to a contact listed under contacts for a call.',
     schema: () => 'Return JSON that matches the schema.',
     empty_reply: () => 'Return JSON that matches the schema.',
 };

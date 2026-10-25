@@ -10,7 +10,7 @@ import Anthropic from '@anthropic-ai/sdk';
 
 import { readConfig } from '../src/config.js';
 import { ContractError, toAgentQueueRow } from '../src/db/spacetime-db.js';
-import { asksDoYouKnow, CategoryBook, defaultCategoryQuery, DO_YOU_KNOW_REASON, placeHint, STOCK_SEARCH, stockCategories, withSearch } from '../src/direct.js';
+import { askedToCall, asksDoYouKnow, callFirst, CategoryBook, defaultCategoryQuery, DO_YOU_KNOW_REASON, placeHint, STOCK_SEARCH, stockCategories, withSearch } from '../src/direct.js';
 import { ClaudePlanner } from '../src/planner/claude.js';
 import { buildUserMessage, SYSTEM_PROMPT } from '../src/planner/prompt.js';
 import type { PlanReply } from '../src/planner/schema.js';
@@ -729,5 +729,166 @@ describe('direct select rows and settings', () => {
         const bad = readConfig({ AGENT_INPUT_MODE: 'scanning' }, token, () => true);
         assert.ok(bad.problems.includes('AGENT_INPUT_MODE must be direct or scan.'));
         assert.ok(bad.checks.some((c) => c.name === 'AGENT_INPUT_MODE' && c.state === 'invalid'));
+    });
+});
+
+describe('a call asked for by name (PLAN D28)', () => {
+    const RIDE = 'Should we call Leonora and let her know to confirm the ride?';
+    const twoReplies = (): PlanReply => ({
+        answer_mode: 'pick',
+        options: [
+            reply({ label: 'Yes', text: 'Yes, that would help.', tone: 'warm' }),
+            reply({ label: 'Not yet', text: 'Not yet, wait a bit.', tone: 'calm' }),
+        ],
+    });
+    const actionOf = (o: OptionInput | undefined) => JSON.parse(o?.actionJson ?? '{}') as Record<string, unknown>;
+
+    it('hears "call <name>", "check in with <name>", "give <name> a call" and "ring <name>", any case, whole words only', () => {
+        for (const q of [RIDE, 'Can you check in with Leonora?', 'Let us give leonora a call', 'RING LEONORA now', 'Maybe check-in with Leonora later', 'Why not call Leonora?']) {
+            assert.equal(askedToCall(q, [LEON])?.contactId, 'leon', q);
+        }
+        for (const q of ['Did Leonora call?', 'Should we let Leonora know?', 'I recall Leonora said so', "Call Leonora's office", "Don't call Leonora", 'Do not call Leonora tonight', 'Call Leo']) {
+            assert.equal(askedToCall(q, [LEON]), null, q);
+        }
+        assert.equal(askedToCall('Call Stephen please', [{ contactId: 'st', name: 'Stephen Sookra' }])?.contactId, 'st', 'the first word of the name is enough');
+        assert.equal(askedToCall(RIDE, []), null, 'only a consented contact');
+    });
+
+    it('accepts a call with no recent errand only to the contact the partner asked for', () => {
+        const callTo = (id: string): PlanReply => ({
+            answer_mode: 'pick',
+            options: [reply({ label: 'Not now', text: 'Not now.', tone: 'calm' }), reply({ kind: 'call', label: 'Call Leonora', text: 'Call Leonora to check in.', tone: 'warm', call: { contact_id: id } })],
+        });
+        const given = input({ web: [], contacts: [LEON], recentErrand: null, callAsked: 'leon' });
+        assert.deepEqual(problemsOf(callTo('leon'), given), []);
+        assert.ok(problemsOf(callTo('leon'), { ...given, callAsked: undefined }).includes('call_without_recent_errand'));
+        assert.ok(problemsOf(callTo('other'), given).includes('unknown_contact'));
+        assert.match(buildUserMessage(given), /The partner asked to call Leonora\. No request was sent recently, so the call only checks in: put the call to Leonora first/);
+        assert.match(buildUserMessage(given), /Contacts for a call:\nleon: Leonora\n/);
+        assert.match(SYSTEM_PROMPT, /a reply never promises or agrees to an action, for example "Yes, call him", "Let's call Stephen" or "I'll send it"/);
+    });
+
+    it('offers the call first with no request sent, then a reply, then Search the web, skipping the stock yes or no', async () => {
+        const h = startThree({ contacts: [LEON], yesNoFast: true });
+        h.api.reply(twoReplies());
+        const jobId = h.db.addOptionsJob({ questionText: RIDE });
+        await waitFor(() => h.db.job(jobId)?.status === 'done');
+        // Never the stock Yes and No: the planner wrote the replies (the fast path reads "call" as an errand verb anyway).
+        assert.ok(h.log.entries.some((e) => e.message === 'yes or no fast path not taken'));
+        assert.equal(h.api.calls.length, 1);
+        assert.match(h.api.userMessage(), /Contacts for a call:\nleon: Leonora\n/);
+        const options = finalPublish(h)?.options ?? [];
+        assert.deepEqual(
+            options.map((o) => [o.kind, o.label]),
+            [
+                ['call', 'Call Leonora'],
+                ['reply', 'Yes'],
+                ['search', 'Search the web'],
+            ],
+        );
+        assert.equal(finalPublish(h)?.answerMode, 'pick');
+        // The planner wrote no call, so the sidecar added the check-in call: the Dialer's fixed words, no errand.
+        assert.deepEqual(h.dialer.prepared, [{ requestId: 'call-test-1', contactId: 'leon', checkIn: true }]);
+        assert.equal(actionOf(options[0]).contactId, 'leon');
+        assert.ok(h.log.entries.some((e) => e.message === 'call asked by name' && e.fields.stock === true && e.fields.checkIn === true));
+        assert.ok(!h.log.text().includes(SECRET.contactName), 'the name is never logged');
+    });
+
+    it('moves the planner\'s own call to "check in with <name>" to the top, prepared once', async () => {
+        const h = startThree({ contacts: [LEON] });
+        h.api.reply({
+            answer_mode: 'pick',
+            options: [
+                reply({ label: 'Sure', text: 'Sure, good idea.', tone: 'warm' }),
+                reply({ kind: 'call', label: 'Call Leonora', text: 'Call Leonora to check in.', tone: 'calm', call: { contact_id: 'leon' } }),
+                reply({ label: 'Not now', text: 'Not now, thanks.', tone: 'firm' }),
+            ],
+        });
+        const jobId = h.db.addOptionsJob({ questionText: 'Can you check in with Leonora?' });
+        await waitFor(() => h.db.job(jobId)?.status === 'done');
+        assert.deepEqual(
+            finalPublish(h)?.options.map((o) => [o.kind, o.label, o.tone]),
+            [
+                ['call', 'Call Leonora', 'calm'],
+                ['reply', 'Sure', 'warm'],
+                ['search', 'Search the web', ''],
+            ],
+        );
+        assert.equal(h.dialer.prepared.length, 1);
+        assert.equal(h.dialer.prepared[0]?.checkIn, true);
+        assert.equal(h.dialer.prepared[0]?.errand, undefined);
+    });
+
+    it('keeps the errand message when a request was sent recently, still first', async () => {
+        const h = startThree({ contacts: [LEON] });
+        h.api.reply(twoReplies());
+        const jobId = h.db.addOptionsJob({ questionText: 'Call Leonora about it?', recentErrandTitle: 'Care team request', recentErrandSentAtMs: Date.now() - 60_000 });
+        await waitFor(() => h.db.job(jobId)?.status === 'done');
+        assert.equal(finalPublish(h)?.options[0]?.kind, 'call');
+        assert.equal(h.dialer.prepared[0]?.checkIn, undefined);
+        assert.equal(h.dialer.prepared[0]?.errand?.title, 'Care team request');
+        assert.match(h.api.userMessage(), /Recent request: "Care team request"/);
+    });
+
+    it('offers no call without the words and without a recent request, as before', async () => {
+        const h = startThree({ contacts: [LEON], yesNoFast: true });
+        h.api.reply(twoReplies());
+        const jobId = h.db.addOptionsJob({ questionText: 'Should we let Leonora know to confirm the ride?' });
+        await waitFor(() => h.db.job(jobId)?.status === 'done');
+        assert.ok(finalPublish(h)?.options.every((o) => o.kind !== 'call'));
+        assert.equal(h.dialer.prepared.length, 0);
+    });
+
+    it('offers no call when calls are off, the contact is not on the consent list, or the Dialer refuses (consent)', async () => {
+        const off = startThree({ contacts: [LEON], dialer: false });
+        off.api.reply(twoReplies());
+        const offJob = off.db.addOptionsJob({ questionText: RIDE });
+        await waitFor(() => off.db.job(offJob)?.status === 'done');
+        assert.ok(finalPublish(off)?.options.every((o) => o.kind !== 'call'));
+        assert.match(off.api.userMessage(), /Contacts for a call: none/);
+        await off.orchestrator.stop(1_000);
+
+        const unlisted = startThree({ contacts: [] });
+        unlisted.api.reply(twoReplies());
+        const unlistedJob = unlisted.db.addOptionsJob({ questionText: RIDE });
+        await waitFor(() => unlisted.db.job(unlistedJob)?.status === 'done');
+        assert.ok(finalPublish(unlisted)?.options.every((o) => o.kind !== 'call'));
+        assert.equal(unlisted.dialer.prepared.length, 0);
+        await unlisted.orchestrator.stop(1_000);
+
+        const refused = startThree({ contacts: [LEON] });
+        refused.dialer.refusePrepare = true;
+        refused.api.reply(twoReplies());
+        const refusedJob = refused.db.addOptionsJob({ questionText: RIDE });
+        await waitFor(() => refused.db.job(refusedJob)?.status === 'done');
+        assert.equal(refused.dialer.prepared.length, 1, 'the Dialer was asked and said no');
+        assert.deepEqual(
+            finalPublish(refused)?.options.map((o) => o.kind),
+            ['reply', 'reply', 'search'],
+        );
+    });
+
+    it('dials only after the read-back and a matching CONFIRM from the module, never on the pick', async () => {
+        const h = startThree({ contacts: [LEON] });
+        h.api.reply(twoReplies());
+        const jobId = h.db.addOptionsJob({ questionText: RIDE });
+        await waitFor(() => h.db.job(jobId)?.status === 'done');
+        const action = actionOf(finalPublish(h)?.options[0]);
+        assert.equal(typeof action.readBack, 'string');
+        assert.match(String(action.digest), /^[0-9a-f]{16}$/);
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        assert.equal(h.dialer.placed.length, 0, 'publishing the option dials nothing');
+        h.db.addConfirmedCall({ requestId: String(action.requestId), contactId: 'leon', digest: String(action.digest) });
+        await waitFor(() => h.dialer.placed.length === 1, 3_000, 'placed after the CONFIRM');
+        assert.deepEqual(h.dialer.placed[0], { requestId: String(action.requestId), digest: String(action.digest) });
+        h.dialer.handle?.finish({ result: 'answered' });
+    });
+
+    it('callFirst keeps one reply after the call, Search third, and fills a missing reply with a stock one', () => {
+        const call: OptionInput = { ...STOCK_SEARCH, kind: 'call', label: 'Call Leonora', text: 'Call Leonora to check in.', actionJson: '{"contactId":"leon"}' };
+        const shaped = callFirst([STOCK_SEARCH], call, 3, true);
+        assert.deepEqual(shaped.options.map((o) => [o.kind, o.label]), [['call', 'Call Leonora'], ['reply', 'Not now'], ['search', 'Search the web']]);
+        assert.equal(shaped.answerMode, 'pick');
+        assert.deepEqual(callFirst([], call, 3, false).options.map((o) => o.kind), ['call', 'reply']);
     });
 });

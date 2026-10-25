@@ -48,6 +48,11 @@ export interface PlanInput {
     /** The newest errand sent in the last 10 minutes, which is all a call may report. */
     recentErrand: { title: string; sentAtMs: number } | null;
     /**
+     * PLAN D28: the id of the consented contact the partner asked to call by name ("call Stephen", "check in with
+     * Stephen"). A call to that contact is allowed with no recent errand (it only checks in), and it is offered first.
+     */
+    callAsked?: string;
+    /**
      * What the search step did, so the planner knows whether outside facts are in the context. `pending`: a draft
      * written while the search still runs (AGENT_DRAFT_FIRST), so there are no outside facts yet.
      */

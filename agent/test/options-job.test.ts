@@ -300,7 +300,7 @@ describe('the Options job', () => {
         await waitFor(() => h.db.job(jobId)?.status === 'done');
         assert.equal(h.search.calls.length, 0, 'menu turns never search');
         assert.equal(h.dialer.prepared.length, 1);
-        assert.equal(h.dialer.prepared[0]?.errand.title, 'Care team request');
+        assert.equal(h.dialer.prepared[0]?.errand?.title, 'Care team request');
         const call = finalPublish(h)?.options.find((o) => o.kind === 'call');
         const action = JSON.parse(call?.actionJson ?? '{}');
         assert.equal(action.digest, 'fedcba9876543210');

@@ -190,7 +190,8 @@ export function validatePlan(reply: PlanReply, input: PlanInput, rules: { minPic
             const contact = raw.call ? input.contacts.find((c) => c.contactId === raw.call?.contact_id) : undefined;
             if (!raw.call) problems.add('call_without_contact');
             else if (!contact) problems.add('unknown_contact');
-            else if (!input.recentErrand) problems.add('call_without_recent_errand');
+            // A call reports the recent errand, or checks in with the one contact the partner asked to call (PLAN D28).
+            else if (!input.recentErrand && input.callAsked !== contact.contactId) problems.add('call_without_recent_errand');
             else call = { contact };
         }
         options.push({ kind, label, text, query, tone: raw.tone, laugh: raw.laugh, refs: sources, errand, call });

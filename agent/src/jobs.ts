@@ -6,7 +6,7 @@
 // else's now; the orchestrator drops the work. Any other error is reported with agent_fail.
 
 import { ApifyHttpError, type FieldInput, type RefusalCode } from '@say-when/apify-client';
-import type { CallRequest } from '@say-when/cartesia/server';
+import type { CallRequest, PreparedCall } from '@say-when/cartesia/server';
 
 import { CLOCK_SKEW_MS } from './calls.js';
 import { LIMITS } from './contract.js';
@@ -587,7 +587,7 @@ export async function planOptions(
     const stillAllowed = () => !((plan.sentMemory || rankedByMemory) && !allowMemory()) && !(plan.sentWeb && !allowWeb());
 
     // 6. Options: call options are prepared by the Dialer now, so the read-back and digest exist at the pick.
-    const built = buildOptions(plan, plan.sentMemory ? memory : [], plan.sentWeb ? web : [], (contact) => prepareCall(deps, contact, recent));
+    const built = buildOptions(plan, plan.sentMemory ? memory : [], plan.sentWeb ? web : [], (contact) => prepareCall(deps, contact, recent, input.callAsked));
     let options = built.options;
     if (rank && stillAllowed() && plan.answerMode === 'pick' && allowMemory() && deps.retrieval.memory?.isOpen()) {
         try {
@@ -620,14 +620,29 @@ export async function planOptions(
     return { plan, options, stillAllowed };
 }
 
-function prepareCall(deps: JobDeps, contact: CallContact, recent: RecentErrand | null) {
-    if (!deps.dialer || !recent) return null;
-    // Only data goes to the Dialer: the speakable values of the errand that was sent. It checks them again and owns
-    // every word the call says.
-    const values = speakableValues(deps.sent, deps.forms, recent, deps.now());
-    const errand: CallRequest['errand'] = { title: recent.title, sentAt: recent.sentAtMs, ...(values.length > 0 ? { values } : {}) };
-    deps.log.info('values for the call message', { values: values.length });
-    const request: CallRequest = { requestId: deps.requestId(), contactId: contact.contactId, errand };
+/**
+ * Has the Dialer prepare a call to `contact`: about the recent errand when there is one, else a check-in when the
+ * partner asked to call this very contact by name (`callAsked`, PLAN D28). Null when neither holds or the Dialer
+ * refuses (consent, do-not-call, a hold, an emergency number). Nothing is dialed: the read-back and a fresh CONFIRM come
+ * first, in the module.
+ */
+export function prepareCall(deps: JobDeps, contact: CallContact, recent: RecentErrand | null, callAsked?: string): PreparedCall | null {
+    if (!deps.dialer) return null;
+    let request: CallRequest;
+    if (recent) {
+        // Only data goes to the Dialer: the speakable values of the errand that was sent. It checks them again and owns
+        // every word the call says.
+        const values = speakableValues(deps.sent, deps.forms, recent, deps.now());
+        const errand: CallRequest['errand'] = { title: recent.title, sentAt: recent.sentAtMs, ...(values.length > 0 ? { values } : {}) };
+        deps.log.info('values for the call message', { values: values.length });
+        request = { requestId: deps.requestId(), contactId: contact.contactId, errand };
+    } else if (callAsked !== undefined && callAsked === contact.contactId) {
+        // PLAN D28: no request was sent, so the Dialer's fixed check-in words, and nothing from the conversation.
+        deps.log.info('a check-in call, asked for by name', { values: 0 });
+        request = { requestId: deps.requestId(), contactId: contact.contactId, checkIn: true };
+    } else {
+        return null;
+    }
     const prepared = deps.dialer.prepare(request);
     if (prepared.ok) return prepared.call;
     deps.log.info('the Dialer refused a call option', { code: prepared.refusal.code });
