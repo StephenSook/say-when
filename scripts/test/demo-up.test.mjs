@@ -5,7 +5,7 @@
 
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -87,7 +87,8 @@ function demoUp(args, c, extraEnv = {}) {
 
 /** A live process whose command line reads like `name`, so the script's ps checks see it. Killed by the caller. */
 function fakeProcess(name) {
-    const child = spawn('bash', ['-c', `exec -a "${name}" sleep 60`], { stdio: 'ignore' });
+    // cat with an open stdin waits; its whole command line is exactly `name`.
+    const child = spawn('bash', ['-c', `exec -a "${name}" cat`], { stdio: ['pipe', 'ignore', 'ignore'] });
     return child;
 }
 
@@ -301,6 +302,43 @@ describe('status and stop', () => {
         }
     });
 
+    it('a caffeinate waiting on a longer pid that starts with the recorded one is left alone', async () => {
+        const c = setup();
+        mkdirSync(c.state, { recursive: true });
+        const longer = fakeProcess('caffeinate -dims -w 999995');
+        await settled(300);
+        try {
+            writeFileSync(join(c.state, 'say-when-dev.state'), `wrapper=99999\nstarted=x\ncaffeinate=${longer.pid}\n`);
+            assert.equal(demoUp(['--db', 'say-when-dev', 'stop'], c).code, 0);
+            await settled(200);
+            assert.ok(alive(longer.pid));
+        } finally {
+            longer.kill();
+        }
+    });
+
+    it('a pid file older than the process it names is a stale file, not a running sidecar', async () => {
+        const c = setup();
+        mkdirSync(c.state, { recursive: true });
+        const pidFile = join(c.tokens, 'agent_token_say-when-dev.pid');
+        const later = fakeProcess('node src/main.ts run');
+        await settled(300);
+        try {
+            writeFileSync(pidFile, `${JSON.stringify({ pid: later.pid, nonce: 'n'.repeat(32) })}\n`);
+            const past = new Date(Date.now() - 60_000);
+            utimesSync(pidFile, past, past);
+            writeFileSync(join(c.state, 'say-when-dev.state'), `wrapper=999999\nstarted=x\n`);
+            const stop = demoUp(['--db', 'say-when-dev', 'stop'], c);
+            assert.equal(stop.code, 0, stop.text);
+            assert.match(stop.text, /removed an old state file/);
+            assert.ok(alive(later.pid), 'never signalled');
+            const up = demoUp(['--db', 'say-when-dev', '--port', String(await freePort()), '--dry-run'], c);
+            assert.equal(up.code, 0, up.text);
+        } finally {
+            later.kill();
+        }
+    });
+
     it('a sidecar still running without its wrapper is reported, never signalled, and blocks a second start', async () => {
         const c = setup();
         mkdirSync(c.state, { recursive: true });
@@ -318,6 +356,8 @@ describe('status and stop', () => {
             const up = demoUp(['--db', 'say-when-dev', '--port', String(await freePort()), '--dry-run'], c);
             assert.equal(up.code, 1);
             assert.match(up.text, /already running as pid/);
+            const status = demoUp(['--db', 'say-when-dev', 'status'], c);
+            assert.match(status.text, new RegExp(`a sidecar for say-when-dev is running as pid ${stray.pid}`));
         } finally {
             stray.kill();
         }

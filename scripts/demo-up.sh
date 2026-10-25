@@ -167,14 +167,23 @@ wrapper_ours() {
     [ "$(ps -o lstart= -p "$wrapper" 2>/dev/null || true)" = "$(state_get started)" ]
 }
 
-# A pid is ours only when it is alive and its command line contains the expected text.
-pid_matches() {
-    local pid="$1" expect="$2" cmdline
-    [ -n "$pid" ] || return 1
-    kill -0 "$pid" 2>/dev/null || return 1
+# A live pid's command line, with trailing spaces trimmed (some processes pad their title), or nothing.
+pid_command() {
+    local pid="$1" cmdline
+    [ -n "$pid" ] || return 0
+    kill -0 "$pid" 2>/dev/null || return 0
     cmdline="$(ps -o command= -p "$pid" 2>/dev/null || true)"
+    printf '%s' "${cmdline%"${cmdline##*[![:space:]]}"}"
+}
+
+# A pid is ours only when it is alive and its command line ENDS with the expected text (the sidecar and its wrapper
+# both end in "src/main.ts run"), so a longer command that merely contains it does not count.
+pid_matches() {
+    local cmdline
+    cmdline="$(pid_command "$1")"
+    [ -n "$cmdline" ] || return 1
     case "$cmdline" in
-        *"$expect"*) return 0 ;;
+        *"$2") return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -204,17 +213,33 @@ sidecar_pid() {
     if [ "$parent" = "$wrapper" ]; then printf '%s\n' "$pid"; fi
 }
 
+# Exit 0 when process <pid> started no later than <file> was last written (one second of slack), as warm.ts checks:
+# a pid file outlives a killed sidecar, and its pid can be reused later by another process.
+started_before_file() {
+    local start
+    start="$(ps -o lstart= -p "$1" 2>/dev/null || true)"
+    [ -n "$start" ] || return 1
+    python3 -I -c '
+import os, sys, time
+try:
+    started = time.mktime(time.strptime(" ".join(sys.argv[1].split()), "%a %b %d %H:%M:%S %Y"))
+except ValueError:
+    sys.exit(1)
+sys.exit(0 if started <= os.path.getmtime(sys.argv[2]) + 1 else 1)
+' "$start" "$2"
+}
+
 # A live process the pid file names that runs the sidecar, whoever started it (another terminal, or a sidecar whose
-# wrapper is gone). This script never signals one of these; it reports it and stops.
+# wrapper is gone), and that started before the file was written. This script never signals one; it reports it.
 stray_sidecar() {
     local pid
     pid="$(pidfile_pid)"
-    if pid_matches "$pid" "src/main.ts run"; then printf '%s\n' "$pid"; fi
+    if pid_matches "$pid" "src/main.ts run" && started_before_file "$pid" "$token_file.pid"; then printf '%s\n' "$pid"; fi
 }
 
-# The caffeinate this script started: it waits on exactly our wrapper's pid.
+# The caffeinate this script started: its whole command is exactly the one up ran, waiting on our wrapper's pid.
 caffeinate_ours() {
-    pid_matches "$1" "caffeinate -dims -w $2"
+    [ -n "$2" ] && [ "$(pid_command "$1")" = "caffeinate -dims -w $2" ]
 }
 
 # Keys from the Keychain, by service and account. An empty item still exits 0, so the length is the check.
@@ -311,7 +336,12 @@ cmd_status() {
         sidecar="$(sidecar_pid "$wrapper")"
         echo "running: $db, pid $wrapper (sidecar ${sidecar:-unknown}), calls $(state_get calls), Moss session $(state_get moss), log $(state_get log)"
     else
-        echo "not running: $db"
+        sidecar="$(stray_sidecar)"
+        if [ -n "$sidecar" ]; then
+            echo "not started by this script, but a sidecar for $db is running as pid $sidecar (the pid file names it)"
+        else
+            echo "not running: $db"
+        fi
     fi
     if caffeinate_ours "$caffeinate_pid" "$wrapper"; then echo "caffeinate: on (pid $caffeinate_pid)"; else echo "caffeinate: off"; fi
     files_check
