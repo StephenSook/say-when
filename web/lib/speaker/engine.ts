@@ -18,7 +18,8 @@
  *    played to the end. After a reload, a reply marked `done` is not said again; one marked `started` follows rule 2.
  *    The clip length of a report still in flight is kept beside it, so a reload can finish the report.
  * 6. A failed speech is tried once more (the voice opens a fresh socket and token). A second failure shows
- *    "Could not say the reply" with Say it now.
+ *    "Could not say the reply" with Say it now. A speech that failed because the room voice stopped (the browser
+ *    paused the audio) waits for it instead, as in rule 3, and is said from the start once it runs again.
  * 7. A newer reply that arrives while one is being said waits for it to finish, then goes through rule 2.
  */
 import { callErrorKind, callErrorText, sendWithResend } from '../role/calls';
@@ -287,7 +288,13 @@ export function createSpeakerEngine(options: SpeakerEngineOptions): SpeakerEngin
         speak(reply, attempt + 1);
         return;
       }
-      show({ phase: 'failed', reply, errorText: message });
+      if (!options.audioReady()) {
+        // The room voice stopped under it (the browser paused it, the output changed): it waits for the room voice
+        // and is said from the start once that runs, if it is still under 20 s old (rule 3).
+        show({ phase: 'waiting_audio', reply, errorText: message });
+      } else {
+        show({ phase: 'failed', reply, errorText: message });
+      }
     }
     next();
   };

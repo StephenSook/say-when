@@ -196,6 +196,17 @@ export function saveReplyVolume(volume: number, storage: StorageLike | null = br
   return writeItem(SPEAKER_VOLUME_KEY, String(volume), storage);
 }
 
+export const SPEAKER_MIRROR_KEY = 'neurolingo/speaker/mirror_earpiece';
+
+/** "Mirror the earpiece" (lib/speaker/mirror.ts): on unless it was turned off on this browser. */
+export function readMirrorEarpiece(storage: StorageLike | null = browserStorage()): boolean {
+  return readItem(SPEAKER_MIRROR_KEY, storage) !== 'off';
+}
+
+export function saveMirrorEarpiece(on: boolean, storage: StorageLike | null = browserStorage()): boolean {
+  return writeItem(SPEAKER_MIRROR_KEY, on ? 'on' : 'off', storage);
+}
+
 /** `neurolingo/speaker/<db>/last` (docs/station.md 3, step 6). */
 export function speakerProgressKey(db: string): string {
   return `neurolingo/speaker/${db}/last`;

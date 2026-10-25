@@ -184,6 +184,49 @@
   color: var(--error);
 }
 
+/* Mirror the earpiece: the toggle and one small status line under the reply. */
+.mirror {
+  display: grid;
+  gap: var(--s2);
+  min-width: 0;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  min-height: 44px;
+  font-size: var(--text);
+  font-weight: var(--weight-strong);
+  cursor: pointer;
+}
+
+.check input {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.mirrorLine {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s3);
+  margin: 0;
+  font-size: var(--text);
+  line-height: var(--leading-tight);
+  overflow-wrap: anywhere;
+}
+
+.mirrorWords {
+  margin: 0;
+  font-size: var(--text-title);
+  line-height: var(--leading-tight);
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
+}
+
 .footer {
   display: flex;
   flex-wrap: wrap;

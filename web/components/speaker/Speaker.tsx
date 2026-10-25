@@ -9,6 +9,10 @@
  *   Waiting for a reply.  Paused. Nothing will be said.  Saying it out loud.  Said out loud.
  *   Missed reply to question 7, released 3 min ago.  Could not say the reply.
  * The reply's words show only while the room's sharing toggle is on; otherwise "Reply to question 7".
+ *
+ * Mirror the earpiece (lib/speaker/mirror.ts, on by default): the room also hears what the headset wearer hears, the
+ * partner's question, the numbered options and every read-back, read from the board views while sharing is on. One
+ * small status line under the reply says what it is doing, or what it needs (the tap, board sharing).
  */
 import { useEffect, useId, useState } from 'react';
 import { DeviceChip, PairingCard, RoleConnectionChip, ROOM_VOICE_LABELS, StartAudio, VoiceStatus } from '@/components/device';
@@ -20,7 +24,7 @@ import { cx } from '@/lib/cx';
 import { VOLUME_RANGE } from '@/lib/role/storage';
 import type { SpeakerVoice } from '@/lib/speaker/voice';
 import { useNow } from '@/lib/use-now';
-import { buildSpeakerView, type SpeakerLine, type SpeakerMark } from './model';
+import { buildMirrorView, buildSpeakerView, type SpeakerLine, type SpeakerMark } from './model';
 import { useSpeaker } from './useSpeaker';
 import styles from './Speaker.module.css';
 
@@ -58,6 +62,7 @@ function RoomVoice({ speaker }: { speaker: ReturnType<typeof useSpeaker> }) {
   const statusId = useId();
   const audioRunning = audioState.state === 'running';
   const view = buildSpeakerView({ state, room, now, offsetMs: engine?.clockOffset() ?? 0, audioRunning });
+  const mirror = buildMirrorView(speaker.mirror, audioRunning);
   const marking = state.phase === 'speaking' && view.words !== null;
 
   return (
@@ -87,6 +92,20 @@ function RoomVoice({ speaker }: { speaker: ReturnType<typeof useSpeaker> }) {
           </button>
         ) : null}
         {view.report ? <ReportLine line={view.report} /> : null}
+      </div>
+
+      <div className={styles.mirror}>
+        <label className={styles.check}>
+          <input type="checkbox" checked={speaker.mirror.on} onChange={(event) => speaker.setMirrorOn(event.currentTarget.checked)} />
+          <span>Mirror the earpiece</span>
+        </label>
+        <p className={cx(styles.mirrorLine, styles[mirror.line.tone])} title={mirror.line.title ?? undefined} role="status">
+          <span className={styles.mark} data-mark={mirror.line.mark} aria-hidden="true">
+            <Mark mark={mirror.line.mark} />
+          </span>
+          <span>{mirror.line.text}</span>
+        </p>
+        {mirror.words !== null ? <p className={styles.mirrorWords}>{mirror.words}</p> : null}
       </div>
 
       <div className={styles.footer}>

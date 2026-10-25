@@ -510,7 +510,7 @@ STOP during a signal pause turns it into a deliberate Stop pause, which needs YE
 
 ## 3. The speaker (`/speaker`)
 
-**What it does:** says the newest released reply aloud in the room, once, then records it with `reply_spoken`. It never sees options (**checked**: `my_session` gives a Speaker only `reply = { question_id, text, tone, laugh, released_at }` for the newest Released question).
+**What it does:** says the newest released reply aloud in the room, once, then records it with `reply_spoken`. Its own view never shows options (the mirror below reads the public board instead) (**checked**: `my_session` gives a Speaker only `reply = { question_id, text, tone, laugh, released_at }` for the newest Released question).
 
 **Start:** pairing (1.2), the voice check with `tts`, then a Start room voice button (the click starts the `AudioContext`, 5.3). A Test voice link plays "This is the Eleven room voice." aloud so the operator can set the volume.
 
@@ -544,6 +544,15 @@ STOP during a signal pause turns it into a deliberate Stop pause, which needs YE
 - Two speakers online (two Speaker rows online in `device_status`): a warning, because both would talk. The module lets both report (the second returns quietly, **checked**).
 
 **On a reconnect:** the SDK replays the subscription; step 2 decides whether a reply in the snapshot is still worth saying; a `reply_spoken` that failed during the gap is retried (step 5); audio that was playing locally finishes on its own.
+
+**Mirror the earpiece** (Sun Oct 25 2026, `web/lib/speaker/mirror.ts`, `mirror-rows.ts`; a toggle on the page, on by default, kept in `localStorage` key `neurolingo/speaker/mirror_earpiece`): judges in the room cannot hear the headset, so the room voice also says what the wearer hears, through the same Cartesia voice and volume as the reply.
+
+- What it says: the partner's question ("Question: ..."), each option as the scan reads it ("One: good."), and every read-back ("... One: send it. Two: cancel."; a search read-back as the module wrote it). Same words and voices as the earpiece (`questionEarText`, `optionEarText`, `readbackSegments`); phone numbers are said as "a number" and keys or tokens as "a code".
+- Where the words come from: `my_session` gives a Speaker only the reply, so the page also subscribes the anonymous board views `public_board`, `board_errands`, `board_calls` and `board_searches`, on their own subscription (an error there never touches the reply). Triggers: a live `scan_state` update whose `question_id` is newer (the question; direct select only, origin Partner, no `parent_question_id`), a live Reading step with a new `step_seq` (the option at rank `cursor`), and a board errand Previewed, call Prepared or search Prepared with its digest. The board shows words only while `config.share_text_on_board` is on, so the mirror runs only then and the page says so. No module change.
+- Order and priority: one line at a time, in arrival order; a newer question drops older lines and cuts the one being said; Idle drops queued options, a pause drops everything, a stopped errand or call drops its read-back. The picked reply always wins: it cuts a line, the lines of its question are dropped, and no line starts while it (or the Test voice) plays. Snapshot rows (connect, reconnect) are only a starting point: nothing old is said, and a line older than 20 s when its turn comes is dropped.
+- Playing every time: a line the audio cut goes back to the front and is said once the room voice runs again; a failed line is tried once more on a fresh socket and token; one small status line says what the mirror does or needs ("Tap Start room voice to hear the earpiece here.", "Mirror needs board sharing on.").
+
+**Audio that plays every time** (Sun Oct 25 2026): the room voice keeps running when the audio devices change (`onDeviceChange: 'report'`: plugging in a projector or a speaker moves the sound, which is the point here; the earpiece still stops, 5.5), resumes by itself after the first tap when the browser suspends it (`autoResume`, and again when the page comes back into view), replaces a Cartesia socket unused for two minutes before speaking (a laptop that slept can keep a dead socket that still says it is open), fails a generation after 5 s with no message so the retry on a fresh socket comes quickly, counts a chunk the output refused as a failure rather than "said", and a reply cut by the audio stopping waits for the room voice and is said again from the start once it runs, if it is under 20 s old, instead of showing "Could not say the reply".
 
 ---
 

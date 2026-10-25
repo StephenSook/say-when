@@ -10,6 +10,7 @@
  */
 import type { SpeakerRoom } from '@/lib/speaker/rows';
 import type { SpeakerReply, SpeakerState } from '@/lib/speaker/engine';
+import type { MirrorState } from '@/lib/speaker/mirror';
 import { formatAge, formatClock } from '@/lib/format';
 
 export type SpeakerTone = 'plain' | 'working' | 'waiting' | 'done' | 'stopped' | 'failed';
@@ -139,5 +140,50 @@ export function buildSpeakerView(input: SpeakerViewInput): SpeakerView {
         status: line(SPEAKER_TEXT.failed, 'failed', 'cross', state.errorText),
         sayNow: input.audioRunning && state.stillReleased,
       };
+  }
+}
+
+// ---------- Mirror the earpiece (lib/speaker/mirror.ts) ----------
+
+export const MIRROR_TEXT = {
+  off: 'Mirror off. Only the picked reply is said.',
+  noSharing: 'Mirror needs board sharing on. Only the picked reply is said.',
+  unavailable: 'Mirror unavailable: the board could not be read.',
+  needsAudio: 'Tap Start room voice to hear the earpiece here.',
+  waitingAudio: 'Earpiece lines are waiting. Tap Start room voice.',
+  idle: 'Mirroring the earpiece.',
+  question: 'Saying the question',
+  option: 'Saying an option',
+  readback: 'Saying the read-back',
+  failed: 'Could not play the last earpiece line.',
+} as const;
+
+export interface MirrorView {
+  line: SpeakerLine;
+  /** The line being said, in quotes (sharing is on whenever the mirror speaks), or null. */
+  words: string | null;
+}
+
+/** The mirror's one status line under the reply, and the words it is saying. */
+export function buildMirrorView(mirror: MirrorState, audioRunning: boolean): MirrorView {
+  switch (mirror.phase) {
+    case 'off':
+      return { line: line(MIRROR_TEXT.off, 'plain', 'ring'), words: null };
+    case 'no_sharing':
+      return { line: line(MIRROR_TEXT.noSharing, 'stopped', 'pause'), words: null };
+    case 'unavailable':
+      return { line: line(MIRROR_TEXT.unavailable, 'failed', 'cross', mirror.errorText), words: null };
+    case 'waiting_audio':
+      return { line: line(MIRROR_TEXT.waitingAudio, 'waiting', 'hourglass'), words: null };
+    case 'speaking': {
+      const item = mirror.current;
+      const text = item?.kind === 'question' ? MIRROR_TEXT.question : item?.kind === 'readback' ? MIRROR_TEXT.readback : MIRROR_TEXT.option;
+      return { line: line(text, 'working', 'spinner'), words: item ? `"${item.text}"` : null };
+    }
+    case 'failed':
+      return { line: line(MIRROR_TEXT.failed, 'failed', 'cross', mirror.errorText), words: null };
+    case 'idle':
+      if (!audioRunning) return { line: line(MIRROR_TEXT.needsAudio, 'waiting', 'hourglass'), words: null };
+      return { line: line(MIRROR_TEXT.idle, 'done', 'check'), words: null };
   }
 }
