@@ -148,8 +148,9 @@ export interface MailMessage {
 
 /**
  * - `sent`: the Actor's run SUCCEEDED, so Apify handed the email to its mail service.
- * - `failed`: provably not sent (the run was refused before it started, or the run itself failed).
- * - `unknown`: it may have gone out (the run did not finish in time, or the reply was lost). Never sent again.
+ * - `failed`: provably not sent (the run was refused before it started, or the request never left this machine).
+ * - `unknown`: it may have gone out (the run failed, was aborted or timed out after it started, did not finish in
+ *   time, or the reply was lost). Never sent again.
  * `code` is a fixed word, never content.
  */
 export type MailOutcome = { status: 'sent'; ms: number } | { status: 'failed' | 'unknown'; code: string; ms: number };
@@ -264,7 +265,9 @@ export function apifyMail(options: ApifyMailOptions): MailPort {
             const run = (body as { data?: { status?: unknown } } | null)?.data;
             const status = typeof run?.status === 'string' ? run.status : '';
             if (status === 'SUCCEEDED') return { status: 'sent', ms: ms() };
-            if (status === 'FAILED' || status === 'ABORTED' || status === 'TIMED-OUT') return { status: 'failed', code: 'run_failed', ms: ms() };
+            // A run that started and then failed, was aborted or timed out may already have handed the email to the
+            // mail service, so it is unknown, never "not sent".
+            if (status === 'FAILED' || status === 'ABORTED' || status === 'TIMED-OUT') return { status: 'unknown', code: 'run_failed', ms: ms() };
             if (status === 'READY' || status === 'RUNNING' || status === 'ABORTING' || status === 'TIMING-OUT') return { status: 'unknown', code: 'still_running', ms: ms() };
             return { status: 'unknown', code: 'bad_response', ms: ms() };
         },
@@ -276,6 +279,5 @@ export function mailSentence(outcome: Exclude<MailOutcome, { status: 'sent' }>):
     if (outcome.status === 'unknown') return 'The email may or may not have gone out. It was not sent again.';
     if (outcome.code === 'http_401' || outcome.code === 'http_403') return 'The email service turned the request away, so no email was sent.';
     if (outcome.code === 'http_402') return 'The email service needs credit, so no email was sent.';
-    if (outcome.code === 'run_failed') return 'The email service could not send it.';
     return 'The email could not be sent.';
 }

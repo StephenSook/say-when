@@ -315,7 +315,10 @@ describe('apify/send-mail through the Apify API', () => {
             [new Response('{}', { status: 401 }), 'failed', 'http_401'],
             [new Response('{}', { status: 502 }), 'unknown', 'http_502'],
             [new Response(JSON.stringify({ data: { status: 'RUNNING' } }), { status: 201 }), 'unknown', 'still_running'],
-            [new Response(JSON.stringify({ data: { status: 'FAILED' } }), { status: 201 }), 'failed', 'run_failed'],
+            // A run that started and then failed, was aborted or timed out may already have sent it.
+            [new Response(JSON.stringify({ data: { status: 'FAILED' } }), { status: 201 }), 'unknown', 'run_failed'],
+            [new Response(JSON.stringify({ data: { status: 'ABORTED' } }), { status: 201 }), 'unknown', 'run_failed'],
+            [new Response(JSON.stringify({ data: { status: 'TIMED-OUT' } }), { status: 201 }), 'unknown', 'run_failed'],
             [new Response('not json', { status: 201 }), 'unknown', 'bad_response'],
         ];
         for (const [response, status, code] of cases) {
