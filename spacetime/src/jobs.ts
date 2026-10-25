@@ -55,16 +55,26 @@ export function endJob(ctx: Ctx, job: AgentJob, status: 'Done' | 'Failed' | 'Can
   return next;
 }
 
-/** Cancels every Pending or Claimed job for a question, optionally only one errand's or one kind's. */
+/**
+ * The job kinds whose work is a question's options (D18 adds the categories and search turns). Each is wanted only
+ * while its question is open.
+ */
+export const OPTION_JOB_KINDS: ReadonlyArray<JobKind['tag']> = ['Options', 'Categories', 'Search'];
+
+export function isOptionJob(job: AgentJob): boolean {
+  return OPTION_JOB_KINDS.includes(job.kind.tag);
+}
+
+/** Cancels every Pending or Claimed job for a question, optionally only one errand's or some kinds'. */
 export function cancelJobs(
   ctx: Ctx,
   questionId: bigint,
   reason: string,
-  only: { errandId?: bigint; kind?: JobKind['tag'] } = {},
+  only: { errandId?: bigint; kinds?: ReadonlyArray<JobKind['tag']> } = {},
 ): void {
   for (const job of [...ctx.db.agentJob.jobByQuestion.filter(questionId)]) {
     if (only.errandId !== undefined && job.errandId !== only.errandId) continue;
-    if (only.kind !== undefined && job.kind.tag !== only.kind) continue;
+    if (only.kinds !== undefined && !only.kinds.includes(job.kind.tag)) continue;
     if (job.status.tag === 'Pending' || job.status.tag === 'Claimed') endJob(ctx, job, 'Cancelled', reason);
   }
 }

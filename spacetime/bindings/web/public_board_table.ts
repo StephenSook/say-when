@@ -46,4 +46,6 @@ export default __t.row({
   releasedAt: __t.option(__t.timestamp()).name("released_at"),
   spokenAt: __t.option(__t.timestamp()).name("spoken_at"),
   askedAt: __t.timestamp().name("asked_at"),
+  parentQuestionId: __t.u64().name("parent_question_id"),
+  category: __t.string(),
 });

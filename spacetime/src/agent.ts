@@ -1,10 +1,10 @@
 // The agent sidecar's fenced writes (docs/spacetime.md 3.6, 4.5): progress, options, failures, lapsed leases.
 import { SenderError } from 'spacetimedb/server';
 import { closeQuestion, enterPreparing, isScanActive } from './clock';
-import { getConfig } from './config';
+import { getConfig, isDirect } from './config';
 import { checkCallAction, checkErrandAction, failDraftedErrand } from './consent';
 import type { Ctx } from './ctx';
-import { endJob, extendLease, requeueJob } from './jobs';
+import { endJob, extendLease, isOptionJob, requeueJob } from './jobs';
 import type { AgentJob, AnswerMode, OptionInput, OptionKind, Question } from './schema';
 import {
   appendLedger,
@@ -41,11 +41,11 @@ export interface ProgressInput {
 
 /**
  * The key prefixes the module writes its own steps under (`listen:<request>`, `q<question>:`, `e<errand>:`,
- * `c<call>:`, `s<session>:read:`; docs/spacetime.md 11.4 and 14). An event key is used once, so an agent key with
+ * `c<call>:`, `s<session>:read:`, and D18's `w<search request>:`; docs/spacetime.md 11.4 and 14). An event key is used once, so an agent key with
  * one of these would claim the module's step first and the module's own write would be skipped. The sidecar's keys
  * start with the job id (`<job_id>:<attempt>:...`).
  */
-const MODULE_KEY_RE = /^(listen:|[qecs][0-9]+:)/;
+const MODULE_KEY_RE = /^(listen:|[qecsw][0-9]+:)/;
 
 /** `agent_progress`: one pipeline event (and its private payload), and a longer lease. */
 export function agentProgress(ctx: Ctx, job: AgentJob, p: ProgressInput): void {
@@ -84,13 +84,33 @@ function parseKind(value: string): OptionKind {
   if (value === 'reply') return { tag: 'Reply' };
   if (value === 'errand') return { tag: 'Errand' };
   if (value === 'call') return { tag: 'Call' };
-  throw new SenderError('option kind must be reply, errand or call');
+  if (value === 'search') return { tag: 'Search' };
+  if (value === 'category') return { tag: 'Category' };
+  throw new SenderError('option kind must be reply, errand, call, search or category');
 }
 
-function checkOption(o: OptionInput, mode: AnswerMode): OptionKind {
+/**
+ * The option kinds each job may publish (D18). A web search starts only after a read-back and a confirm, so a
+ * Category option (whose pick starts the search at once) comes only from a Categories job, which only a confirmed
+ * Search makes; a Search job answers with places as replies.
+ */
+const KINDS_FOR_JOB: Record<'Options' | 'Categories' | 'Search', ReadonlyArray<OptionKind['tag']>> = {
+  Options: ['Reply', 'Errand', 'Call', 'Search'],
+  Categories: ['Category', 'Reply'],
+  Search: ['Reply'],
+};
+
+/** At most this many characters in an earpiece label (1 to 3 words). */
+export const MAX_LABEL = 40;
+
+function checkOption(o: OptionInput, mode: AnswerMode, job: AgentJob, direct: boolean): OptionKind {
   const kind = parseKind(o.kind);
   if (mode.tag === 'YesNo' && kind.tag !== 'Reply') throw new SenderError('yes_no options must be replies');
+  const allowed = KINDS_FOR_JOB[job.kind.tag as keyof typeof KINDS_FOR_JOB] ?? [];
+  if (!allowed.includes(kind.tag)) throw new SenderError(`a ${job.kind.tag} job cannot publish a ${kind.tag} option`);
+  if ((kind.tag === 'Search' || kind.tag === 'Category') && !direct) throw new SenderError('search and category options need direct input mode');
   requireText(o.text, 'option text', 200);
+  requireOptionalText(o.label, 'label', MAX_LABEL);
   if (o.tone !== '' && !(TONES as readonly string[]).includes(o.tone)) throw new SenderError(`tone must be one of ${TONES.join(', ')} or empty`);
   requireMatch(o.provenance, PROVENANCE_RE, 'provenance');
   if (o.sources.length > 10) throw new SenderError('at most 10 sources');
@@ -101,7 +121,7 @@ function checkOption(o: OptionInput, mode: AnswerMode): OptionKind {
   if (o.memoryRefs.length > 20 || o.memoryRefs.some((m) => m.length > 100)) throw new SenderError('too many memory refs');
   if (kind.tag === 'Errand') checkErrandAction(o.actionJson);
   else if (kind.tag === 'Call') checkCallAction(o.actionJson);
-  else if (o.actionJson !== '') throw new SenderError('a reply has no action_json');
+  else if (o.actionJson !== '') throw new SenderError(`a ${kind.tag.toLowerCase()} option has no action_json`);
   return kind;
 }
 
@@ -111,7 +131,7 @@ function checkOption(o: OptionInput, mode: AnswerMode): OptionKind {
  * still waiting its turn, kept but not scanned once the person picked.
  */
 export function publishOptions(ctx: Ctx, job: AgentJob, answerMode: string, options: OptionInput[], final: boolean): void {
-  if (job.kind.tag !== 'Options') throw new SenderError('not an options job');
+  if (!isOptionJob(job)) throw new SenderError('not an options job');
   const q = ctx.db.question.id.find(job.questionId);
   if (!q || !OPEN_STATUSES.includes(q.status.tag)) {
     // The person already picked, or the question was cancelled: nothing is written.
@@ -120,12 +140,15 @@ export function publishOptions(ctx: Ctx, job: AgentJob, answerMode: string, opti
     return;
   }
   const cfg = getConfig(ctx.db);
-  const mode = parseAnswerMode(answerMode);
-  if (mode.tag === 'YesNo' && options.length !== 2) throw new SenderError('yes_no takes exactly 2 options');
-  if (mode.tag === 'Pick' && (options.length < 1 || options.length > cfg.maxOptions)) {
+  const direct = isDirect(ctx.db);
+  const asked = parseAnswerMode(answerMode);
+  if (asked.tag === 'YesNo' && options.length !== 2) throw new SenderError('yes_no takes exactly 2 options');
+  if (asked.tag === 'Pick' && (options.length < 1 || options.length > cfg.maxOptions)) {
     throw new SenderError(`pick takes 1 to ${cfg.maxOptions} options`);
   }
-  const kinds = options.map((o) => checkOption(o, mode));
+  const kinds = options.map((o) => checkOption(o, asked, job, direct));
+  // D18: direct select has no yes or no prompt. Yes and no are read as options 1 and 2, like any list.
+  const mode: AnswerMode = direct ? { tag: 'Pick' } : asked;
   const version = Math.max(q.version, q.pendingVersion) + 1;
   options.forEach((o, i) => {
     ctx.db.answerOption.insert({
@@ -144,6 +167,7 @@ export function publishOptions(ctx: Ctx, job: AgentJob, answerMode: string, opti
       actionJson: o.actionJson,
       clipMs: undefined,
       createdAt: ctx.timestamp,
+      label: o.label,
     });
   });
   writePipeline(ctx, {
@@ -160,7 +184,9 @@ export function publishOptions(ctx: Ctx, job: AgentJob, answerMode: string, opti
 
   const s = ctx.db.scanState.sessionId.find(q.sessionId);
   const scanningThis = !!s && s.questionId === q.id;
-  if (scanningThis && s!.phase.tag === 'Preparing') {
+  // D18: in Direct mode the Window is the wait after the list. A newer list is read at once, not after the wait.
+  const waitingOnList = direct && scanningThis && s!.phase.tag === 'Window';
+  if (scanningThis && (s!.phase.tag === 'Preparing' || waitingOnList)) {
     // Preparing for an older version, or the question has no version yet: this one becomes current.
     const current = saveQ(ctx, { ...q, version, answerMode: mode, pendingVersion: 0, status: { tag: 'Ready' }, readyAt: q.readyAt ?? ctx.timestamp });
     enterPreparing(ctx, s!, current);
@@ -205,14 +231,16 @@ export function agentFail(ctx: Ctx, job: AgentJob, reasonCode: string, reason: s
   const code = publicCode(reasonCode, 'agent_failed') || 'agent_failed';
   endJob(ctx, job, 'Failed', code);
   appendLedger(ctx, sessionOf(ctx, job), 'job_failed', 'Agent', { jobId: job.id, questionId: job.questionId, errandId: job.errandId, reason: code });
-  if (job.kind.tag === 'Options') failOptionsQuestion(ctx, job, code, 'Agent');
+  if (isOptionJob(job)) failOptionsQuestion(ctx, job, code, 'Agent');
   if (job.kind.tag === 'ErrandPreview') failDraftedErrand(ctx, job.errandId, code, reason, 'Agent');
 }
 
 /** Is the work behind a job still wanted? */
 function stillWanted(ctx: Ctx, job: AgentJob): boolean {
   switch (job.kind.tag) {
-    case 'Options': {
+    case 'Options':
+    case 'Categories':
+    case 'Search': {
       const q = ctx.db.question.id.find(job.questionId);
       return !!q && OPEN_STATUSES.includes(q.status.tag);
     }
@@ -238,6 +266,6 @@ export function leaseLapsed(ctx: Ctx, job: AgentJob): void {
   }
   endJob(ctx, job, 'Failed', 'lease_lapsed');
   appendLedger(ctx, sessionId, 'job_failed', 'Scheduler', { jobId: job.id, questionId: job.questionId, errandId: job.errandId, reason: 'lease_lapsed' });
-  if (job.kind.tag === 'Options') failOptionsQuestion(ctx, job, 'agent_lost', 'Scheduler');
+  if (isOptionJob(job)) failOptionsQuestion(ctx, job, 'agent_lost', 'Scheduler');
   if (job.kind.tag === 'ErrandPreview') failDraftedErrand(ctx, job.errandId, 'agent_lost', '', 'Scheduler');
 }
