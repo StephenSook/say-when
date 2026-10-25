@@ -8,7 +8,7 @@ import type { CandidateOption, IndexResult, MemoryHit, Ordering, Recall, WebSear
 import { CallRunner } from '../src/calls.js';
 import { MemoryDb } from '../src/db/memory-db.js';
 import { ErrandRunner } from '../src/errands.js';
-import { ConversationLog, PreviewBook, type JobDeps } from '../src/jobs.js';
+import { ConversationLog, PreviewBook, SentBook, type JobDeps } from '../src/jobs.js';
 import { MemoryWatch } from '../src/requests.js';
 import { recordingLogger, type RecordingLogger } from '../src/log.js';
 import { Orchestrator, type OrchestratorOptions } from '../src/orchestrator.js';
@@ -544,6 +544,7 @@ export function harness(options: HarnessOptions = {}): Harness {
     const dialer = new FakeDialer();
     const log = recordingLogger();
     const previews = new PreviewBook();
+    const sent = new SentBook();
     const clock = options.clock ?? (() => performance.now());
     let requests = 0;
     const memoryWatch = new MemoryWatch(db);
@@ -564,6 +565,7 @@ export function harness(options: HarnessOptions = {}): Harness {
         forms: options.forms ?? [],
         contacts: options.contacts ?? [],
         previews,
+        sent,
         conversation: new ConversationLog(),
         log,
         timeZone: 'America/Los_Angeles',
@@ -592,6 +594,8 @@ export function harness(options: HarnessOptions = {}): Harness {
         db,
         errands: deps.errands,
         previews,
+        sent,
+        now: deps.now,
         log,
         clock,
         retryMs: 5,

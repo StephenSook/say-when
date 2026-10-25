@@ -8,6 +8,7 @@
 import { ApifyHttpError, type FieldInput, type RefusalCode } from '@say-when/apify-client';
 import type { CallRequest } from '@say-when/cartesia/server';
 
+import { CLOCK_SKEW_MS } from './calls.js';
 import { LIMITS } from './contract.js';
 import type { AgentDb } from './db/db.js';
 import { callReducer } from './db/retry.js';
@@ -87,6 +88,76 @@ export class PreviewBook {
     }
 }
 
+/** One errand this sidecar sent, recorded only after the module took its submitted (or duplicate) result. */
+export interface SentRecord {
+    errandId: bigint;
+    formKey: string;
+    /** Private: the fields that were sent, exactly the ones previewed, read back and confirmed (src/errands.ts). */
+    fields: readonly FieldInput[];
+    /**
+     * Wall clock (epoch ms) right before `complete_errand` was sent and right after the module took it. The module
+     * stamps `submitted_at` inside that reducer, so the recent errand's time in the agent queue falls between them.
+     */
+    fromMs: number;
+    toMs: number;
+}
+
+/**
+ * The errands this sidecar sent in the last few minutes, so a call about the recent errand can say what was filled
+ * out. The agent queue names the recent errand only by its title and `submitted_at`, not by its id, so a record is
+ * tied to it by time: `submitted_at` must fall inside the record's window (widened by CLOCK_SKEW_MS for the two
+ * clocks), and exactly one record may match, or none is used. Private values, in this process only, never logged.
+ */
+export class SentBook {
+    private readonly entries: SentRecord[] = [];
+
+    constructor(
+        private readonly keepMs = RECENT_ERRAND_MS + 5 * 60_000,
+        private readonly max = 50,
+    ) {}
+
+    record(entry: SentRecord, nowMs: number): void {
+        this.entries.push(entry);
+        this.prune(nowMs);
+    }
+
+    /** The one record whose window holds `sentAtMs`, or null when none or more than one does. */
+    find(sentAtMs: number, nowMs: number): SentRecord | null {
+        this.prune(nowMs);
+        const matches = this.entries.filter((e) => sentAtMs >= e.fromMs - CLOCK_SKEW_MS && sentAtMs <= e.toMs + CLOCK_SKEW_MS);
+        return matches.length === 1 ? (matches[0] ?? null) : null;
+    }
+
+    private prune(nowMs: number): void {
+        while (this.entries.length > 0 && (this.entries.length > this.max || (this.entries[0]?.toMs ?? 0) < nowMs - this.keepMs)) this.entries.shift();
+    }
+}
+
+const fieldKey = (label: string): string => label.replace(/\s+/g, ' ').trim().toLowerCase();
+
+/**
+ * What a call may say about the recent errand: the values of the fields its form marks `speak`, in form order, from
+ * the one errand this sidecar sent that the agent queue shows as the recent one (SentBook). Lists are joined with
+ * commas; yes or no values are left out. Empty when that errand cannot be tied to exactly one record, its form is not
+ * listed, the titles differ, or no field is marked: then the Dialer says only that the request was sent. The Dialer
+ * checks every value again before any of it is spoken.
+ */
+export function speakableValues(sent: SentBook | undefined, forms: readonly AllowedForm[], recent: RecentErrand, nowMs: number): string[] {
+    const record = sent?.find(recent.sentAtMs, nowMs);
+    if (!record) return [];
+    const form = forms.find((f) => f.formKey === record.formKey);
+    if (!form || fieldKey(form.formTitle) !== fieldKey(recent.title)) return [];
+    const byLabel = new Map(record.fields.map((f) => [fieldKey(f.label), f.value] as const));
+    return form.fields
+        .filter((f) => f.speak === true)
+        .flatMap((f) => {
+            const value = byLabel.get(fieldKey(f.label));
+            if (typeof value === 'string') return [value];
+            if (Array.isArray(value)) return [value.join(', ')];
+            return [];
+        });
+}
+
 export interface JobDeps {
     db: AgentDb;
     planner: PlannerPort;
@@ -96,6 +167,8 @@ export interface JobDeps {
     forms: readonly AllowedForm[];
     contacts: readonly CallContact[];
     previews: PreviewBook;
+    /** The errands this sidecar sent (src/errands.ts writes it), so a call can say what was filled out. Unset: never. */
+    sent?: SentBook;
     conversation: ConversationLog;
     log: Logger;
     timeZone: string;
@@ -516,7 +589,12 @@ async function planOptions(
 
 function prepareCall(deps: JobDeps, contact: CallContact, recent: RecentErrand | null) {
     if (!deps.dialer || !recent) return null;
-    const request: CallRequest = { requestId: deps.requestId(), contactId: contact.contactId, errand: { title: recent.title, sentAt: recent.sentAtMs } };
+    // Only data goes to the Dialer: the speakable values of the errand that was sent. It checks them again and owns
+    // every word the call says.
+    const values = speakableValues(deps.sent, deps.forms, recent, deps.now());
+    const errand: CallRequest['errand'] = { title: recent.title, sentAt: recent.sentAtMs, ...(values.length > 0 ? { values } : {}) };
+    deps.log.info('values for the call message', { values: values.length });
+    const request: CallRequest = { requestId: deps.requestId(), contactId: contact.contactId, errand };
     const prepared = deps.dialer.prepare(request);
     if (prepared.ok) return prepared.call;
     deps.log.info('the Dialer refused a call option', { code: prepared.refusal.code });
