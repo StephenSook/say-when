@@ -38,6 +38,8 @@ Options are always short: the earpiece label is 1 to 3 words; the spoken text is
 
 **Since D24 (Oct 25, section 4.4):** a list has at most three options (D23), and option 3 is always **Search the web** for a partner question the planner answers (small talk and flow 4 included), while web search consent is on: reply, reply (or the errand or the call), Search the web. When the partner says "do you know", the search runs at once and the replies come from its results.
 
+**Since D28 (Oct 25, section 4.6):** when the partner asks to "call <name>" or "check in with <name>" for a consented contact, the call is option 1 even with no request sent: Call <name>, a reply, Search the web.
+
 ## 4. Interfaces (the contract between the three build tracks)
 
 - **Database:** a NEW Maincloud database `say-when-direct`, published from this branch. No migration from `say-when-demo` is needed, so schema changes are free here. Owner = this Mac's spacetime CLI login.
@@ -115,11 +117,19 @@ Stephen, 2:15 AM: "Apify errored a couple times, I think it's timing out. Preloa
 - **Place words** ("any good spots?", "somewhere fun", "things to do", "hang out") go to Google Maps near the venue (`withPlaceWords`).
 - **Places as the replies.** A place question whose maps search found places gets those places as its replies, by name, each citing its row ("Let's go to Crissy Field!"), with no plan; Search the web stays third on "do you know". `AGENT_PINNED_PLACE` ("Palace of Fine Arts" at the demo) is always the first of them, cited from the live or preloaded maps row when there is one, and otherwise a plain reply with its name only.
 
+### 4.6 A call asked for by name is option 1 (D28, Sun Oct 25 2026, branch `call-trigger`)
+
+Stephen, about 2:52 AM: "any time it says 'check in with Stephen' or 'call Stephen', it just does the call on the agent screen as well." Sidecar and `cartesia/src/call.ts`; the module, the station and the screens do not change.
+
+- **The trigger** (`askedToCall`): "call <name>", "check in with <name>", "give <name> a call" or "ring <name>" in the partner's question, any case, whole words, where <name> is a consented contact (full name or first word), and not right after "don't", "do not", "never" or "no need to". Then the list is 1 **Call <name>**, 2 a reply ("Not now" when Claude wrote none), 3 Search the web while it is offered (`callFirst` guarantees this order). No recent request is needed. Without the trigger, a call is still offered only in the ten minutes after a sent request.
+- **What the call says.** With a recent request, the errand message as before. Without one, a check-in: the Dialer's own words "<person> asked me to check in with you.", read back as "Call <name> to check in for you." Picking it goes through the read-back and the two-option confirm (1 sends, 2 cancels), then dials and shows on the Agents screen like any call. Consent list, do-not-call, holds and never an emergency number all still apply.
+- **No promises in replies.** The planner is told a reply is only said aloud, so a reply never says "Yes, call him" or "I'll send it"; only the call, errand or search option itself does that.
+
 ## 5. Honesty and safety (unchanged rules)
 
 - Nothing leaves the room (errand, message, call, web search start) without a read-back and a fresh confirm pick. One exception since D24: a partner question with "do you know" is searched at once, under web search consent (section 4.4).
 - The jaw clench is a muscle signal; the fists are imagined movements. No "mind reading" wording.
-- Calls: consent list only, AI disclosure, 9 AM to 9 PM, never emergency numbers.
+- Calls: consent list only, AI disclosure, never emergency numbers (PLAN D20 removed the 9 AM to 9 PM rule). Since D28 a call can be offered with no sent request when the partner asks for it by name (section 4.6); it then only checks in.
 
 ## 6. Build tracks
 

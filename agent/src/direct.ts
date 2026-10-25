@@ -26,12 +26,14 @@ import {
     JobInputError,
     memoryConsent,
     planOptions,
+    prepareCall,
     publish,
     recentErrand,
     type JobDeps,
     type PlanContext,
+    type RecentErrand,
 } from './jobs.js';
-import { acceptedSource, PAD_REPLIES } from './options.js';
+import { acceptedSource, callActionJson, PAD_REPLIES } from './options.js';
 import { JobEvents } from './pipeline.js';
 import { PlannerError, type PlanInput, type WebContext } from './planner/types.js';
 import { SearchPrefetch } from './prefetch.js';
@@ -48,7 +50,7 @@ import {
     sendSearch,
     type SearchOutcome,
 } from './retrieval.js';
-import type { AgentQueueRow, AnswerMode, OptionInput, Tone } from './types.js';
+import type { AgentQueueRow, AnswerMode, CallContact, OptionInput, Tone } from './types.js';
 
 const clean = (text: string): string => text.replace(/\s+/g, ' ').trim();
 const norm = (text: string): string => clean(text).toLowerCase().replace(/[^\p{L}\p{N} ]+/gu, '').trim();
@@ -136,6 +138,92 @@ export function asksDoYouKnow(question: string): boolean {
 /** The reason in the payload of a "do you know" search event: fixed words, never the question. */
 export const DO_YOU_KNOW_REASON = 'Asked "do you know", so the web search ran at once.';
 
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** "Don't call Stephen" asks for no call. "Why not call Stephen?" still does. */
+const NO_CALL_BEFORE = /(?:^|[^\p{L}\p{N}])(?:don['’]?t|do\s+not|never|no\s+need\s+to)\s+$/iu;
+
+/**
+ * PLAN D28 (Stephen Oct 25): the partner asks to call a consented contact by name, so the call is offered first, with no
+ * request sent. "call <name>", "check in with <name>", "give <name> a call", "ring <name>": any case, whole words, the
+ * contact's full name or its first word ("Stephen's" is not "Stephen"). Not right after "don't", "do not", "never" or
+ * "no need to". The first contact named wins; null when none is.
+ */
+export function askedToCall(question: string, contacts: readonly CallContact[]): CallContact | null {
+    const notWord = '(?<![\\p{L}\\p{N}])';
+    const end = "(?![\\p{L}\\p{N}'’])";
+    for (const contact of contacts) {
+        const full = clean(contact.name);
+        if (full === '') continue;
+        const names = [...new Set([full, full.split(' ')[0] ?? full])].map((n) => escapeRegExp(n).replace(/ /g, '\\s+'));
+        const name = `(?:${names.join('|')})`;
+        const patterns = [
+            new RegExp(`${notWord}(?:call|ring|check[\\s-]+in\\s+with)\\s+${name}${end}`, 'giu'),
+            new RegExp(`${notWord}give\\s+${name}\\s+a\\s+(?:call|ring)(?![\\p{L}\\p{N}])`, 'giu'),
+        ];
+        for (const pattern of patterns) {
+            for (const match of question.matchAll(pattern)) {
+                if (!NO_CALL_BEFORE.test(question.slice(0, match.index ?? 0))) return contact;
+            }
+        }
+    }
+    return null;
+}
+
+/** The contact id a call option was prepared for, or null. */
+function callContactOf(option: OptionInput): string | null {
+    if (option.kind !== 'call') return null;
+    try {
+        const action = JSON.parse(option.actionJson) as { contactId?: unknown };
+        return typeof action.contactId === 'string' ? action.contactId : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * PLAN D28: the call to the contact the partner asked for: the planner's own call option to them when it wrote one, else
+ * a stock one the Dialer prepares now (about the recent errand if there is one, else a check-in). Null when the Dialer
+ * refuses it (consent, do-not-call, a hold, an emergency number): then no call is offered at all.
+ */
+function askedCall(deps: JobDeps, options: readonly OptionInput[], contact: CallContact, recent: RecentErrand | null): { option: OptionInput; stock: boolean } | null {
+    const own = options.find((o) => callContactOf(o) === contact.contactId);
+    if (own) return { option: own, stock: false };
+    const prepared = prepareCall(deps, contact, recent, contact.contactId);
+    if (!prepared) return null;
+    const name = clean(contact.name);
+    return {
+        option: {
+            kind: 'call',
+            label: clean(`Call ${name}`).split(' ').slice(0, 3).join(' ').slice(0, LIMITS.optionLabel),
+            text: (recent ? `Call ${name} about the request.` : `Call ${name} to check in.`).slice(0, LIMITS.optionText),
+            tone: '',
+            laugh: false,
+            provenance: 'stock',
+            sources: [],
+            memoryRefs: [],
+            actionJson: callActionJson(prepared),
+        },
+        stock: true,
+    };
+}
+
+/**
+ * PLAN D28: the asked-for call first, then a reply (a stock one such as "Not now" when the planner wrote none), then
+ * Search the web while it is offered (D24), then the rest that fits. Other call options are left out, so the one call
+ * the partner asked for is the only call. Always a pick: the module takes no action in yes_no mode.
+ */
+export function callFirst(options: readonly OptionInput[], call: OptionInput, maxOptions: number, offering: boolean): { answerMode: AnswerMode; options: OptionInput[]; added: boolean } {
+    const max = Math.max(2, Math.min(maxOptions, LIMITS.maxOptions));
+    const rest = options.filter((o) => o !== call && o.kind !== 'call' && o.kind !== 'search');
+    const [first, ...moreReplies] = rest.filter((o) => o.kind === 'reply');
+    const actions = rest.filter((o) => o.kind !== 'reply');
+    const head = padWithReplies([call, ...(first ? [first] : [])], 2);
+    const found = options.find((o) => o.kind === 'search');
+    const search = offering ? (found ?? { ...STOCK_SEARCH }) : null;
+    const list = [...head, ...(search ? [search] : []), ...moreReplies, ...actions].slice(0, max);
+    return { answerMode: 'pick', options: list, added: search !== null && !found && list.includes(search) };
+}
+
 /**
  * Options job in direct select: everything from the question to `agent_publish_options(final = true)`. No search,
  * except for "do you know" (D24), which is searched at once.
@@ -148,7 +236,9 @@ export async function runDirectOptionsJob(row: AgentQueueRow, attempt: number, d
     if (!isMenu && row.questionText.trim() === '') throw new JobInputError('empty_question');
     const allowMemory = () => memoryConsent(deps, row, attempt);
     const allowWeb = () => consentNow(deps, row, attempt).webSearchAllowed;
-    const callPossible = () => !!deps.dialer && deps.contacts.length > 0 && recentErrand(row, deps.now()) !== null;
+    // PLAN D28: the partner asked to call a consented contact by name, so the call is offered first, request or not.
+    const asked = !isMenu && deps.dialer ? askedToCall(row.questionText, deps.contacts) : null;
+    const callPossible = () => !!deps.dialer && deps.contacts.length > 0 && (asked !== null || recentErrand(row, deps.now()) !== null);
     // The conversation is kept, and sent, only under memory consent (as in the scan path, src/jobs.ts).
     const history = allowMemory() ? deps.conversation.recent(row.askedBy) : [];
     if (!isMenu && allowMemory()) deps.conversation.add(row.askedBy, { speaker: 'partner', text: row.questionText });
@@ -166,7 +256,7 @@ export async function runDirectOptionsJob(row: AgentQueueRow, attempt: number, d
         if (!isMenu && deps.yesNoFast) {
             const verdict = classifyYesNo(row.questionText);
             const fast = verdict.yesNo && !callPossible() && !searchFits && !searchNow;
-            const why = verdict.yesNo && !fast ? (searchNow ? 'do_you_know' : searchFits ? 'search_possible' : 'call_possible') : verdict.reason;
+            const why = verdict.yesNo && !fast ? (asked ? 'call_asked' : searchNow ? 'do_you_know' : searchFits ? 'search_possible' : 'call_possible') : verdict.reason;
             deps.log.info(fast ? 'yes or no fast path: stock options' : 'yes or no fast path not taken', { job: row.jobId, why });
             if (fast) {
                 const options = stockYesNo();
@@ -231,8 +321,10 @@ export async function runDirectOptionsJob(row: AgentQueueRow, attempt: number, d
                 memory,
                 web,
                 forms: deps.forms,
-                contacts: recent && deps.dialer ? deps.contacts : [],
+                // With no recent errand, only the contact the partner asked for (PLAN D28), and only for a check-in.
+                contacts: deps.dialer ? (recent ? deps.contacts : asked ? [asked] : []) : [],
                 recentErrand: recent,
+                ...(asked ? { callAsked: asked.contactId } : {}),
                 search: searchStatus,
                 task: 'options',
                 searchOffer: offering,
@@ -249,17 +341,26 @@ export async function runDirectOptionsJob(row: AgentQueueRow, attempt: number, d
             let shaped: { answerMode: AnswerMode; options: OptionInput[]; added: boolean };
             let allowed: () => boolean;
             let planMs = 0;
+            let base: OptionInput[];
             if (places.some((o) => o.provenance === 'maps')) {
                 await events.instant('plan', 'ok', 'maps places', 0, { counts: { optionCount: places.length, final: true } });
+                base = places;
                 shaped = offering ? withSearch(places, deps.maxOptions) : { answerMode: 'pick', options: padWithReplies(places, 2), added: false };
                 allowed = allowWeb;
             } else {
                 // With a Search option the order means something (reply, reply or action, search), so memory does not reorder it.
                 const planned = await planOptions(ctx, input, memory, web, recent, 'claude', !offering);
                 const options = searched?.kind === 'maps' ? withPinned(planned.options, deps.pinnedPlace ?? null, pinnedRow) : planned.options;
+                base = options;
                 shaped = offering ? withSearch(options, deps.maxOptions) : { answerMode: planned.plan.answerMode, options, added: false };
                 allowed = () => planned.stillAllowed() && (!offering || allowWeb());
                 planMs = planned.plan.ms;
+            }
+            // PLAN D28: the call the partner asked for is option 1 whatever the planner wrote, while the Dialer prepares it.
+            if (asked) {
+                const call = askedCall(deps, base, asked, recent);
+                if (call) shaped = callFirst(base, call.option, deps.maxOptions, offering);
+                deps.log.info('call asked by name', { job: row.jobId, offered: call !== null, stock: call?.stock ?? false, checkIn: recent === null });
             }
             try {
                 if (!allowed()) throw new ConsentWithdrawnError();

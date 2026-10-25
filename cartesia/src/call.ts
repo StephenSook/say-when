@@ -353,9 +353,20 @@ export interface CallRequest {
      * spoken, in form order. Each is checked again here (spokenValue); the ones that pass make the message
      * "<person> sent you today's plan: <values>" for PLAN_TITLE, or "<person> sent a <approved title>: <values>. It was
      * sent at <time>" for any other title. With none left, the message is "<person>'s <approved title> was sent at
-     * <time>". Nothing else is ever said about the errand.
+     * <time>". Nothing else is ever said about the errand. Left out for a check-in.
      */
-    errand: { title: string; sentAt: string | number | Date; values?: readonly string[] };
+    errand?: { title: string; sentAt: string | number | Date; values?: readonly string[] };
+    /**
+     * PLAN D28: the partner asked to call this contact by name and no request was sent recently, so the call reports no
+     * errand. The message is only "<person> asked me to check in with you". Exactly one of `errand` and `checkIn` is set;
+     * every other guard (consent, do-not-call, holds, emergency numbers, the read-back and a fresh CONFIRM) still applies.
+     */
+    checkIn?: true;
+}
+
+/** PLAN D28: what a check-in call says, and its read-back. Fixed words: nothing from the conversation reaches the call. */
+function checkInMessage(personName: string, recipientName: string): { text: string; readBack: string } {
+    return { text: `${personName} asked me to check in with you`, readBack: `Call ${recipientName} to check in for you.` };
 }
 
 /**
@@ -501,7 +512,8 @@ interface Prepared extends PreparedCall {
     toNumber: string;
     timeZone: string;
     variables: Record<string, string>;
-    errandSentAt: number;
+    /** Null for a check-in (PLAN D28), which reports no errand, so there is no errand age to check. */
+    errandSentAt: number | null;
     /**
      * Null until place(). Then the start of the confirm-to-dial window: the CONFIRM's own time, or the time of
      * place() if that is earlier (the CONFIRM's clock may run a little ahead of this one).
@@ -877,7 +889,7 @@ export class Dialer {
         return this.ringSeconds * 1000 + this.durationMinutes * 60_000 + 60_000;
     }
 
-    private check(contact: ConsentEntry | undefined, errandSentAt: number, now: number): CallRefusal | null {
+    private check(contact: ConsentEntry | undefined, errandSentAt: number | null, now: number): CallRefusal | null {
         if (!contact) return refusal('not_consented');
         if (contact.expiresAt !== undefined && Date.parse(contact.expiresAt) <= now) return refusal('consent_expired');
         const number = toUsE164(contact.phone);
@@ -885,7 +897,8 @@ export class Dialer {
         if (isEmergencyNumber(number)) return refusal('emergency_number');
         if (this.lists.doNotCall.has(number)) return refusal('do_not_call');
         if (this.holdUnsaved || this.lists.holds.has(number)) return refusal('opt_out_hold');
-        if (now - errandSentAt > this.maxErrandAgeMs || errandSentAt - now > 60_000) return refusal('errand_stale');
+        // A check-in (PLAN D28) reports no errand, so only an errand call has an age to check.
+        if (errandSentAt !== null && (now - errandSentAt > this.maxErrandAgeMs || errandSentAt - now > 60_000)) return refusal('errand_stale');
         // No time-of-day check (PLAN D20). The zone still sets the time the call says, so one it cannot read refuses
         // here instead of failing while the message is built.
         if (!isUsableTimeZone(contact.timeZone)) return refusal('bad_request');
@@ -945,16 +958,26 @@ export class Dialer {
     prepare(request: CallRequest): { ok: true; call: PreparedCall } | { ok: false; refusal: CallRefusal } {
         const now = this.now();
         if (!request || typeof request.requestId !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(request.requestId)) return this.refuse('bad_request');
-        const sentAt = toMs(request.errand?.sentAt);
-        if (sentAt === null) return this.refuse('bad_request');
-        const title = typeof request.errand?.title === 'string' ? this.titles.get(titleKey(request.errand.title)) : undefined;
-        if (!title) return this.refuse('errand_not_allowed');
+        // PLAN D28: a check-in carries no errand, and an errand call is not a check-in; anything else is not valid.
+        const checkIn = request.checkIn === true;
+        if (checkIn ? request.errand !== undefined : request.checkIn !== undefined) return this.refuse('bad_request');
+        let sentAt: number | null = null;
+        let title: string | undefined;
+        if (!checkIn) {
+            sentAt = toMs(request.errand?.sentAt);
+            if (sentAt === null) return this.refuse('bad_request');
+            title = typeof request.errand?.title === 'string' ? this.titles.get(titleKey(request.errand.title)) : undefined;
+            if (!title) return this.refuse('errand_not_allowed');
+        }
         if (!this.refreshHolds()) return this.refuse('hold_file_error');
         const contact = this.lists.consent.find((entry) => entry.id === request.contactId);
         const blocked = this.check(contact, sentAt, now);
         if (blocked || !contact) return this.refuse(blocked?.code ?? 'not_consented');
         // The values come from the agent, so they are checked again here; the digest below covers the message they make.
-        const message = errandMessage(this.personName, contact.name, title, clockTime(sentAt, contact.timeZone), request.errand.values);
+        const message =
+            sentAt === null || title === undefined
+                ? checkInMessage(this.personName, contact.name)
+                : errandMessage(this.personName, contact.name, title, clockTime(sentAt, contact.timeZone), request.errand?.values);
         // The welcome ends with the message, so the message brings its own closing period.
         const variables: Record<string, string> = { recipient_name: contact.name, message: `${message.text}.` };
         const toNumber = toUsE164(contact.phone) as string;

@@ -425,6 +425,59 @@ describe('Dialer guards', () => {
     });
 });
 
+describe('a check-in call, asked for by name with no request sent (PLAN D28)', () => {
+    const checkIn = (_clock: { t: number }, extra: Record<string, unknown> = {}) => ({ requestId: 'call_1', contactId: 'leon', checkIn: true as const, ...extra });
+    const CHECK_IN = 'Shashank asked me to check in with you';
+
+    it('needs no errand: says only that the person asked to check in, and reads that back', async () => {
+        const h = harness();
+        const prepared = h.dialer.prepare(checkIn(h.clock));
+        assert.ok(prepared.ok);
+        assert.equal(prepared.call.readBack, 'Call Leon to check in for you.');
+        // Still one CONFIRM for one call, measured from the CONFIRM.
+        const placed = h.dialer.place(prepared.call.requestId, prepared.call.digest, h.clock.t);
+        assert.ok(placed.ok);
+        const outcome = await placed.handle.done;
+        assert.equal(outcome.result, 'answered');
+        const variables = dialVariables(h.fetch.calls);
+        assert.deepEqual(variables, { recipient_name: 'Leon', message: `${CHECK_IN}.` });
+        assert.equal(renderTemplate(script.welcome, variables), `Hi Leon, this is an AI assistant from the Eleven app, and this call is recorded. ${CHECK_IN}.`);
+    });
+
+    it('is refused with an errand too, or with neither, and its digest differs from an errand call', () => {
+        const h = harness();
+        const both = h.dialer.prepare(checkIn(h.clock, { errand: { title: 'Care team request', sentAt: h.clock.t - 60_000 } }));
+        assert.ok(!both.ok && both.refusal.code === 'bad_request');
+        const neither = h.dialer.prepare({ requestId: 'call_2', contactId: 'leon' });
+        assert.ok(!neither.ok && neither.refusal.code === 'bad_request');
+        const notTrue = h.dialer.prepare(request(h.clock, { requestId: 'call_3', checkIn: false }));
+        assert.ok(!notTrue.ok && notTrue.refusal.code === 'bad_request');
+        const errand = h.dialer.prepare(request(h.clock, { requestId: 'call_4' }));
+        const plain = h.dialer.prepare(checkIn(h.clock, { requestId: 'call_5' }));
+        assert.ok(errand.ok && plain.ok);
+        assert.notEqual(errand.call.digest, plain.call.digest);
+        const swapped = h.dialer.place('call_5', errand.call.digest, h.clock.t);
+        assert.ok(!swapped.ok && swapped.refusal.code === 'digest_mismatch');
+        assert.equal(dials(h.fetch.calls), 0);
+    });
+
+    it('keeps every other guard: consent, do-not-call, expired consent and a hold still refuse, before any network call', () => {
+        const stranger = harness();
+        const notConsented = stranger.dialer.prepare(checkIn(stranger.clock, { contactId: 'stranger' }));
+        assert.ok(!notConsented.ok && notConsented.refusal.code === 'not_consented');
+        const dnc = harness({ dnc: [LEON] });
+        const blocked = dnc.dialer.prepare(checkIn(dnc.clock));
+        assert.ok(!blocked.ok && blocked.refusal.code === 'do_not_call');
+        const expired = harness({ consent: consentFor({ expiresAt: '2026-10-24T17:00:00Z' }) });
+        const old = expired.dialer.prepare(checkIn(expired.clock));
+        assert.ok(!old.ok && old.refusal.code === 'consent_expired');
+        const held = harness({ holds: [[LEON, 'leon']] });
+        const onHold = held.dialer.prepare(checkIn(held.clock));
+        assert.ok(!onHold.ok && onHold.refusal.code === 'opt_out_hold');
+        for (const h of [stranger, dnc, expired, held]) assert.equal(h.fetch.calls.length, 0);
+    });
+});
+
 /** The values of the demo form's speakable fields, as the person confirmed them: need, details, when, urgency. */
 const SENT_VALUES = ['Meal or drink', 'warm tea, no sugar', '5 PM', 'Today'];
 const SENT_MESSAGE = 'Shashank sent a Care team request: Meal or drink, warm tea, no sugar, 5 PM, Today. It was sent at 10:59 AM';

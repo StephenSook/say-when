@@ -34,6 +34,18 @@ export interface BuiltOptions {
 /** What the Dialer's prepare() gives for a contact, or null when it refuses. */
 export type PrepareCall = (contact: CallContact) => PreparedCall | null;
 
+/** A call option's action JSON: the prepared call the module reads back and the CONFIRM must match. No number. */
+export function callActionJson(prepared: PreparedCall): string {
+    return JSON.stringify({
+        requestId: prepared.requestId,
+        contactId: prepared.contactId,
+        recipientName: prepared.recipientName,
+        readBack: prepared.readBack,
+        digest: prepared.digest,
+        expiresAt: prepared.expiresAt,
+    });
+}
+
 function provenanceOf(sources: SourceRef[], memoryRefs: string[]): Provenance {
     if (sources.some((s) => s.source === 'maps')) return 'maps';
     if (sources.length > 0) return 'web';
@@ -79,14 +91,7 @@ export function buildOptions(plan: Plan, memory: readonly MemoryContext[], web: 
                 droppedCalls += 1;
                 return;
             }
-            actionJson = JSON.stringify({
-                requestId: prepared.requestId,
-                contactId: prepared.contactId,
-                recipientName: prepared.recipientName,
-                readBack: prepared.readBack,
-                digest: prepared.digest,
-                expiresAt: prepared.expiresAt,
-            });
+            actionJson = callActionJson(prepared);
         }
 
         const id = `o${options.length + 1}`;
