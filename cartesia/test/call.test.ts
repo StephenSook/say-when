@@ -35,14 +35,18 @@ import {
     checkAgentScript,
     END_CALL_TOOL,
     ENDING_HEADING,
+    GOODBYE,
     heardOptOut,
     HOLD_TRIGGERS,
     loadAgentScript,
+    NOT_THE_PERSON,
     OPT_OUT_REPLY,
     PRODUCT_NAME,
     REFUSAL_RULE,
     renderTemplate,
+    SCRIPT_VARIABLES,
     speechWords,
+    templateVariables,
 } from '../src/call-script.js';
 import { redact, type PipelineEvent } from '../src/events.js';
 import { dialerFromEnv } from '../src/server.js';
@@ -335,7 +339,7 @@ describe('no calling-hours limit (PLAN D20)', () => {
         const h = harness({ now: NIGHT, consent: consentFor({ timeZone: 'America/New_York' }) });
         const outcome = await prepareAndPlace(h).handle.done;
         assert.equal(outcome.result, 'answered');
-        assert.equal(dialVariables(h.fetch.calls).message, "Shashank's Care team request was sent at 1:59 AM");
+        assert.equal(dialVariables(h.fetch.calls).message, "Shashank's Care team request was sent at 1:59 AM.");
     });
 
     it('keeps every other guard at 11 PM: do-not-call, expired consent and a stale errand still refuse', () => {
@@ -446,9 +450,13 @@ describe('what the call says about the sent request', () => {
         assert.ok(placed.ok);
         await placed.handle.done;
         const variables = dialVariables(h.fetch.calls);
-        assert.equal(variables.message, SENT_MESSAGE);
-        assert.ok(renderTemplate(script.welcome, variables).includes(`I'm calling to let you know that ${SENT_MESSAGE}. Did you get it?`));
-        assert.ok(renderTemplate(script.instructions, variables).includes(`Message: "${SENT_MESSAGE}"`));
+        assert.equal(variables.message, `${SENT_MESSAGE}.`);
+        // Oct 25: the welcome gets to the point. The two disclosures, then the message, and nothing after it.
+        assert.equal(
+            renderTemplate(script.welcome, variables),
+            `Hi Leon, this is an AI assistant from the Eleven app, and this call is recorded. ${SENT_MESSAGE}.`,
+        );
+        assert.ok(renderTemplate(script.instructions, variables).includes(`Message: "${SENT_MESSAGE}."`));
         assert.ok(SENT_MESSAGE.length <= SUMMARY_LIMITS.messageChars);
     });
 
@@ -458,12 +466,7 @@ describe('what the call says about the sent request', () => {
         const other = h.dialer.prepare(withValues(h.clock, ['Ride', '5 PM', 'Now'], 'call_b'));
         const plain = h.dialer.prepare(request(h.clock, { requestId: 'call_c' }));
         assert.ok(sent.ok && other.ok && plain.ok);
-        const variables = {
-            recipient_name: 'Leon',
-            person_name: 'Shashank',
-            callback_number: spokenNumber(CALLBACK),
-            message: SENT_MESSAGE,
-        };
+        const variables = { recipient_name: 'Leon', message: `${SENT_MESSAGE}.` };
         const welcome = renderTemplate(script.welcome, variables);
         const instructions = renderTemplate(script.instructions, variables);
         assert.ok(welcome.includes(SENT_MESSAGE) && instructions.includes(SENT_MESSAGE));
@@ -485,7 +488,7 @@ describe('what the call says about the sent request', () => {
             const placed = h.dialer.place(prepared.call.requestId, prepared.call.digest, h.clock.t);
             assert.ok(placed.ok);
             await placed.handle.done;
-            assert.equal(dialVariables(h.fetch.calls).message, PLAIN_MESSAGE, JSON.stringify(values));
+            assert.equal(dialVariables(h.fetch.calls).message, `${PLAIN_MESSAGE}.`, JSON.stringify(values));
         }
         // No values at all is the request the old agent sends: the same message and read-back as before.
         const h = harness();
@@ -574,10 +577,10 @@ describe("what the call says about today's plan", () => {
         assert.ok(placed.ok);
         await placed.handle.done;
         const variables = dialVariables(h.fetch.calls);
-        assert.equal(variables.message, `Shashank sent you today's plan: ${PLAN_SPOKEN}. ${RIDE}`);
-        assert.ok(variables.message!.length <= SUMMARY_LIMITS.messageChars);
+        assert.equal(variables.message, `Shashank sent you today's plan: ${PLAN_SPOKEN}. ${RIDE}.`);
+        assert.ok(variables.message!.length <= SUMMARY_LIMITS.messageChars + 1);
         const welcome = renderTemplate(script.welcome, variables);
-        assert.ok(welcome.includes(`that Shashank sent you today's plan: ${PLAN_SPOKEN}. ${RIDE}. Did you get it?`));
+        assert.ok(welcome.endsWith(`recorded. Shashank sent you today's plan: ${PLAN_SPOKEN}. ${RIDE}.`));
         const digest = createHash('sha256')
             .update(JSON.stringify(['leon', LEON, 'America/Los_Angeles', welcome, renderTemplate(script.instructions, variables)]))
             .digest('hex')
@@ -692,11 +695,10 @@ describe('Dialer calls', () => {
             outbound_calls: [
                 {
                     to_number: LEON,
+                    // No person_name and no callback_number: the script uses neither (Oct 25).
                     dynamic_variables: {
                         recipient_name: 'Leon',
-                        person_name: 'Shashank',
-                        callback_number: '415-555-0188',
-                        message: "Shashank's Care team request was sent at 10:59 AM",
+                        message: "Shashank's Care team request was sent at 10:59 AM.",
                     },
                 },
             ],
@@ -1709,53 +1711,50 @@ describe('call data', () => {
 });
 
 describe('the reviewed script', () => {
-    it('discloses the AI voice and the recording before the message, and gives the callback number only at the end', () => {
+    it('discloses an AI assistant and the recording before the message, and names no person and no number', () => {
         assert.deepEqual(checkAgentScript(script), []);
-        const values = {
-            recipient_name: 'Leon',
-            person_name: 'Shashank',
-            callback_number: '415-555-0188',
-            message: "Shashank's Care team request was sent at 10:59 AM",
-        };
-        const spoken = renderTemplate(script.welcome, values);
-        const at = (phrase: string) => spoken.indexOf(phrase);
-        assert.ok(at('automated assistant') >= 0 && at('AI-generated voice') >= 0 && at('recorded') >= 0);
-        assert.ok(at('recorded') < at('Care team request'));
-        // Oct 24 live test: the number right after the disclosure came before the message. It now comes at the end only
-        // (47 CFR 64.1200(b)(2) allows it during or after the message).
-        assert.equal(spoken.includes('415-555-0188'), false);
-        assert.equal(script.welcome.includes('{{callback_number}}'), false);
+        const values = { recipient_name: 'Leon', message: "Shashank's Care team request was sent at 10:59 AM." };
+        // Oct 25 (Stephen): straight to the point. No "automated assistant with an AI-generated voice", no "calling for
+        // Demo user", no "Did you get it?", and no callback number at the end.
+        assert.equal(
+            renderTemplate(script.welcome, values),
+            "Hi Leon, this is an AI assistant from the Eleven app, and this call is recorded. Shashank's Care team request was sent at 10:59 AM.",
+        );
+        assert.deepEqual([...SCRIPT_VARIABLES], ['recipient_name', 'message']);
+        assert.deepEqual(templateVariables(`${script.welcome}\n${script.instructions}`).sort(), ['message', 'recipient_name']);
+        for (const gone of ['{{person_name}}', '{{callback_number}}', 'Demo', 'automated', 'AI-generated', 'Did you get it', 'To reach']) {
+            assert.equal(script.welcome.includes(gone) || script.instructions.includes(gone), false, gone);
+        }
         const rendered = renderTemplate(script.instructions, values);
         const ending = rendered.slice(rendered.indexOf(ENDING_HEADING));
-        assert.ok(ending.includes("To reach Shashank's team, call 415-555-0188. Goodbye."));
-        assert.match(script.instructions, /You are not \{\{person_name\}\}/);
+        assert.ok(ending.includes(`always say: "${GOODBYE}"`));
+        assert.equal(/[0-9]/.test(ending), false);
+        assert.ok(script.instructions.includes(NOT_THE_PERSON));
         assert.equal(script.welcome.endsWith('\n'), false);
     });
 
-    it('needs the callback number in the ending of the instructions, not in the welcome', () => {
-        // A welcome without the number passes; one that still gives it before the message is allowed too.
-        assert.deepEqual(checkAgentScript(script), []);
-        const early = { welcome: script.welcome.replace(' I\'m calling', ' To reach {{person_name}}\'s team, call {{callback_number}}. I\'m calling'), instructions: script.instructions };
-        assert.notEqual(early.welcome, script.welcome);
-        assert.deepEqual(checkAgentScript(early), []);
-        // The ending without the number fails, even when the number appears earlier in the instructions.
-        const closing = "To reach {{person_name}}'s team, call {{callback_number}}. Goodbye.";
-        assert.ok(script.instructions.includes(closing));
-        const noNumber = { welcome: script.welcome, instructions: script.instructions.replace(closing, 'Goodbye.') };
-        assert.ok(checkAgentScript(noNumber).some((problem) => problem.includes('{{callback_number}}')));
-        const moved = {
+    it('refuses a script that names the person or reads out a number again', () => {
+        const named = { welcome: script.welcome.replace(', this is', ', calling for {{person_name}}, this is'), instructions: script.instructions };
+        assert.notEqual(named.welcome, script.welcome);
+        assert.ok(checkAgentScript(named).includes('unknown variable {{person_name}}'));
+        const numbered = {
             welcome: script.welcome,
-            instructions: noNumber.instructions.replace('# Rules\n', '# Rules\n- The team is at {{callback_number}}.\n'),
+            instructions: script.instructions.replace(`always say: "${GOODBYE}"`, `always say: "To reach the team, call {{callback_number}}. ${GOODBYE}"`),
         };
-        assert.ok(moved.instructions.includes('{{callback_number}}'));
-        assert.ok(checkAgentScript(moved).some((problem) => problem.includes('{{callback_number}}')));
+        assert.notEqual(numbered.instructions, script.instructions);
+        assert.ok(checkAgentScript(numbered).includes('unknown variable {{callback_number}}'));
         const noEnding = { welcome: script.welcome, instructions: script.instructions.replace(ENDING_HEADING, '# Last') };
         assert.ok(checkAgentScript(noEnding).some((problem) => problem.includes(ENDING_HEADING)));
+        const noGoodbye = { welcome: script.welcome, instructions: script.instructions.replaceAll(`"${GOODBYE}"`, '"Bye."') };
+        assert.ok(checkAgentScript(noGoodbye).some((problem) => problem.includes(`must quote "${GOODBYE}"`)));
+        const noPerson = { welcome: script.welcome, instructions: script.instructions.replace(NOT_THE_PERSON, 'You are the assistant') };
+        assert.ok(checkAgentScript(noPerson).some((problem) => problem.includes(NOT_THE_PERSON)));
     });
 
     it('tells the agent to hang up with the end_call tool after the goodbye, and flags a script that does not', () => {
         const ending = script.instructions.slice(script.instructions.indexOf(ENDING_HEADING));
-        assert.ok(ending.indexOf(END_CALL_TOOL) > ending.indexOf('{{callback_number}}'));
+        assert.ok(ending.indexOf(`"${GOODBYE}"`) >= 0);
+        assert.ok(ending.indexOf(END_CALL_TOOL) > ending.indexOf(`"${GOODBYE}"`));
         const sentence = script.instructions.slice(script.instructions.indexOf('Right after'));
         assert.ok(sentence.includes(END_CALL_TOOL));
         const dropped = { welcome: script.welcome, instructions: script.instructions.replace(sentence, 'Then end the call.') };
@@ -1780,13 +1779,24 @@ describe('the reviewed script', () => {
     it('names the app in the disclosure, and flags a welcome that does not', () => {
         assert.equal(PRODUCT_NAME, 'Eleven');
         const before = script.welcome.indexOf('{{message}}');
-        assert.ok(script.welcome.indexOf(`through the ${PRODUCT_NAME} app`) >= 0);
+        assert.ok(script.welcome.indexOf(`from the ${PRODUCT_NAME} app`) >= 0);
         assert.ok(script.welcome.indexOf(PRODUCT_NAME) < before);
         assert.match(script.instructions, new RegExp(`uses the ${PRODUCT_NAME} app`));
-        const unnamed = { welcome: script.welcome.replace(`through the ${PRODUCT_NAME} app`, 'through an app'), instructions: script.instructions };
+        const unnamed = { welcome: script.welcome.replace(`from the ${PRODUCT_NAME} app`, 'from an app'), instructions: script.instructions };
         assert.ok(checkAgentScript(unnamed).some((problem) => problem.includes(PRODUCT_NAME.toLowerCase())));
         const late = { welcome: `${unnamed.welcome} ${PRODUCT_NAME}.`, instructions: script.instructions };
         assert.ok(checkAgentScript(late).some((problem) => problem.includes('before the message')));
+    });
+
+    it('needs both disclosures, the AI assistant and the recording, before the message', () => {
+        const noAi = { welcome: script.welcome.replace('an AI assistant', 'an assistant'), instructions: script.instructions };
+        assert.notEqual(noAi.welcome, script.welcome);
+        assert.ok(checkAgentScript(noAi).includes('the welcome must say "ai assistant"'));
+        const noRecording = { welcome: script.welcome.replace(', and this call is recorded', ''), instructions: script.instructions };
+        assert.notEqual(noRecording.welcome, script.welcome);
+        assert.ok(checkAgentScript(noRecording).includes('the welcome must say "recorded"'));
+        const lateRecording = { welcome: `${noRecording.welcome} This call is recorded.`, instructions: script.instructions };
+        assert.ok(checkAgentScript(lateRecording).includes('the welcome must say "recorded" before the message'));
     });
 });
 
