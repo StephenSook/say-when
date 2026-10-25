@@ -536,7 +536,7 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
   ];
   const errandReadBackText =
     'Care team request, from Demo user. Meal or drink: dinner at the cafe on Bay St with my partner, 7 pm tonight. ' +
-    'One: send it. Two: cancel.';
+    'Confirm to send it and email the care team. One: send it. Two: cancel.';
   const errandAt = errandPickAt + 100;
   step(errandAt, 'errand drafted', (rows) => {
     rows.errands.push({
@@ -575,6 +575,22 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
     readBackText: errandReadBackText,
     screenshotUrl: previewScreenshot(readBack),
   });
+  // PLAN D25: the care team email, drafted with the read-back and sent only after the form (agent/src/email.ts).
+  const requested = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/Los_Angeles' }).format(at(previewAt));
+  const email = {
+    to: 'c***@example.org',
+    subject: 'Care team request: Meal or drink',
+    text: [
+      'Care team request, sent with the Eleven app.',
+      '',
+      ...readBack.map((item) => (item.label.endsWith('?') ? `${item.label} ${item.value}` : `${item.label}: ${item.value}`)),
+      '',
+      `Requested: ${requested}.`,
+      'The person heard these values read back and confirmed them before the form and this email were sent. The Eleven app sent both on their behalf.',
+    ].join('\n'),
+    draftedAt: iso(previewAt),
+  };
+  event(previewAt, 'errand', 'ok', { errandId, label: 'email drafted', email }, 0);
   updateErrand(previewAt + 100, 'errand reading back', { status: 'reading_back' });
   const errandWindowAt = previewAt + 100 + READ_BACK_MS;
   updateErrand(errandWindowAt, 'errand waiting for confirm', {
@@ -595,6 +611,9 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
     confirmationText: 'Your response has been recorded.',
   });
   event(sentAt, 'errand', 'ok', { errandId }, sentAt - errandAt);
+  event(sentAt + 100, 'errand', 'started', { errandId, label: 'email sending', email }, null);
+  const emailSentAt = sentAt + 1_000;
+  event(emailSentAt, 'errand', 'ok', { errandId, label: 'email sent', email: { ...email, outcome: 'sent', sentAt: iso(emailSentAt) }, mailMs: 900 }, 900);
 
   // Another follow-up: the call, or nothing else. A stray PICK_3 (a single jaw clench) finds no option 3 in this
   // two-option list; PICK_1 picks the call.

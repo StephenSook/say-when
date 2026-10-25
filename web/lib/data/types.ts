@@ -272,8 +272,35 @@ export interface SelectDetail extends DetailBase {
   kind?: OptionKind;
 }
 
+/**
+ * The care team email after a sent form (PLAN D25), in an errand step's private payload: shown only while the room
+ * shares text. `to` is masked by the agent ("s***@gmail.com"); the full address never reaches the module.
+ */
+export interface ErrandEmailPayload {
+  to?: string;
+  subject?: string;
+  /** The body. */
+  text?: string;
+  /** ISO 8601. */
+  draftedAt?: string;
+  /** ISO 8601, on the sent step. */
+  sentAt?: string;
+  /** 'sent', 'failed', 'unknown' or 'not_sent'. */
+  outcome?: string;
+  /** One sentence for a failed, unknown or not sent email. */
+  reason?: string;
+}
+
 export interface ErrandDetail extends DetailBase {
   errandId?: string;
+  /** The email steps (labels "email drafted", "email sending", "email sent", "email failed: <code>"). */
+  email?: ErrandEmailPayload;
+  /** Counts on an email step: true when the email may have gone out (it is never sent again). */
+  maybeSent?: boolean;
+  /** Counts on an email step: true when no email was sent on purpose (a duplicate form). */
+  notSent?: boolean;
+  /** Counts on the sent step: how long the send took. */
+  mailMs?: number;
 }
 
 export interface CallDetail extends DetailBase {

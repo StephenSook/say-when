@@ -403,7 +403,7 @@ export function readBackItems(json: string | null | undefined): ReadBackItem[] {
 }
 
 /** Payload keys that hold free text, which gets phone numbers hidden. Addresses (`url`), ids and times are left alone. */
-const PAYLOAD_TEXT_KEYS: ReadonlySet<string> = new Set(['words', 'text', 'title', 'sharedText', 'reason', 'address']);
+const PAYLOAD_TEXT_KEYS: ReadonlySet<string> = new Set(['words', 'text', 'title', 'sharedText', 'reason', 'address', 'subject']);
 
 /** A copy of a parsed payload with phone numbers hidden in its free text. Drops `__proto__` keys. */
 function maskPayloadText(value: unknown, key: string | null, depth: number): unknown {
