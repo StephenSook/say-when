@@ -9,7 +9,7 @@
  * shouldAutoConnect) or a click on Connect. Until then nothing is opened, so the public site never retries a missing
  * decoder or meets Chrome's local-network prompt unasked.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { DEFAULT_VIZ_URL } from './protocol';
 import { VizStream } from './stream';
 
@@ -28,7 +28,8 @@ export interface VizTick {
 }
 
 export function useVizStream(autoConnect: boolean, url: string = DEFAULT_VIZ_URL): VizTick {
-  const [stream] = useState(() => new VizStream(url));
+  // A new stream when the address changes: the page reads ?bridge= after its first render.
+  const stream = useMemo(() => new VizStream(url), [url]);
   const [tick, setTick] = useState(() => ({ version: 0, now: 0 }));
   const [clicked, setClicked] = useState(false);
   const started = autoConnect || clicked;

@@ -13,7 +13,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Chip, CrossIcon, Dialog, ReplayIcon, StatusMark, TextLink } from '@/components/ui';
 import { cx } from '@/lib/cx';
-import { GUESS_SHOW_MS, LABELS, buildBrainView, caption, guessText, isJawCommand, sceneFailedText, shouldAutoConnect, sourceText } from '@/lib/brain/model';
+import { GUESS_SHOW_MS, LABELS, bridgeUrlFrom, buildBrainView, caption, guessText, isJawCommand, sceneFailedText, shouldAutoConnect, sourceText } from '@/lib/brain/model';
+import { DEFAULT_VIZ_URL } from '@/lib/brain/protocol';
 import { brainInputOf } from '@/lib/brain/stream';
 import { useVizStream } from '@/lib/brain/useVizStream';
 import { BandStrip } from './BandStrip';
@@ -46,28 +47,31 @@ interface PageOptions {
   bloom: boolean;
   /** Open the local decoder without a click: on the EEG laptop's own server, or with ?bridge=1. */
   autoConnect: boolean;
+  /** ws://127.0.0.1:8766, or a forwarded bridge from ?bridge=wss://... */
+  vizUrl: string;
 }
 
 /**
  * ?wearer=Name personalizes the caption in the info dialog; ?bloom=0 turns the glow pass off on a slow laptop;
- * ?bridge=1 connects to the local decoder on a non-local host.
+ * ?bridge=1 connects to the local decoder on a non-local host; ?bridge=wss://host connects to a forwarded bridge.
  */
 function usePageOptions(): PageOptions {
-  const [options, setOptions] = useState<PageOptions>({ wearer: null, bloom: true, autoConnect: false });
+  const [options, setOptions] = useState<PageOptions>({ wearer: null, bloom: true, autoConnect: false, vizUrl: DEFAULT_VIZ_URL });
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     setOptions({
       wearer: params.get('wearer')?.trim().slice(0, 40) || null,
       bloom: params.get('bloom') !== '0',
       autoConnect: shouldAutoConnect(window.location.hostname, window.location.search),
+      vizUrl: bridgeUrlFrom(window.location.search) ?? DEFAULT_VIZ_URL,
     });
   }, []);
   return options;
 }
 
 export default function BrainScreen() {
-  const { wearer, bloom, autoConnect } = usePageOptions();
-  const { stream, now, started, connect } = useVizStream(autoConnect);
+  const { wearer, bloom, autoConnect, vizUrl } = usePageOptions();
+  const { stream, now, started, connect } = useVizStream(autoConnect, vizUrl);
   const reducedMotion = useReducedMotion();
   const [infoOpen, setInfoOpen] = useState(false);
   const [turned, setTurned] = useState(false);

@@ -152,7 +152,18 @@ export function shouldAutoConnect(hostname: string, search: string): boolean {
   const host = hostname.toLowerCase();
   if (host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1' || host.endsWith('.localhost')) return true;
   const params = new URLSearchParams(search);
-  return params.get('bridge') === '1' || params.get('brain') === '1';
+  return params.get('bridge') === '1' || params.get('brain') === '1' || bridgeUrlFrom(search) !== null;
+}
+
+/**
+ * ?bridge=wss://host: a forwarded bridge, for a wearer who shares the live view with a teammate on purpose through a
+ * tunnel (eeg-data/share.py). Only a bare wss:// origin is accepted (no path, query or credentials); anything else
+ * returns null and the page keeps ws://127.0.0.1:8766.
+ */
+export function bridgeUrlFrom(search: string): string | null {
+  const value = new URLSearchParams(search).get('bridge');
+  if (!value || !/^wss:\/\/[a-z0-9.-]+(:\d{1,5})?\/?$/i.test(value)) return null;
+  return value.replace(/\/$/, '');
 }
 
 export function caption(wearer: string | null): string {
