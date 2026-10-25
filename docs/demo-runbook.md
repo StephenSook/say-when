@@ -50,12 +50,14 @@ scripts/demo-up.sh --db say-when-demo --calls
 
 **9:10. Pair the three pages** (about 2 s each once the code shows).
 
-Open the station, the speaker and the partner pages. Each shows a 6-digit code. On Stephen's Mac:
+Start auto-approve on Stephen's Mac first, then open the station, the speaker and the partner pages. Each page pairs by itself, with no code to read out. Auto-approve pairs one page per role and then turns off, so a stranger who opens the public page later is never paired:
 
 ```bash
-node scripts/demo-owner.mjs --db say-when-demo approve <code>
-node scripts/demo-owner.mjs --db say-when-demo state      # station, speaker, partner and agent, plus the consent rows
+cd scripts && npm run owner -- --db say-when-demo auto-approve --minutes 10   # pairs station, speaker, partner, then stops
+npm run owner -- --db say-when-demo state                                     # station, speaker, partner and agent, plus the consent rows
 ```
+
+To pair a single page by hand instead, read its 6-digit code: `npm run owner -- --db say-when-demo approve <code>`.
 
 Pairing survives a reload. The sidecar's own pairing and the consent rows were done on Oct 24 (below).
 

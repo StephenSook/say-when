@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
-import { consentContactIds, decodeCell, devicesToRevoke, missingConsents, parseSqlTable, run } from '../demo-owner.mjs';
+import { consentContactIds, decodeCell, devicesToRevoke, missingConsents, parseSqlTable, pickApprovals, run } from '../demo-owner.mjs';
 
 // The exact shape `spacetime sql` printed for say-when-dev on Oct 24 (identities shortened in the fixtures below).
 const CONSENT_SQL = ` id | scope            | subject             | revoked_at
@@ -214,5 +214,74 @@ describe('devices', () => {
         const live = fakeCli({ 'SELECT id, label, ended_at FROM session': ' id | label | ended_at\n---+---+---\n 4 | "keyboard-test" | (none = ())\n' });
         run(['--db', 'say-when-demo', 'end-session'], { spacetime: live.spacetime, out: () => {} });
         assert.deepEqual(live.calls.filter((c) => c[0] === 'call').map((c) => c.slice(5)), [['end_session']]);
+    });
+});
+
+describe('auto-approve', () => {
+    const PAIRING = (rows) => ` code | role | label | expires_at\n------+------+-------+------------\n${rows.map((r) => ` ${r.code} | (${r.role} = ()) | "${r.label}" | ${r.expires}`).join('\n')}\n`;
+
+    it('picks at most one request per wanted role, oldest first, and never the agent or a malformed code', () => {
+        const rows = [
+            { code: '222222', role: 'station', label: 'b', expires_at: '2' },
+            { code: '111111', role: 'station', label: 'a', expires_at: '1' },
+            { code: '333333', role: 'agent', label: 'x', expires_at: '1' },
+            { code: '12345', role: 'speaker', label: 'short', expires_at: '1' },
+            { code: '444444', role: 'partner', label: 'p', expires_at: '3' },
+        ];
+        assert.deepEqual(
+            pickApprovals(rows, ['station', 'speaker', 'partner'], []).map((p) => [p.code, p.role]),
+            [['111111', 'station'], ['444444', 'partner']],
+        );
+        assert.deepEqual(pickApprovals(rows, ['station', 'partner'], ['station']).map((p) => p.role), ['partner']);
+    });
+
+    it('pairs each page as it asks, never as a caregiver, then stops', () => {
+        const answers = [
+            PAIRING([]),
+            PAIRING([{ code: '482913', role: 'station', label: 'station', expires: '1' }]),
+            PAIRING([
+                { code: '555555', role: 'station', label: 'second station', expires: '2' },
+                { code: '612345', role: 'speaker', label: 'room voice', expires: '2' },
+                { code: '712345', role: 'partner', label: 'phone', expires: '2' },
+            ]),
+        ];
+        const calls = [];
+        let polls = 0;
+        const spacetime = (args) => {
+            calls.push(args);
+            if (args[0] === 'sql') return answers[Math.min(polls++, answers.length - 1)];
+            return '';
+        };
+        const { lines, out } = capture();
+        let t = 0;
+        const code = run(['--db', 'say-when-demo', 'auto-approve'], { spacetime, out, sleep: () => (t += 2_000), now: () => t });
+        assert.equal(code, 0);
+        const approvals = calls.filter((c) => c[0] === 'call').map((c) => c.slice(5));
+        assert.deepEqual(approvals, [
+            ['approve_pairing', '482913', 'false'],
+            ['approve_pairing', '612345', 'false'],
+            ['approve_pairing', '712345', 'false'],
+        ]);
+        assert.ok(!approvals.some((a) => a[1] === '555555'), 'a second station is never paired');
+        assert.match(lines.join('\n'), /auto-approve is off/);
+    });
+
+    it('gives up at the deadline and says which pages never asked', () => {
+        const { spacetime } = fakeCli({ 'SELECT code, role': ' code | role | label | expires_at\n---+---+---+---\n' });
+        const { lines, out } = capture();
+        let t = 0;
+        const code = run(['--db', 'say-when-demo', 'auto-approve', '--minutes', '1', '--roles', 'station'], { spacetime, out, sleep: () => (t += 2_000), now: () => t });
+        assert.equal(code, 1);
+        assert.match(lines.join('\n'), /not paired: station/);
+    });
+
+    it('refuses the agent role, a bad duration and an unknown database', () => {
+        const { calls, spacetime } = fakeCli();
+        const opts = { spacetime, out: () => {}, sleep: () => {}, now: () => 0 };
+        assert.equal(run(['--db', 'say-when-demo', 'auto-approve', '--roles', 'agent'], opts), 2);
+        assert.equal(run(['--db', 'say-when-demo', 'auto-approve', '--minutes', '45'], opts), 2);
+        assert.equal(run(['--db', 'say-when-demo', 'auto-approve', '--minutes', 'x'], opts), 2);
+        assert.equal(run(['--db', 'say-when-try', 'auto-approve'], opts), 2);
+        assert.equal(calls.length, 0);
     });
 });

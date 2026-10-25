@@ -4,6 +4,9 @@
 //   node scripts/demo-owner.mjs --db say-when-demo state                 what is paired, what is consented, the session
 //   node scripts/demo-owner.mjs --db say-when-demo approve 482913        approve a pairing code shown on a page
 //   node scripts/demo-owner.mjs --db say-when-demo approve 482913 --caregiver
+//   node scripts/demo-owner.mjs --db say-when-demo auto-approve [--minutes 10] [--roles station,speaker,partner]
+//                                                                         pair the next page of each role with no code
+//                                                                         typed, one per role, then stop
 //   node scripts/demo-owner.mjs --db say-when-demo consents --call-contact stephen
 //                                                                         grant the demo's consent rows that are missing
 //   node scripts/demo-owner.mjs --db say-when-demo sharing on|off        the room's board text toggle
@@ -78,13 +81,42 @@ export function devicesToRevoke(deviceRows) {
     return deviceRows.filter((row) => row.revoked === 'false' && row.role !== 'agent').map((row) => row.identity);
 }
 
+/** The roles `auto-approve` may pair. Never the Agent (scripts/demo-up.sh pair) and never as a caregiver. */
+export const AUTO_ROLES = ['station', 'speaker', 'partner'];
+export const AUTO_MAX_MINUTES = 30;
+
+/**
+ * The pending pairing requests to approve now: at most one per wanted role not yet paired in this run, oldest code
+ * first within a role. Rows are `pairing_request` rows as parseSqlTable returns them.
+ */
+export function pickApprovals(rows, wantedRoles, doneRoles) {
+    const picked = [];
+    const taken = new Set(doneRoles);
+    const pending = rows
+        .filter((row) => /^[1-9][0-9]{5}$/.test(row.code ?? '') && wantedRoles.includes(row.role) && !taken.has(row.role))
+        .sort((a, b) => String(a.expires_at).localeCompare(String(b.expires_at)));
+    for (const row of pending) {
+        if (taken.has(row.role)) continue;
+        taken.add(row.role);
+        picked.push({ code: row.code, role: row.role, label: row.label ?? '' });
+    }
+    return picked;
+}
+
+/** Blocks for `ms` milliseconds (the owner CLI is synchronous). */
+function sleepSync(ms) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 export function parseArgs(argv) {
-    const args = { db: '', command: '', rest: [], caregiver: false, yes: false, callContacts: [] };
+    const args = { db: '', command: '', rest: [], caregiver: false, yes: false, callContacts: [], minutes: 10, roles: [...AUTO_ROLES] };
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i];
         if (a === '--db') args.db = argv[++i] ?? '';
         else if (a === '--caregiver') args.caregiver = true;
         else if (a === '--yes') args.yes = true;
+        else if (a === '--minutes') args.minutes = Number(argv[++i] ?? '');
+        else if (a === '--roles') args.roles = String(argv[++i] ?? '').split(',').map((r) => r.trim().toLowerCase()).filter(Boolean);
         else if (a === '--call-contact') args.callContacts.push(argv[++i] ?? '');
         else if (!args.command) args.command = a;
         else args.rest.push(a);
@@ -115,7 +147,10 @@ export function cliRunner(args) {
     return execFileSync('spacetime', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000 });
 }
 
-export function run(argv, { spacetime = cliRunner, out = (line) => process.stdout.write(`${line}\n`), contacts = consentContactIds } = {}) {
+export function run(
+    argv,
+    { spacetime = cliRunner, out = (line) => process.stdout.write(`${line}\n`), contacts = consentContactIds, sleep = sleepSync, now = () => Date.now() } = {},
+) {
     const args = parseArgs(argv);
     if (!DATABASES.includes(args.db)) {
         out(`Refusing database "${args.db}": use --db say-when-dev or --db say-when-demo.`);
@@ -155,6 +190,43 @@ export function run(argv, { spacetime = cliRunner, out = (line) => process.stdou
             }
             call('approve_pairing', code, args.caregiver ? 'true' : 'false');
             out(`approved ${code}${args.caregiver ? ' as a caregiver' : ''}; the page turns paired within a few seconds.`);
+            return 0;
+        }
+        case 'auto-approve': {
+            // Pairs the next page of each wanted role as it asks, so nobody reads a code aloud. One per role, then it
+            // stops, so a stranger who opens the public page later is never paired. Never the Agent, never a caregiver.
+            if (args.roles.length === 0 || args.roles.some((role) => !AUTO_ROLES.includes(role))) {
+                out(`--roles takes a comma list of ${AUTO_ROLES.join(', ')}.`);
+                return 2;
+            }
+            if (!Number.isFinite(args.minutes) || args.minutes <= 0 || args.minutes > AUTO_MAX_MINUTES) {
+                out(`--minutes takes a number from 1 to ${AUTO_MAX_MINUTES}.`);
+                return 2;
+            }
+            const wanted = [...new Set(args.roles)];
+            const done = [];
+            const deadline = now() + args.minutes * 60_000;
+            out(`auto-approve on ${args.db} for up to ${args.minutes} min: open the ${wanted.join(', ')} page(s) now; each pairs by itself.`);
+            while (done.length < wanted.length && now() < deadline) {
+                const rows = sql('SELECT code, role, label, expires_at FROM pairing_request');
+                for (const pick of pickApprovals(rows, wanted, done)) {
+                    try {
+                        call('approve_pairing', pick.code, 'false');
+                        done.push(pick.role);
+                        out(`paired the ${pick.role}${pick.label ? ` (${pick.label})` : ''}.`);
+                    } catch {
+                        // An expired or already-used code: the page asks again with a new one on the next pass.
+                        out(`the ${pick.role} code could not be approved; waiting for the page to ask again.`);
+                    }
+                }
+                if (done.length < wanted.length) sleep(2_000);
+            }
+            const missing = wanted.filter((role) => !done.includes(role));
+            if (missing.length > 0) {
+                out(`stopped after ${args.minutes} min; not paired: ${missing.join(', ')}. Run auto-approve again when those pages are open.`);
+                return 1;
+            }
+            out('every page asked for is paired; auto-approve is off.');
             return 0;
         }
         case 'consents': {
@@ -232,7 +304,7 @@ export function run(argv, { spacetime = cliRunner, out = (line) => process.stdou
             return 0;
         }
         default:
-            out('usage: node scripts/demo-owner.mjs --db say-when-dev|say-when-demo state|devices|approve CODE [--caregiver]|consents [--call-contact ID]|sharing on|off|end-session|revoke 0x<identity>|revoke-others --yes|timers');
+            out('usage: node scripts/demo-owner.mjs --db say-when-dev|say-when-demo state|devices|approve CODE [--caregiver]|auto-approve [--minutes N] [--roles station,speaker,partner]|consents [--call-contact ID]|sharing on|off|end-session|revoke 0x<identity>|revoke-others --yes|timers');
             return 2;
     }
 }
