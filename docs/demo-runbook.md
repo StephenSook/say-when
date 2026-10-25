@@ -29,7 +29,7 @@ Laptop layout, locked by Stephen on Oct 24:
 | Room speaker | `/speaker` on a laptop with a loudspeaker | only one speaker page, or the reply is said twice |
 | Any other screen | `/stage`, `/replies`, `/conversation`, `/live`, `/judge` | anonymous, no pairing |
 
-Check on the EEG laptop before the first judge: `python3 tools/check_viz_bridge.py --seconds 10` (the viz bridge on port 8766 answers with valid messages).
+Check on the EEG laptop before the first judge: `python3 tools/check_viz_bridge.py --expect-source live --seconds 10` (the viz bridge on port 8766 answers with valid messages from the real decoder; without `--expect-source live` the check expects the synthetic tool and fails on the decoder).
 
 ## The morning, minute by minute
 
