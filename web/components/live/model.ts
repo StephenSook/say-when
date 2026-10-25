@@ -654,7 +654,7 @@ function draftCard(
   const stopped = interrupted(state, 'Could not draft options. Ask again.');
   if (stopped) return { card: { ...base, ...stopped, passed: null }, followUp };
   if (state.status === 'working') {
-    const payload = followUp ? 'Writing follow-up options' : 'Writing up to four options';
+    const payload = followUp ? 'Writing follow-up options' : 'Writing the options';
     return { card: { ...base, payload, note: true, payloadTitle: null, passed: null }, followUp };
   }
   const count = num(loose(latest.detail).optionCount) ?? options.length;

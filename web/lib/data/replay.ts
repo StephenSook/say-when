@@ -10,8 +10,8 @@
  *
  *   0.0 s   the partner asks; Listen runs
  *   2.4 s   Heard; Apify search, then Moss recall (one shared memory, one private), then Claude
- *           drafts four options in four tones, each with a short earpiece label
- *   5.3 s   the earpiece reads "One: cafeteria. Two: Thai place. Three: cafe on Bay. Four: too tired.", then
+ *           drafts three options in three tones, each with a short earpiece label
+ *   5.3 s   the earpiece reads "One: cafeteria. Two: Thai place. Three: cafe on Bay.", then
  *           waits for a pick (silence never picks, D19)
  *  11.5 s   PICK_3 (a single jaw clench) picks option 3; it is said out loud at once (no veto in direct
  *           select); a repeat inside the refractory time is ignored
@@ -351,12 +351,11 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
     { id: `web:sample-ramp-${loop}`, origin: 'web', score: 0.58, text: 'Cafe on Bay St has a ramp at the side door', source: accessRef },
   ];
 
-  // An open question: four options in four tones, each with a short earpiece label (D18).
+  // An open question: three options in three tones, each with a short earpiece label (D18, at most 3 by gesture).
   const firstOptions: OptionDraft[] = [
     { label: 'Cafeteria', text: 'The hospital cafeteria is fine.', kind: 'reply', tone: 'neutral', sources: [visitorRef] },
     { label: 'Thai place', text: "The Thai place on Lombard, it's quiet.", kind: 'reply', tone: 'calm', sources: [thaiRef] },
     { label: 'Cafe on Bay', text: 'The cafe on Bay St, it has a ramp.', kind: 'reply', tone: 'warm', sources: [cafeRef, accessRef, sharedMemoryRef] },
-    { label: 'Too tired', text: "Not tonight, I'm too tired.", kind: 'reply', tone: 'sad', sources: [] },
   ];
 
   // Follow-ups after the pick: an errand, a call, or nothing else.
@@ -493,10 +492,12 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
   event(5_150, 'plan', 'ok', { label: 'claude', version: 1, optionCount: firstOptions.length }, 750);
   publishOptions(5_150, 1, firstOptions);
 
-  // The list: four numbered options, read once, then the wait. PICK_3, a single jaw clench, picks option 3.
+  // The list: three numbered options, read once (5.3 s to 8.0 s), then the wait. PICK_3, a single jaw clench, picks
+  // option 3 at 11.5 s, 3.5 s into the wait.
   const firstListEnd = readList(5_300, 1, firstOptions);
-  const replyPick = pickReply(firstListEnd + 2_600, 1, 3, 'PICK_3', firstOptions[2]!);
-  command(firstListEnd + 2_800, 'PICK_3', {
+  const replyPickAt = firstListEnd + 3_500;
+  const replyPick = pickReply(replyPickAt, 1, 3, 'PICK_3', firstOptions[2]!);
+  command(replyPickAt + 200, 'PICK_3', {
     accepted: false,
     ignoredReason: 'Repeat inside the refractory time',
     confidence: 0.88,

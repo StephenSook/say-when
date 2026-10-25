@@ -170,6 +170,12 @@ SpacetimeDB is the whole live backend, not a store behind an API:
 
 **Locked Oct 23 by Stephen. Design detail in `docs/spacetime.md`.**
 
+### D23: Direct select is the demo input, with three options (Oct 24, Stephen)
+
+When there are more than two options, a jaw clench picks an option instead of confirming (Stephen, about 10:45 PM). That is Shashank's direct select (D18), now merged with D19 to D22 and live on `say-when-direct`: an imagined left fist picks 1, an imagined right fist picks 2, a single jaw clench picks 3, a clench held about one second is STOP, and a double clench sends nothing (as in D21), so a list has at most 3 options (`max_options` 3 on the database, `AGENT_MAX_OPTIONS=3` for the sidecar, the planner asks for three). A form, a call or a web search is read back and ends with "One: send it. Two: cancel.": the left fist sends and the right fist cancels, so the jaw is never a confirm. The imagery thresholds stay per hand (right fist 0.90, left fist 0.96 at once, the 10 s fallback). `python live.py --window` starts in direct mode; `--mode scan` and the `say-when-demo` database stay as the fallback, with the previous site build in Vercel. The idle menu is off on both databases, so a stray pick during a pause says nothing.
+
+**Locked Oct 24 by Stephen.**
+
 ### D22: Claude never answers; the person always gets a choice of at least two replies (Oct 24, Stephen)
 
 Claude is not a voice in the conversation. It only writes choices for the person wearing the headset, who picks one or none, and nothing is said until they do (silence never picks, D19; the speaker says only the picked reply; the partner phone never shows the option words). A pick question now always offers at least 2 options. The planner prompt says so in plain words ("You never answer the partner yourself ... always give the person at least two different replies"), and `validatePlan` refuses a pick reply with fewer than 2 options (`option_count`, `MIN_PICK_OPTIONS` in `agent/src/planner/validate.ts`), so the planner retries instead of sending a single answer. If the Dialer refuses a call option and only one option is left, `buildOptions` adds a stock reply in a tone not already used ("Not now.", "Ask me again later.", "Let me think about it.", "No, thank you."), with provenance `stock`. Yes or no questions keep exactly 2 options (yes, then no), and memory-first options already needed at least 2. The module still accepts 1 to 4 options, so this needed no republish; only the sidecar changed.

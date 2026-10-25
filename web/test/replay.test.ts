@@ -73,16 +73,16 @@ describe('replay script (direct select, D18)', () => {
     assert.equal(timeToFirstOption(events), 2_900);
   });
 
-  test('an open question gets four reply options in four different tones', () => {
+  test('an open question gets three reply options in three different tones', () => {
     const first = loopEnd.options.filter((o) => o.questionId === 'q-0' && o.version === 1).sort((a, b) => a.rank - b.rank);
-    assert.equal(first.length, 4);
+    assert.equal(first.length, 3, 'at most 3: one per pick gesture (D21)');
     assert.deepEqual(
       first.map((o) => o.kind),
-      ['reply', 'reply', 'reply', 'reply'],
+      ['reply', 'reply', 'reply'],
     );
     const tones = first.map((o) => o.tone);
     assert.ok(tones.every((tone) => typeof tone === 'string' && tone !== ''));
-    assert.equal(new Set(tones).size, 4, 'four different tones');
+    assert.equal(new Set(tones).size, 3, 'three different tones');
   });
 
   test('the scan clock passes through every direct select phase (no veto, D18)', () => {
@@ -103,17 +103,18 @@ describe('replay script (direct select, D18)', () => {
     const reads = events.filter((e) => e.stage === 'speak' && e.status === 'started' && e.detail.channel === 'earpiece' && e.at < START + 11_000);
     assert.deepEqual(
       reads.map((e) => (e.stage === 'speak' ? e.detail.text : null)),
-      ['One: Cafeteria.', 'Two: Thai place.', 'Three: Cafe on Bay.', 'Four: Too tired.'],
+      ['One: Cafeteria.', 'Two: Thai place.', 'Three: Cafe on Bay.'],
     );
     const v1 = samples.map((rows) => rows.scan).filter((scan) => scan?.version === 1);
     const readings = v1.filter((scan) => scan?.phase === 'reading');
-    for (let rank = 2; rank <= 4; rank++) {
+    for (let rank = 2; rank <= 3; rank++) {
       const before = readings.find((scan) => scan?.cursor === rank - 1)!;
       const next = readings.find((scan) => scan?.cursor === rank)!;
       assert.equal(next.stepStartedAt, before.stepEndsAt, `option ${rank} starts as soon as option ${rank - 1} ends: no window between`);
     }
+    assert.equal(readings.some((scan) => scan?.cursor === 4), false, 'no fourth option is read');
     const wait = v1.find((scan) => scan?.phase === 'window')!;
-    assert.equal(wait.stepStartedAt, readings.find((scan) => scan?.cursor === 4)!.stepEndsAt);
+    assert.equal(wait.stepStartedAt, readings.find((scan) => scan?.cursor === 3)!.stepEndsAt);
     assert.equal(wait.stepEndsAt - wait.stepStartedAt, PICK_WAIT_MS);
     assert.equal(PICK_WAIT_MS, 120_000);
     assert.equal(wait.pass, 1);
@@ -409,7 +410,7 @@ describe('replay source', () => {
 
     advanceTo(START + 5_200);
     assert.ok(notified > 3);
-    assert.equal(source.getState().rows.options.length, 4, 'four options drafted by 5.2 s');
+    assert.equal(source.getState().rows.options.length, 3, 'three options drafted by 5.2 s');
 
     advanceTo(START + LOOP_MS + 100);
     assert.deepEqual(

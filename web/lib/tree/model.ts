@@ -864,7 +864,7 @@ function draftHub(ctx: Context, round: Round, optionCount: number, menu: boolean
       meta = formatCount(optionCount, menu ? 'menu item' : 'option');
     }
   } else if (status === 'working') {
-    meta = followUp ? 'Writing follow-up options' : 'Writing up to four options';
+    meta = followUp ? 'Writing follow-up options' : 'Writing the options';
   } else if (status === 'failed') {
     meta = errorSentence(run.latest, 'Could not draft options.');
   } else if (status === 'stopped') {
