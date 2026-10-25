@@ -1,8 +1,10 @@
-// Direct select (docs/direct-select.md, PLAN D18): four gestures pick four options, so the person hears the whole
-// list once, numbered, and picks any of them. A web search runs only when they ask for it. Three jobs:
-// - Options: memory first, then Claude's options, each with a short earpiece label. A question that could use outside
-//   facts gets a Search option third (yes-style, no-style, Search the web, something else); small talk never does.
-//   Nothing is searched here.
+// Direct select (docs/direct-select.md, PLAN D18, D23): three gestures pick three options, so the person hears the
+// whole list once, numbered, and picks any of them. A web search runs when they ask for it, or at once when the partner
+// asks "do you know" (D24). Three jobs:
+// - Options: memory first, then Claude's options, each with a short earpiece label. Every partner question answered in
+//   pick mode gets a Search option third while web search is allowed and set up (D24): reply, reply (or the errand or
+//   the call), Search the web. Nothing is searched here, except for "do you know": that question is searched at once
+//   (maps or web, as the scan path does) and the replies come from the results, with their sources.
 // - Categories (after a Search pick and its confirm): up to four categories tailored to the question, planned with no
 //   web call, and the search words each one stands for (kept in CategoryBook). With AGENT_SEARCH_PREFETCH the search
 //   for each of the first three starts as the categories are published (src/prefetch.ts), since the person already
@@ -29,7 +31,7 @@ import {
     type JobDeps,
     type PlanContext,
 } from './jobs.js';
-import { acceptedSource } from './options.js';
+import { acceptedSource, PAD_REPLIES } from './options.js';
 import { JobEvents } from './pipeline.js';
 import { PlannerError, type PlanInput, type WebContext } from './planner/types.js';
 import { SearchPrefetch } from './prefetch.js';
@@ -43,6 +45,7 @@ import {
     retrieveStep,
     searchStep,
     sendSearch,
+    type SearchOutcome,
 } from './retrieval.js';
 import type { AgentQueueRow, AnswerMode, OptionInput, Tone } from './types.js';
 
@@ -79,33 +82,67 @@ export const STOCK_SEARCH: Readonly<OptionInput> = {
     actionJson: '',
 };
 
+/** Fills a list up to `count` options with stock replies, each in a tone and with words the list does not use yet. */
+function padWithReplies(options: OptionInput[], count: number): OptionInput[] {
+    const out = [...options];
+    for (const pad of PAD_REPLIES) {
+        if (out.length >= count) break;
+        if (out.some((o) => o.tone === pad.tone || norm(o.text) === norm(pad.text) || norm(o.label) === norm(pad.label))) continue;
+        out.push({ kind: 'reply', label: pad.label, text: pad.text, tone: pad.tone, laugh: false, provenance: 'stock', sources: [], memoryRefs: [], actionJson: '' });
+    }
+    return out;
+}
+
 /**
- * The options with exactly one Search option, third (or last when there are fewer): yes-style, no-style, Search the
- * web, something else. A yes or no plan becomes a pick, since the module takes only replies in yes_no mode.
+ * The options with exactly one Search option, always third (PLAN D24; at most three options since D23): reply, reply
+ * (or the errand or the call), Search the web. An errand or a call comes right after the first reply, so a three-option
+ * list keeps it; a list with fewer than two other options is filled up with stock replies (as D22 does), so Search is
+ * still third. A yes or no plan becomes a pick, since the module takes only replies in yes_no mode. With a bigger
+ * `maxOptions` (four), the rest follow the Search option.
  */
 export function withSearch(options: readonly OptionInput[], maxOptions: number): { answerMode: AnswerMode; options: OptionInput[]; added: boolean } {
     const found = options.find((o) => o.kind === 'search');
     const search = found ?? { ...STOCK_SEARCH };
     const room = Math.max(1, Math.min(maxOptions, LIMITS.maxOptions) - 1);
-    const rest = options.filter((o) => o.kind !== 'search').slice(0, room);
+    const others = options.filter((o) => o.kind !== 'search');
+    const [first, ...moreReplies] = others.filter((o) => o.kind === 'reply');
+    const actions = others.filter((o) => o.kind !== 'reply');
+    const ordered = first && actions.length > 0 ? [first, ...actions, ...moreReplies] : others;
+    const rest = padWithReplies(ordered.slice(0, room), Math.min(2, room));
     const at = Math.min(2, rest.length);
     return { answerMode: 'pick', options: [...rest.slice(0, at), search, ...rest.slice(at)], added: !found };
 }
 
 /**
- * A Search option is offered when the question could use outside facts (the same local check as D8), web search is
- * allowed and set up, and no request was just sent (a question about it, "Should we let Stephen know?", is about the
- * call, not the web). Menu turns never search.
+ * The Search option is offered for every partner question the planner answers (PLAN D24, Stephen Oct 25), while web
+ * search is allowed and set up: also small talk, and also in the ten minutes after a request was sent (the call option
+ * keeps its own rule, recentErrand). Never on the person's own menu, and never with the stock yes or no (fast path).
  */
-function searchOffered(deps: JobDeps, row: AgentQueueRow, check: QuestionClass | null, allowWeb: () => boolean): boolean {
-    if (!check || !check.needsWeb) return false;
-    return row.webSearchAllowed && allowWeb() && deps.retrieval.search !== null && recentErrand(row, deps.now()) === null;
+function searchOffered(deps: JobDeps, row: AgentQueueRow, isMenu: boolean, allowWeb: () => boolean): boolean {
+    return !isMenu && row.webSearchAllowed && allowWeb() && deps.retrieval.search !== null;
 }
 
-/** Options job in direct select: everything from the question to `agent_publish_options(final = true)`, with no search. */
+/**
+ * "Do you know ..." (PLAN D24, Stephen Oct 25): the partner asks whether the person knows something, so the options job
+ * searches at once, with no Search pick, no confirm and no categories. Any case, whole words; "d'you know" too.
+ */
+const DO_YOU_KNOW = /\b(?:do\s+|d['’]\s?)you\s+know\b/i;
+
+export function asksDoYouKnow(question: string): boolean {
+    return DO_YOU_KNOW.test(question);
+}
+
+/** The reason in the payload of a "do you know" search event: fixed words, never the question. */
+export const DO_YOU_KNOW_REASON = 'Asked "do you know", so the web search ran at once.';
+
+/**
+ * Options job in direct select: everything from the question to `agent_publish_options(final = true)`. No search,
+ * except for "do you know" (D24), which is searched at once.
+ */
 export async function runDirectOptionsJob(row: AgentQueueRow, attempt: number, deps: JobDeps, signal: AbortSignal): Promise<void> {
     const job = { jobId: row.jobId, attempt };
     const events = new JobEvents(deps.db, job, deps.log, deps.clock, { heartbeatMs: deps.leaseHeartbeatMs, signal });
+    const questionKey = `q${row.questionId}`;
     const isMenu = row.origin === 'menu' && row.menuItem !== 'none';
     if (!isMenu && row.questionText.trim() === '') throw new JobInputError('empty_question');
     const allowMemory = () => memoryConsent(deps, row, attempt);
@@ -114,15 +151,21 @@ export async function runDirectOptionsJob(row: AgentQueueRow, attempt: number, d
     // The conversation is kept, and sent, only under memory consent (as in the scan path, src/jobs.ts).
     const history = allowMemory() ? deps.conversation.recent(row.askedBy) : [];
     if (!isMenu && allowMemory()) deps.conversation.add(row.askedBy, { speaker: 'partner', text: row.questionText });
+    // Set once the question's rows may be in the Moss web index ("do you know"), so they are forgotten whatever happens.
+    let mayBeIndexed = false;
     try {
         const check = isMenu ? null : deps.retrieval.classify(row.questionText);
-        const offer = searchOffered(deps, row, check, allowWeb);
+        const offer = searchOffered(deps, row, isMenu, allowWeb);
+        // "Do you know ..." is searched now (D24); any other question waits for the person to pick Search.
+        const searchNow = offer && asksDoYouKnow(row.questionText);
+        // A question that could use outside facts (D8) is not answered with the stock Yes and No: Search fits better.
+        const searchFits = offer && !!check?.needsWeb;
 
-        // 0. The yes or no fast path: "One: yes. Two: no." at once. Not when a Search option or a call fits better.
+        // 0. The yes or no fast path: "One: yes. Two: no." at once. Not when a search or a call fits better.
         if (!isMenu && deps.yesNoFast) {
             const verdict = classifyYesNo(row.questionText);
-            const fast = verdict.yesNo && !callPossible() && !offer;
-            const why = verdict.yesNo && !fast ? (offer ? 'search_possible' : 'call_possible') : verdict.reason;
+            const fast = verdict.yesNo && !callPossible() && !searchFits && !searchNow;
+            const why = verdict.yesNo && !fast ? (searchNow ? 'do_you_know' : searchFits ? 'search_possible' : 'call_possible') : verdict.reason;
             deps.log.info(fast ? 'yes or no fast path: stock options' : 'yes or no fast path not taken', { job: row.jobId, why });
             if (fast) {
                 const options = stockYesNo();
@@ -137,41 +180,69 @@ export async function runDirectOptionsJob(row: AgentQueueRow, attempt: number, d
         const recall = await recallMemory(deps.retrieval, events, row, signal, allowMemory, deps.forms);
         if (signal.aborted) throw new JobAbortedError();
 
-        // 2. The search decision (D8), in the pipeline. Nothing is searched until the person picks Search and confirms.
-        if (check && !check.needsWeb) await searchStep(deps.retrieval, events, row, check, signal, allowWeb);
-        else if (check && offer) {
-            await events.instant('search', 'ok', 'offered', 0, { counts: { needsWeb: true, searches: 0, rowCount: 0, offered: true }, payload: { reason: check.reason, rows: [] } });
-        }
+        // 2. The search. "Do you know ..." (D24): the search the scan path runs (Google Maps near AGENT_PLACES_NEAR for a
+        // place question, the RAG web search otherwise), with its pipeline events, then the question's Moss web index.
+        // Any other question: nothing is searched until the person picks Search and confirms.
+        let searched: SearchOutcome | null = null;
+        let found: WebContext[] = [];
+        if (searchNow && check) {
+            searched = await searchStep(deps.retrieval, events, row, { ...check, needsWeb: true, reason: DO_YOU_KNOW_REASON }, signal, allowWeb);
+            if (signal.aborted) throw new JobAbortedError();
+            mayBeIndexed = searched.rows.length > 0;
+            found = (await retrieveStep(deps.retrieval, events, row, questionKey, searched.rows, recall, signal, allowMemory)).web;
+            if (signal.aborted) throw new JobAbortedError();
+            deps.log.info('do you know: searched at once', { job: row.jobId, search: searched.kind, status: searched.status, rows: searched.rows.length });
+        } else if (check && offer) {
+            await events.instant('search', 'ok', 'offered', 0, {
+                counts: { needsWeb: check.needsWeb, searches: 0, rowCount: 0, offered: true },
+                payload: { reason: check.reason, rows: [] },
+            });
+        } else if (check && !check.needsWeb) await searchStep(deps.retrieval, events, row, check, signal, allowWeb);
         const ctx: PlanContext = { deps, row, events, signal, allowMemory, allowWeb };
 
         // 3. Claude's options, and the publish. As in the scan path, a plan that relied on a consent withdrawn on the
-        // way is written again without it, three rounds at most; a Search option needs web search consent too.
+        // way is written again without it, three rounds at most; a Search option and the results need web search consent.
         for (let round = 1; ; round++) {
             const consent = consentNow(deps, row, attempt);
             const offering = offer && consent.webSearchAllowed;
             const nowMs = deps.now();
             const recent = recentErrand(row, nowMs);
             const memory = consent.memoryAllowed ? memoryContext(recall) : [];
+            const web = consent.webSearchAllowed ? found : [];
+            const searchStatus: PlanInput['search'] = searched
+                ? web.length > 0
+                    ? 'done'
+                    : consent.webSearchAllowed || searched.status === 'not_needed' || searched.status === 'none'
+                      ? searched.status
+                      : 'not_allowed'
+                : offering
+                  ? 'offered'
+                  : check?.needsWeb
+                    ? 'not_allowed'
+                    : check
+                      ? 'not_needed'
+                      : 'none';
             const input: PlanInput = {
                 question: row.questionText,
                 origin: row.origin,
                 menuItem: row.menuItem,
                 history: consent.memoryAllowed ? history : [],
                 memory,
-                web: [],
+                web,
                 forms: deps.forms,
                 contacts: recent && deps.dialer ? deps.contacts : [],
                 recentErrand: recent,
-                search: offering ? 'offered' : check?.needsWeb ? 'not_allowed' : check ? 'not_needed' : 'none',
+                search: searchStatus,
                 task: 'options',
                 searchOffer: offering,
+                ...(searched ? { searchedNow: true } : {}),
                 maxOptions: deps.maxOptions,
                 nowMs,
                 timeZone: deps.timeZone,
                 consent: () => ({ memory: allowMemory(), web: allowWeb() }),
             };
-            // With a Search option the order means something (yes, no, search, something else), so memory does not reorder it.
-            const planned = await planOptions(ctx, input, memory, [], recent, 'claude', !offering);
+            // With a Search option the order means something (reply, reply or action, search), so memory does not reorder it.
+            const planned = await planOptions(ctx, input, memory, web, recent, 'claude', !offering);
             const shaped = offering ? withSearch(planned.options, deps.maxOptions) : { answerMode: planned.plan.answerMode, options: planned.options, added: false };
             const allowed = () => planned.stillAllowed() && (!offering || allowWeb());
             try {
@@ -194,6 +265,13 @@ export async function runDirectOptionsJob(row: AgentQueueRow, attempt: number, d
         }
     } finally {
         events.close();
+        if (mayBeIndexed && deps.retrieval.web) {
+            // Bounded and without the job's signal, as in the scan path's options job.
+            const forgetting = deps.retrieval.web.forget(questionKey);
+            await withDeadline(forgetting, mossDeadline(deps.retrieval, 'forget'), 'web forget').catch(() =>
+                deps.log.warn('could not forget the web passages in time; Moss drops them when the run closes', { job: row.jobId }),
+            );
+        }
     }
 }
 

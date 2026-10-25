@@ -58,8 +58,16 @@ export interface PlanInput {
      * Category pick, replies from the search results.
      */
     task?: PlanTask;
-    /** `options` task: a Search option may be offered (the question could use outside facts and web search is allowed). */
+    /**
+     * `options` task: a Search option may be offered, third (direct select: every partner question answered in pick
+     * mode while web search is allowed and set up, PLAN D24).
+     */
     searchOffer?: boolean;
+    /**
+     * `options` task: the partner asked "do you know", so the web search already ran in this job and its results are in
+     * `web` (PLAN D24). The replies come from them; the Search option stays third for a new, narrower search.
+     */
+    searchedNow?: boolean;
     /** `category_search` task: the category the person picked. */
     category?: string;
     /**
