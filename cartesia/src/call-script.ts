@@ -85,6 +85,10 @@ export const HOLD_TRIGGERS = {
 export const OPT_OUT_REPLY = 'will not call again';
 /** The instructions must tell the agent, in these words, to end the call on any refusal. */
 export const REFUSAL_RULE = 'refuses in any way';
+/** The last section of the instructions: the callback number, then the hang-up. */
+export const ENDING_HEADING = '# Ending the call';
+/** The Cartesia system tool the agent hangs up with. verifyAgent refuses a published agent that has it off. */
+export const END_CALL_TOOL = 'end_call';
 
 const NEGATED_CALL = new RegExp(` (?:${HOLD_TRIGGERS.negations.join('|')})(?: \\S+){0,8} (?:${HOLD_TRIGGERS.callingWords.join('|')})`);
 const OFF_LIST = new RegExp(` (?:${HOLD_TRIGGERS.listWords.join('|')})(?: \\S+){0,3} list`);
@@ -131,9 +135,11 @@ export function heardOptOut(transcript: readonly { role: string; text: string }[
 
 /**
  * What the script must say. The welcome discloses an automated assistant with an AI-generated voice calling for the
- * named person through PRODUCT_NAME, says the call is recorded and gives the callback number, all before the message.
- * The instructions quote the message and call it data, forbid speaking as the person or making new commitments, tell
- * the agent to end the call on any refusal with the OPT_OUT_REPLY, and repeat the callback number at the end.
+ * named person through PRODUCT_NAME and says the call is recorded, all before the message. The callback number comes
+ * at the end only (47 CFR 64.1200(b)(2) allows it during or after the message): the instructions' ENDING_HEADING
+ * section gives {{callback_number}} and then tells the agent to hang up with the END_CALL_TOOL. The instructions also
+ * quote the message and call it data, forbid speaking as the person or making new commitments, and tell the agent to
+ * end the call on any refusal with the OPT_OUT_REPLY.
  */
 export function checkAgentScript(script: AgentScript): string[] {
     const problems: string[] = [];
@@ -141,7 +147,7 @@ export function checkAgentScript(script: AgentScript): string[] {
     const lower = welcome.toLowerCase();
     const message = welcome.indexOf('{{message}}');
     if (message < 0) problems.push('the welcome must deliver {{message}}');
-    const disclosure = ['automated assistant', 'ai-generated voice', 'calling for {{person_name}}', PRODUCT_NAME.toLowerCase(), 'recorded', '{{callback_number}}'];
+    const disclosure = ['automated assistant', 'ai-generated voice', 'calling for {{person_name}}', PRODUCT_NAME.toLowerCase(), 'recorded'];
     for (const phrase of disclosure) {
         const at = lower.indexOf(phrase);
         if (at < 0) problems.push(`the welcome must say "${phrase}"`);
@@ -155,10 +161,19 @@ export function checkAgentScript(script: AgentScript): string[] {
         'new commitments',
         REFUSAL_RULE,
         OPT_OUT_REPLY,
-        '{{callback_number}}',
     ];
     for (const phrase of required) {
         if (!instructions.includes(phrase)) problems.push(`the instructions must include ${phrase}`);
+    }
+    const endingAt = instructions.lastIndexOf(ENDING_HEADING);
+    if (endingAt < 0) problems.push(`the instructions must end with a "${ENDING_HEADING}" section`);
+    else {
+        const ending = instructions.slice(endingAt);
+        const callback = ending.indexOf('{{callback_number}}');
+        if (callback < 0) problems.push(`the "${ENDING_HEADING}" section must give {{callback_number}}`);
+        if (callback < 0 || ending.lastIndexOf(END_CALL_TOOL) < callback) {
+            problems.push(`the "${ENDING_HEADING}" section must say to hang up with the ${END_CALL_TOOL} tool after {{callback_number}}`);
+        }
     }
     for (const name of [...templateVariables(script.welcome), ...templateVariables(script.instructions)]) {
         if (!(SCRIPT_VARIABLES as readonly string[]).includes(name)) problems.push(`unknown variable {{${name}}}`);

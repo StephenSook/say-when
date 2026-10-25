@@ -6,7 +6,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { appendFileSync, readFileSync } from 'node:fs';
 
-import { checkAgentScript, firstDifference, heardOptOut, loadAgentScript, renderTemplate, type AgentScript } from './call-script.js';
+import { checkAgentScript, END_CALL_TOOL, firstDifference, heardOptOut, loadAgentScript, renderTemplate, type AgentScript } from './call-script.js';
 import { emit, redact, type OnEvent } from './events.js';
 import { buildRequest, send, type FetchLike, type HttpResponse } from './http.js';
 import { isEmergencyNumber, spokenNumber, toUsE164 } from './phone.js';
@@ -321,7 +321,9 @@ function clockTime(ms: number, timeZone: string): string {
  * The errand titles a call may report, set by the team, never taken from a web page. A form's own title is only used
  * to pick one of these, so nothing a form says can reach the agent's prompt.
  */
-export const DEFAULT_ERRAND_TITLES = ['Care team request'] as const;
+/** The approved title whose call passes on the day's plan in its own words (errandMessage). */
+export const PLAN_TITLE = "Today's plan";
+export const DEFAULT_ERRAND_TITLES = ['Care team request', PLAN_TITLE] as const;
 const ERRAND_TITLE = /^[A-Za-z0-9][A-Za-z0-9 ,.'&()-]{0,39}$/;
 const titleKey = (title: string): string => title.replace(/\s+/g, ' ').trim().toLowerCase();
 
@@ -378,8 +380,99 @@ export interface CallRequest {
     /** Unique per CALL request, for example the call_request row id. */
     requestId: string;
     contactId: string;
-    /** The errand this call reports. Only "<person>'s <approved title> was sent at <time>" is ever said. */
-    errand: { title: string; sentAt: string | number | Date };
+    /**
+     * The errand this call reports. `values` are the field values of that sent errand that its form allows to be
+     * spoken, in form order. Each is checked again here (spokenValue); the ones that pass make the message
+     * "<person> sent you today's plan: <values>" for PLAN_TITLE, or "<person> sent a <approved title>: <values>. It was
+     * sent at <time>" for any other title. With none left, the message is "<person>'s <approved title> was sent at
+     * <time>". Nothing else is ever said about the errand.
+     */
+    errand: { title: string; sentAt: string | number | Date; values?: readonly string[] };
+}
+
+/**
+ * Limits on what a call says about the sent errand's fields: each value, the whole message, and how many values are
+ * looked at. A value over its limit, or one that would take the message over its limit, is left out, never cut: a cut
+ * phrase can say the opposite ("no sugar" cut to "no").
+ */
+export const SUMMARY_LIMITS = { valueChars: 180, messageChars: 240, values: 10 } as const;
+
+/** Letters (any language), digits, spaces and , . ' & ( ) - : / only. */
+const SPOKEN_VALUE = /^[\p{L}0-9 ,.'&()\-:/]+$/u;
+/** Edge punctuation trimmed so values join cleanly: "Today." reads "Today". */
+const EDGE_MARKS = /^[ ,.:\-/!?]+|[ ,.:\-/!?]+$/g;
+/** Digits said as words. */
+const DIGIT_WORDS: ReadonlySet<string> = new Set(['zero', 'oh', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine']);
+
+/**
+ * The most digits in one unbroken run of number tokens, counting "five" as one digit and "0123" as four, so a phone
+ * number said in words ("four one five ...") or in a mix ("four one five 555 0123") counts like one written in digits.
+ */
+function longestDigitRun(text: string): number {
+    let best = 0;
+    let run = 0;
+    for (const token of text.toLowerCase().split(/[^\p{L}0-9]+/u)) {
+        if (token === '') continue;
+        run = /^[0-9]+$/.test(token) ? run + token.length : DIGIT_WORDS.has(token) ? run + 1 : 0;
+        best = Math.max(best, run);
+    }
+    return best;
+}
+/** A link or an email in any form the character check lets through: a scheme, "www", a domain name, "dot com". */
+const LINK_LIKE = /:\/\/|\bwww\b|\bhttps?\b|[\p{L}0-9]\.[\p{L}]{2,}|\bdot (?:com|net|org|edu|gov|io|co|us|ai|app)\b|\bat [\p{L}0-9]+ dot\b/iu;
+
+/**
+ * A field value as a call may say it, or null when it must not be said. The value ends up inside the agent's prompt
+ * ({{message}} in the instructions), so it is treated as untrusted: one line with normal spaces (NFC, curly
+ * apostrophes and dashes made plain), edge punctuation trimmed, at most SUMMARY_LIMITS.valueChars characters, only
+ * letters, digits, spaces and basic punctuation, and never anything that looks like a phone number (7 or more digits),
+ * an email, a link or a template ({{ or }}). Empty and non-text values are null.
+ */
+export function spokenValue(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const clean = value
+        .normalize('NFC')
+        .replace(/[\u2018\u2019]/g, "'")
+        .replace(/[\u2013\u2014]/g, '-')
+        .replace(/\s+/g, ' ')
+        .replace(EDGE_MARKS, '');
+    if (clean === '' || clean.length > SUMMARY_LIMITS.valueChars) return null;
+    if (!SPOKEN_VALUE.test(clean) || !/[\p{L}0-9]/u.test(clean)) return null;
+    // A phone number: 7 or more digits anywhere, or a run of 7 or more said in words or a mix of words and digits.
+    if ((clean.match(/[0-9]/g)?.length ?? 0) >= 7 || longestDigitRun(clean) >= 7) return null;
+    if (LINK_LIKE.test(clean) || clean.includes('{{') || clean.includes('}}') || clean.includes('@')) return null;
+    return clean;
+}
+
+/** True when `value` already appears, as whole words, inside one of the values kept so far. */
+function alreadySaid(kept: readonly string[], value: string): boolean {
+    const words = ` ${value.toLowerCase().replace(/[^\p{L}0-9]+/gu, ' ').trim()} `;
+    return kept.some((k) => ` ${k.toLowerCase().replace(/[^\p{L}0-9]+/gu, ' ').trim()} `.includes(words));
+}
+
+/**
+ * What the call says about the errand: the values that pass spokenValue, in order, leaving out one already said inside
+ * an earlier value (the plan's "11:30" again as When) and one that would take the whole message past
+ * SUMMARY_LIMITS.messageChars. For PLAN_TITLE: "<person> sent you today's plan: <values, as sentences>", and the
+ * read-back "Call <recipient> to pass on today's plan: <values>." For any other title: "<person> sent a <title>:
+ * <values>. It was sent at <time>", and the read-back "Call <recipient> to say: <message>." With no value left, the
+ * plain "<person>'s <title> was sent at <time>" and the plain read-back. The digest covers the message either way.
+ */
+function errandMessage(personName: string, recipientName: string, title: string, sentClock: string, values: unknown): { text: string; readBack: string } {
+    const plain = { text: `${personName}'s ${title} was sent at ${sentClock}`, readBack: `Call ${recipientName} to say your ${title} was sent.` };
+    if (!Array.isArray(values)) return plain;
+    const plan = titleKey(title) === titleKey(PLAN_TITLE);
+    const article = /^[aeiou]/i.test(title) ? 'an' : 'a';
+    const say = (kept: readonly string[]) =>
+        plan ? `${personName} sent you today's plan: ${kept.join('. ')}` : `${personName} sent ${article} ${title}: ${kept.join(', ')}. It was sent at ${sentClock}`;
+    const kept: string[] = [];
+    for (const value of values.slice(0, SUMMARY_LIMITS.values)) {
+        const clean = spokenValue(value);
+        if (clean !== null && !alreadySaid(kept, clean) && say([...kept, clean]).length <= SUMMARY_LIMITS.messageChars) kept.push(clean);
+    }
+    if (kept.length === 0) return plain;
+    const text = say(kept);
+    return { text, readBack: plan ? `Call ${recipientName} to pass on today's plan: ${kept.join('. ')}.` : `Call ${recipientName} to say: ${text}.` };
 }
 
 /** What the station needs for the read-back. The number stays inside the Dialer. */
@@ -450,7 +543,7 @@ export interface DialerConfig {
     agentId: string;
     /** The Cartesia phone number id (not the number) to call from. */
     fromNumberId: string;
-    /** A consenting teammate's US number, read out near the start and at the end of every call. */
+    /** A consenting teammate's US number, read out at the end of every call. */
     callbackNumber: string;
     /** Who the call is for, as spoken. */
     personName: string;
@@ -595,7 +688,8 @@ export interface AgentCheck {
 /**
  * Reads the published agent (GET /v1/agents/{id}) and confirms, against the canonical files in cartesia/agent/ and
  * nothing else, that it will say exactly the reviewed script: the same welcome and instructions character for
- * character, no voicemail message we have not reviewed, and a Cartesia library voice (never a clone).
+ * character, no voicemail message we have not reviewed, the end_call tool on so it can hang up as the script says,
+ * and a Cartesia library voice (never a clone).
  */
 export async function verifyAgent(options: { apiKey: string; agentId: string; fetch?: FetchLike }): Promise<AgentCheck> {
     const script = loadAgentScript();
@@ -622,6 +716,12 @@ export async function verifyAgent(options: { apiKey: string; agentId: string; fe
     const voicemail = field(field(config, 'system_tools'), 'voicemail_detection');
     const voicemailMessage = field(voicemail, 'message');
     if (voicemailMessage !== undefined && voicemailMessage !== null) return { ok: false, code: 'agent_mismatch', what: 'voicemail message' };
+    // The script tells the agent to hang up with the end_call tool after its goodbye. With the tool off (null or
+    // missing) it cannot, and stays on the line (Oct 24 live test), so that agent is refused too.
+    // On means a tool object (as the agent PATCH sets it, not marked enabled: false) or true; anything else is off.
+    const endCall = field(field(config, 'system_tools'), END_CALL_TOOL);
+    const endCallOn = endCall === true || (endCall !== null && typeof endCall === 'object' && field(endCall, 'enabled') !== false);
+    if (!endCallOn) return { ok: false, code: 'agent_mismatch', what: `${END_CALL_TOOL} tool off` };
     const voiceId = field(field(field(config, 'audio'), 'output'), 'voice_id');
     if (typeof voiceId !== 'string' || voiceId === '') return { ok: false, code: 'agent_mismatch', what: 'voice' };
     try {
@@ -843,11 +943,13 @@ export class Dialer {
         const contact = this.lists.consent.find((entry) => entry.id === request.contactId);
         const blocked = this.check(contact, sentAt, now);
         if (blocked || !contact) return this.refuse(blocked?.code ?? 'not_consented');
+        // The values come from the agent, so they are checked again here; the digest below covers the message they make.
+        const message = errandMessage(this.personName, contact.name, title, clockTime(sentAt, contact.timeZone), request.errand.values);
         const variables: Record<string, string> = {
             recipient_name: contact.name,
             person_name: this.personName,
             callback_number: spokenNumber(this.callback),
-            message: `${this.personName}'s ${title} was sent at ${clockTime(sentAt, contact.timeZone)}`,
+            message: message.text,
         };
         const toNumber = toUsE164(contact.phone) as string;
         const spoken = [renderTemplate(this.script.welcome, variables), renderTemplate(this.script.instructions, variables)];
@@ -859,7 +961,8 @@ export class Dialer {
             requestId: request.requestId,
             contactId: contact.id,
             recipientName: contact.name,
-            readBack: `Call ${contact.name} to say your ${title} was sent.`,
+            // With values, the read-back carries every value the call will say, so the person hears what it will pass on.
+            readBack: message.readBack,
             digest,
             expiresAt: now + this.preparedTtlMs,
             toNumber,
