@@ -13,10 +13,12 @@ import uuid
 
 from eeg import config
 
-# PLAN D17 (supersedes D16's jaw map): a single clench is CONFIRM, a double is STOP, and a held one is STOP.
-JAW_COMMAND = {"single": "CONFIRM", "double": "STOP", "long": "STOP"}
-# Jaw-only fallback (docs/brain-mode-test.md), unchanged by D17: a single clench is YES, a double is CONFIRM, and
-# there is no STOP gesture (a teammate stops from the station keys).
+# PLAN D21 (supersedes D17's jaw map): a single clench is CONFIRM and a held one (LONG_CLENCH_S) is STOP. A double
+# clench sends nothing: it has no entry here, so from_jaw returns None. The detector still recognizes a double, so two
+# quick clenches never become two CONFIRMs.
+JAW_COMMAND = {"single": "CONFIRM", "long": "STOP"}
+# Jaw-only fallback (docs/brain-mode-test.md), unchanged by D17 and D21: a single clench is YES, a double is CONFIRM,
+# and there is no STOP gesture (a teammate stops from the station keys).
 JAW_ONLY_COMMAND = {"double": "CONFIRM", "single": "YES"}
 
 
@@ -38,7 +40,8 @@ def from_hand(ev: dict, now: float = None) -> dict:
 
 
 def from_jaw(ev: dict, jaw_only: bool = False, now: float = None):
-    """single -> CONFIRM, double or long -> STOP; in the jaw-only fallback single -> YES, double -> CONFIRM, no STOP."""
+    """single -> CONFIRM, long (held) -> STOP, double -> None (no command, PLAN D21); in the jaw-only fallback
+    single -> YES, double -> CONFIRM, no STOP."""
     cmd = (JAW_ONLY_COMMAND if jaw_only else JAW_COMMAND).get(ev["kind"])
     conf = min(1.0, ev["strength"] / (2 * config.JAW_RATIO))
     return gesture(cmd, ev["onset"], conf, "jaw", now) if cmd else None

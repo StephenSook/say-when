@@ -59,7 +59,9 @@ class DemoEngine:
         window = {"0.05-5": slow, "8-12": mu, "12-16": beta, "16-20": beta, "20-26": beta, "26-30": 0.6 * beta,
                   config.COV_BAND: mu + beta}
         raw = mu + beta + slow + (jaw / 4.0) * self.rng.normal(0, 1, (8, self.n))
-        target = {"rest": [0.1, 0.1, 0.8], "left": [0.8, 0.1, 0.1], "right": [0.1, 0.8, 0.1], "clench": [0.3, 0.3, 0.4]}
+        # Imagery phases sit above the 0.9 imagery threshold (PLAN D21), as a real YES or NO must.
+        target = {"rest": [0.1, 0.1, 0.8], "left": [0.93, 0.035, 0.035], "right": [0.035, 0.93, 0.035],
+                  "clench": [0.3, 0.3, 0.4]}
         p = np.clip(np.array(target[phase]) + self.rng.normal(0, 0.05, 3), 0.01, None)
         p /= p.sum()
         self.total_samples += int(self.step * self.fs)
@@ -67,7 +69,7 @@ class DemoEngine:
         n_phase = int(el // 5)
         if phase in ("left", "right") and el % 5 >= 1.5 and self._sent_phase != n_phase:
             self._sent_phase = n_phase  # one fake command per imagery phase, like the real decoder
-            commands.append(messages.gesture("YES" if phase == "right" else "NO", time.time() - 1.0, 0.8,
+            commands.append(messages.gesture("YES" if phase == "right" else "NO", time.time() - 1.0, 0.93,
                                              "imagery"))
         if phase == "clench" and el % 5 >= 1.0 and self._sent_phase != n_phase:
             self._sent_phase = n_phase

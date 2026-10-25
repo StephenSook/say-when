@@ -11,8 +11,10 @@ and the /eeg page of the web app (--no-serve turns the server off):
   {"type": "health", "decoderHealthy"}   every 250 ms
   {"type": "eeg", ...}                   about 10 per second, server only: per-electrode change, model bars, jaw
 
-Right fist imagined = YES, left = NO, single jaw clench = CONFIRM, double (or held) jaw clench = STOP
-(PLAN D17), no packets for 0.5 s = HEADSET_OFF. Imagery is ignored during a clench and for 1 s after it.
+Right fist imagined = YES, left = NO, single jaw clench = CONFIRM, held jaw clench (LONG_CLENCH_S, about 0.8 s)
+= STOP, a double jaw clench = nothing (PLAN D21), no packets for 0.5 s = HEADSET_OFF. YES and NO fire only at
+90% confidence or more (--threshold, default config.IMAGERY_THRESHOLD = 0.9, PLAN D21), held for --dwell seconds.
+Imagery is ignored during a clench and for 1 s after it.
 """
 import argparse
 import os
@@ -132,7 +134,8 @@ def main():
     ap.add_argument("--allow-origin", action="append", default=[],
                     help="another web origin allowed to connect (default: localhost:3000 and the Vercel site)")
     ap.add_argument("--step", type=float, default=0.1, help="seconds between imagery predictions")
-    ap.add_argument("--threshold", type=float, default=0.6)
+    ap.add_argument("--threshold", type=float, default=config.IMAGERY_THRESHOLD,
+                    help="smoothed confidence a YES or NO needs for the whole dwell (default 0.9, PLAN D21)")
     ap.add_argument("--margin", type=float, default=0.15)
     ap.add_argument("--ema", type=float, default=0.5)
     ap.add_argument("--dwell", type=float, default=1.0)

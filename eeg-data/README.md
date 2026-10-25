@@ -4,13 +4,18 @@ Turns the 8-channel headset into Eleven's four commands. It is not connected to 
 
 | Signal | Command | How it is read |
 |---|---|---|
-| Imagine squeezing your right fist | YES | Imagery classifier over C3/C4 and neighbours (brain signal) |
+| Imagine squeezing your right fist | YES | Imagery classifier over C3/C4 and neighbours (brain signal), at 90% confidence or more (PLAN D21) |
 | Imagine squeezing your left fist | NO | same |
 | Single jaw clench | CONFIRM | Jaw-muscle (EMG) bursts, 30-55 Hz (PLAN D17) |
-| Double jaw clench | STOP | same (a held clench, about 0.8 s, also counts) |
+| Held jaw clench (about 1 s; it fires at 0.8 s) | STOP | same (PLAN D21) |
+| Double jaw clench | nothing | detected, but sends no command (PLAN D21) |
 | No packets for 0.5 s | HEADSET_OFF | watchdog |
 
-Imagery is ignored during a jaw clench and for 1 s after it, so a clench is never read as a fist. With `--jaw-only` (the fallback in [docs/brain-mode-test.md](../docs/brain-mode-test.md)), a single clench is YES, a double is CONFIRM, silence is NO and there is no STOP gesture (this fallback map did not change with D17).
+Imagery is ignored during a jaw clench and for 1 s after it, so a clench is never read as a fist. With `--jaw-only` (the fallback in [docs/brain-mode-test.md](../docs/brain-mode-test.md)), a single clench is YES, a double is CONFIRM, silence is NO and there is no STOP gesture (this fallback map did not change with D17 or D21).
+
+YES and NO need the smoothed top probability at 0.9 or more for the whole dwell (1 s by default), so every imagery gesture carries a confidence of at least 0.9 (`IMAGERY_THRESHOLD` in `eeg/config.py`, `--threshold` on `live.py`; it was 0.6 before D21). The same bar holds for both hands. The trade-off: fewer false picks, but the wearer has to hold the imagined squeeze more strongly or for longer, and some real attempts will send nothing.
+
+The detector still recognizes a double clench, so two quick clenches are never reported as two singles (two CONFIRMs); they send nothing. A STOP is sent as soon as a clench has been held for 0.8 s (`LONG_CLENCH_S`), while it is still held.
 
 A single clench is only reported once 0.7 s pass with no second clench, so a CONFIRM lands about 0.7 s after the clench ends. The CONFIRM only counts inside the confirm window after a full read-back; a stray one anywhere else does nothing. Raising `JAW_RATIO` in `eeg/config.py` to about 30 makes a stray clench (swallowing, shifting) less likely to count.
 
@@ -105,7 +110,7 @@ Keys are read from the repo's gitignored `.env.local`, or from the environment: 
 One JSON object per line, in the shape PLAN.md agrees with the station page:
 
 ```json
-{"type": "gesture", "id": "6f1c...", "command": "YES", "onsetAgeMs": 1180, "confidence": 0.83, "source": "imagery"}
+{"type": "gesture", "id": "6f1c...", "command": "YES", "onsetAgeMs": 1180, "confidence": 0.93, "source": "imagery"}
 {"type": "health", "decoderHealthy": true}
 ```
 
@@ -134,7 +139,7 @@ eeg/
   models.py     filter-bank CSP + LDA, Riemannian tangent space + logistic regression
   evaluate.py   held-out test, grouped cross-validation, per-class counts
   hands.py      probabilities -> one debounced LEFT/RIGHT per imagery
-  jaw.py        streaming single / double / long clench detector
+  jaw.py        streaming single / double / long (held) clench detector
   messages.py   gesture and health messages
   engine.py     live loop: headset -> filters -> model + jaw -> messages, watchdog
   store.py      save / load models with montage checks

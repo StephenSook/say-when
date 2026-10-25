@@ -75,12 +75,13 @@ def test_jaw_single_double_long_and_quiet():
 
 
 def test_jaw_messages_follow_the_command_map():
-    # PLAN D17: a single clench is CONFIRM, a double or a held one is STOP.
+    # PLAN D21: a single clench is CONFIRM, a held one is STOP, and a double sends nothing.
     ev = {"kind": "single", "onset": 10.0, "t": 10.6, "strength": 50.0}
     m = messages.from_jaw(ev, now=10.7)
     assert m["type"] == "gesture" and m["command"] == "CONFIRM" and m["source"] == "jaw" and m["onsetAgeMs"] == 700
-    assert messages.from_jaw(dict(ev, kind="double"))["command"] == "STOP"
+    assert messages.from_jaw(dict(ev, kind="double")) is None
     assert messages.from_jaw(dict(ev, kind="long"))["command"] == "STOP"
+    assert messages.JAW_COMMAND == {"single": "CONFIRM", "long": "STOP"}
     # The jaw-only fallback keeps its own map: single is YES, double is CONFIRM, and there is no STOP gesture.
     assert messages.from_jaw(dict(ev, kind="long"), jaw_only=True) is None
     assert messages.from_jaw(dict(ev, kind="single"), jaw_only=True)["command"] == "YES"
@@ -97,12 +98,33 @@ def test_strongest_spike_needs_a_lead_in():
     assert with_lead < config.JAW_RATIO
 
 
-def test_engine_end_to_end_with_a_fake_headset(tmp_path):
-    """Replays a synthetic recording (with a double clench appended) through the live engine."""
+def test_imagery_needs_90_percent_for_yes_and_no():
+    # PLAN D21: the default threshold is 0.9, for both hands, and the confidence sent is never below it.
+    assert config.IMAGERY_THRESHOLD == 0.9 and HandConfig().threshold == 0.9
+
+    def run(hand, p):
+        rest = {"left": .02, "right": .02, "rest": .96}
+        other = (1 - p) / 2
+        sure = {"left": other, "right": other, "rest": other}
+        sure[hand] = p
+        dec = HandDecoder(HandConfig())                  # the live.py defaults: ema 0.5, dwell 1 s
+        _, t = feed(dec, [rest] * 10)                    # arm on a sure rest
+        events, _ = feed(dec, [sure] * 40, t)            # 4 s of steady imagery
+        return [messages.from_hand(e) for e in events]
+
+    for hand, command in (("right", "YES"), ("left", "NO")):
+        assert run(hand, 0.85) == [], f"{command} at 0.85 must send nothing"
+        sent = run(hand, 0.92)
+        assert [m["command"] for m in sent] == [command]
+        assert 0.9 <= sent[0]["confidence"] <= 0.92
+
+
+def run_engine(tmp_path, bursts):
+    """Replays a synthetic recording, with jaw bursts appended, through the live engine; returns the commands."""
     s = load_session(fake_recording(tmp_path, per_class=10, seed=4))
     ep = make_epochs([s], ["left", "right", "rest"])
     meta = {"classes": ["left", "right", "rest"], "fs": FS, "window_s": 2.0}
-    raw = np.concatenate([s["raw_eeg"], burst_signal([(1.0, 0.25), (1.6, 0.25)], total_s=4)], axis=1)
+    raw = np.concatenate([s["raw_eeg"], burst_signal(bursts, total_s=4)], axis=1)
     ts = s["timestamps"][0] + np.arange(raw.shape[1]) / FS
     state = {"i": 0}
 
@@ -114,12 +136,29 @@ def test_engine_end_to_end_with_a_fake_headset(tmp_path):
     eng = Engine(make("fbcsp_lda").fit(ep.X, ep.y), meta, HandConfig(dwell_s=0.5), settle_s=0, log=lambda *a: None,
                  reader=reader, opener=lambda: object(), closer=lambda b: None)
     eng.start()
-    cmds = []
+    cmds, jaw = [], []
     while state["i"] < raw.shape[1]:
-        cmds += [m["command"] for m in eng.poll().commands]
-    assert {"YES", "NO"} <= set(cmds)          # synthetic data is easy; real EEG is not
-    assert cmds[-1] == "STOP"                   # the appended double clench (PLAN D17)
+        up = eng.poll()
+        cmds += [m["command"] for m in up.commands]
+        jaw += [e["kind"] for e in up.jaw_events]
     assert all(c in config.COMMANDS for c in cmds)
+    return cmds, jaw
+
+
+def test_engine_end_to_end_with_a_fake_headset(tmp_path):
+    """A held clench at the end is STOP (PLAN D21)."""
+    cmds, jaw = run_engine(tmp_path, [(1.0, 1.3)])
+    assert {"YES", "NO"} <= set(cmds)          # synthetic data is easy; real EEG is not
+    assert jaw == ["long"] and cmds[-1] == "STOP"   # the recording has no clench trials, so this is the only one
+    assert cmds.count("STOP") == 1 and "CONFIRM" not in cmds
+
+
+def test_engine_double_clench_sends_nothing(tmp_path):
+    """A double clench at the end is detected but sends no command, and does not crash (PLAN D21)."""
+    cmds, jaw = run_engine(tmp_path, [(1.0, 0.25), (1.6, 0.25)])
+    assert {"YES", "NO"} <= set(cmds)
+    assert jaw == ["double"]
+    assert "STOP" not in cmds and "CONFIRM" not in cmds
 
 
 def test_watchdog_sends_headset_off():

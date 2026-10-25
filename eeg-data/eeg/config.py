@@ -32,6 +32,10 @@ CUES = {
 # The brain chooses, the jaw commits or stops.
 HAND_COMMAND = {"right": "YES", "left": "NO"}
 COMMANDS = ("YES", "NO", "CONFIRM", "STOP", "HEADSET_OFF")
+# PLAN D21: an imagined YES or NO fires only when the smoothed top probability stays at or above this for the whole
+# dwell, so every imagery gesture carries a confidence of at least 0.9. Fewer false picks; the wearer has to hold the
+# imagined squeeze more strongly or for longer. live.py --threshold overrides it.
+IMAGERY_THRESHOLD = 0.9
 
 # ---------------------------------------------------------------- signal processing
 FS_NOMINAL = 125.0
@@ -71,8 +75,8 @@ JAW_RELEASE = 0.5                        # burst ends when power falls below JAW
 JAW_SMOOTH_S = 0.05                      # envelope smoothing (fast enough to see the gap in a double clench)
 MIN_BURST_S = 0.08                       # shorter bursts are blips and are ignored
 JAW_SLICE_S = 0.25                       # slice for "strongest spike" checks in recordings
-LONG_CLENCH_S = 0.8                      # a burst this long is a long clench (STOP)
-DOUBLE_GAP_S = 0.7                       # a second short burst starting within this gap = double (CONFIRM)
+LONG_CLENCH_S = 0.8                      # a burst this long is a held clench (STOP, PLAN D21)
+DOUBLE_GAP_S = 0.7                       # a second short burst within this gap = double (no command; CONFIRM in --jaw-only)
 JAW_HOLDOFF_S = 1.0                      # no YES/NO from imagery during a clench and for this long after
 
 # ---------------------------------------------------------------- formats

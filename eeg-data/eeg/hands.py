@@ -2,8 +2,10 @@
 
 Rules:
   * probabilities are smoothed (exponential moving average)
-  * a moment is UNSURE unless the top class >= threshold and leads the next by >= margin
-  * a hand fires only after it has been the sure answer for dwell_s
+  * a moment is UNSURE unless the top class >= threshold and leads the next by >= margin; the threshold
+    (config.IMAGERY_THRESHOLD, 0.9 since PLAN D21) is the same for both hands
+  * a hand fires only after it has been the sure answer for dwell_s, so its smoothed probability stayed at or above
+    the threshold the whole time; the event's confidence is that smoothed probability, never below the threshold
   * then silence for refractory_s, and the wearer must return to neutral for rearm_s before the
     next hand can fire (one long imagery = one event); it also starts disarmed
   * neutral = a sure REST when the model has a rest class, otherwise simply being UNSURE
@@ -12,10 +14,12 @@ Rules:
 from dataclasses import dataclass
 from typing import Dict, Optional
 
+from eeg import config
+
 
 @dataclass
 class HandConfig:
-    threshold: float = 0.6
+    threshold: float = config.IMAGERY_THRESHOLD
     margin: float = 0.15
     ema: float = 0.5           # weight of the previous smoothed value
     dwell_s: float = 1.0
