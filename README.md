@@ -41,7 +41,7 @@ The hand commands are imagined movements read over the motor cortex, so they onl
 - Fail closed. Silence, a timeout, NO, STOP (a held jaw clench), or a lost signal all mean "do not act". A double jaw clench sends nothing, so two quick clenches never count as two CONFIRMs.
 - An imagined YES fires at once only when the decoder is at least 90% sure, and NO only at 96% (PLAN D21). Otherwise a 10 s fallback sends the hand with more moments at 65% or more, with at least 3 of them; a tie sends nothing. The fallback can turn sustained noise into a YES or NO pick, which the minimum count limits but does not prevent. A pick never sends a form or places a call: that still needs CONFIRM after the read-back.
 - A confirm must be fresh: it starts after the read-back ends, lands inside the window, matches the digest of what was read back, and is used once.
-- Calls go only to people who consented. The voice says it is an automated assistant with an AI-generated voice and who it calls for, then what the sent request asked for (only fields the form marks speakable, each checked again before it is said) and when it was sent, and gives a callback number at the end before it hangs up.
+- Calls go only to people who consented. The voice says it is an AI assistant from the Eleven app and that the call is recorded, then what the sent request asked for (only fields the form marks speakable, each checked again before it is said) and when it was sent, then says goodbye and hangs up.
 - The form-errand Actor only fills forms on an allowlist and refuses CAPTCHAs, logins, passwords, payments, and uploads.
 
 ## Status
