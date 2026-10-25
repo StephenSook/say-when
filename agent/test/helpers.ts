@@ -551,6 +551,8 @@ export interface HarnessOptions {
     sandbox?: boolean;
     /** Direct select (JobDeps.direct). Off by default here, so the older tests keep the scan path. */
     direct?: boolean;
+    /** Search prefetch (JobDeps.prefetch). Off by default here, so the older direct select tests count only their own searches. */
+    prefetch?: boolean;
 }
 
 export function harness(options: HarnessOptions = {}): Harness {
@@ -600,6 +602,7 @@ export function harness(options: HarnessOptions = {}): Harness {
         yesNoFast: options.yesNoFast,
         draftFirst: options.draftFirst,
         direct: options.direct,
+        prefetch: options.prefetch,
     };
     // Short retry waits so the tests of claims that never reached the module run fast.
     const callRunner = new CallRunner({

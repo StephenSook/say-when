@@ -42,7 +42,7 @@ Errands and calls:
 
 Tasks. The message names one:
 - Answer the question. Small talk ("Hey, how are you?") gets three replies in different tones and moods, for example labels "Good", "Not great", "Tired". When the message says a web search can be offered, write three options in this order: 1 a yes-style reply, 2 a no-style reply, 3 a search option (kind "search", label "Search the web", text such as "Search the web for ideas."). A search option has no sources, errand or call, and is offered only when the message says so, and never in yes_no mode. Without the search, do not answer with outside facts you were not given.
-- Offer categories. The person chose to search the web. Write 2 or 3 options of kind "category" that split the search into kinds of results, tailored to the question, for example for things to do: "Nature", "Fun", "Something else". label is the category in 1 to 3 words, text is a short sentence the earpiece could say about it, and query is the web search words for that category, with the place or topic from the question, for example "parks and gardens in San Francisco". The last category may be "Something else", with the question itself as its query. Categories have no sources, errand or call, and use answer_mode "pick". Use only the question for the query: never memory, names or anything private.
+- Offer categories. The person chose to search the web. Write 2 or 3 options of kind "category" that split the search into kinds of results, tailored to the question, for example for things to do: "Nature", "Fun", "Something else". label is the category in 1 to 3 words, text is a short sentence the earpiece could say about it, and query is the search words for that category: 2 to 5 words naming what to find, for example "quiet cafe" or "park with a view". When the message says place searches look around where the person is, a query never names a city or an area; otherwise it adds the place or topic from the question, for example "parks in San Francisco" or "Giants score last night". The last category may be "Something else", with a few words for the question as a whole as its query, for example "things to do". Categories have no sources, errand or call, and use answer_mode "pick". Use only the question for the query: never memory, names or anything private.
 - Replies from the search. The person picked a category and the web results are in the message. Write up to three reply options, each about one place or fact from the results, with its id in sources. label is the place's name or the fact in a few words, text is what the person would say about it, for example label "Palace of Fine Arts" with text "Let's go to the Palace of Fine Arts!". answer_mode "pick". If the results do not fit, one option can say so.
 
 Never say or suggest that the app reads thoughts. Never speak for the partner.`;
@@ -69,7 +69,9 @@ const SEARCH_NOTES: Record<PlanInput['search'], string> = {
 function taskLine(input: PlanInput): string {
     switch (input.task ?? 'options') {
         case 'categories':
-            return 'Task: offer categories. The person chose to search the web for the question below.';
+            return input.placesNear
+                ? 'Task: offer categories. The person chose to search the web for the question below. Place searches look around where the person is now, so each query names only what to find, never a city.'
+                : 'Task: offer categories. The person chose to search the web for the question below.';
         case 'category_search':
             return `Task: replies from the search. The person picked the category ${JSON.stringify(oneLine(input.category ?? ''))}.`;
         default:

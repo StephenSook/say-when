@@ -57,6 +57,14 @@ describe('the sandbox meter', () => {
         assert.equal(m.estimate(row({ kind: 'remember' })), 0);
     });
 
+    it('counts the searches a categories job prefetches (src/prefetch.ts) when prefetch is on', () => {
+        const limits = { ...SANDBOX_LIMIT_DEFAULTS, usdPerPlan: 0.02, usdPerSearch: 0.03 };
+        const categories = row({ kind: 'categories', webSearchAllowed: false });
+        assert.equal(new SandboxMeter(limits, () => 0).estimate(categories), 0.02);
+        assert.ok(Math.abs(new SandboxMeter(limits, () => 0, 3).estimate(categories) - 0.11) < 1e-9);
+        assert.equal(new SandboxMeter(limits, () => 0, 3).estimate(row({ kind: 'category_search' })), 0.05);
+    });
+
     it('refuses a job that would pass the daily ceiling, and opens again after 24 hours', () => {
         const { m, advance } = meter({ dailyUsd: 0.1, usdPerPlan: 0.03, usdPerSearch: 0.02, questionsPerPartnerPerHour: 100 });
         assert.equal(m.admit(row()).ok, true);

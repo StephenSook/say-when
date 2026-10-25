@@ -25,6 +25,7 @@ import { MemoryWatch } from './requests.js';
 import { ConversationLog, PreviewBook, SentBook, type JobDeps } from './jobs.js';
 import { consoleLogger, type Logger } from './log.js';
 import { Orchestrator } from './orchestrator.js';
+import { PREFETCH_LIMITS } from './prefetch.js';
 import { SandboxMeter, startHealthServer } from './sandbox.js';
 import { errorTag, startupFailureLine, StartupError } from './startup.js';
 import { askSidecar, checkVoiceToken, formatWarm, newNonce, removeQuietly, wakeStandby, WarmFileError, warmFiles, warmMoss, writePidFile, writeWarmStatus } from './warm.js';
@@ -145,6 +146,7 @@ async function run(result: ConfigResult, log: Logger): Promise<number> {
         yesNoFast: config.speed.yesNoFast,
         draftFirst: config.speed.draftFirst,
         direct: config.inputMode === 'direct',
+        prefetch: config.inputMode === 'direct' && config.speed.prefetch,
     });
 
     const db = await connect(result, log);
@@ -188,6 +190,8 @@ async function run(result: ConfigResult, log: Logger): Promise<number> {
         draftFirst: config.speed.draftFirst,
         // Direct select (docs/direct-select.md): a Search option, and the search only once the person asks for it.
         direct: config.inputMode === 'direct',
+        // Direct select: each category's search starts as the categories are offered (src/prefetch.ts).
+        prefetch: config.inputMode === 'direct' && config.speed.prefetch,
     };
     calls = new CallRunner({ db, dialer: wired.dialer, log, clock: () => performance.now(), now: Date.now });
     const errands = new ErrandRunner({
@@ -201,7 +205,8 @@ async function run(result: ConfigResult, log: Logger): Promise<number> {
         // Past requests (src/requests.ts): never in the judge try sandbox.
         pastRequests: { memory: wired.memory, forms: wired.forms, timeZone: config.timeZone, now: Date.now, sandbox: config.sandbox !== null, watch: memoryWatch },
     });
-    const meter = config.sandbox ? new SandboxMeter(config.sandbox) : null;
+    // A categories job with search prefetch pays for up to PREFETCH_LIMITS.perQuestion searches, so the try caps count them.
+    const meter = config.sandbox ? new SandboxMeter(config.sandbox, Date.now, deps.prefetch ? PREFETCH_LIMITS.perQuestion : 0) : null;
     if (meter) log.info('judge try sandbox caps are on', { dailyCents: Math.round(meter.limits.dailyUsd * 100), partnersPerHour: meter.limits.partnersPerHour });
     const orchestrator = new Orchestrator(deps, { errands, calls }, { maxJobs: config.maxJobs, ...(meter ? { admit: (row) => meter.admit(row) } : {}) });
     orchestrator.start();

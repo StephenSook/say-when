@@ -29,8 +29,8 @@ export interface AgentConfig {
     timeZone: string;
     maxJobs: number;
     maxOptions: number;
-    /** AGENT_YES_NO_FAST (on by default) and AGENT_DRAFT_FIRST (off by default). */
-    speed: { yesNoFast: boolean; draftFirst: boolean };
+    /** AGENT_YES_NO_FAST (on by default), AGENT_DRAFT_FIRST (off by default) and AGENT_SEARCH_PREFETCH (on by default). */
+    speed: { yesNoFast: boolean; draftFirst: boolean; prefetch: boolean };
     /**
      * AGENT_INPUT_MODE: `direct` (the default on this branch, docs/direct-select.md) offers a Search option and searches
      * only after the person asks; `scan` keeps the scan path, which searches inside the options job.
@@ -216,6 +216,9 @@ export function readConfig(env: Env, tokenFileDefault: string, hasAnthropicProfi
     // coming (spacetime/src/clock.ts endPass, finishScan), so with a short draft and a slow search they can be lost.
     const yesNoFast = flag(env, 'AGENT_YES_NO_FAST', true, checks, problems, 'stock Yes and No at once for a clear yes or no question');
     const draftFirst = flag(env, 'AGENT_DRAFT_FIRST', false, checks, problems, 'options from memory while the web search runs');
+    // Direct select (src/prefetch.ts): the search for each category starts as the categories are offered, after the
+    // person confirmed the search, so a Category pick does not wait for an Apify run to start. Unused runs cost money.
+    const prefetch = flag(env, 'AGENT_SEARCH_PREFETCH', true, checks, problems, 'each category search starts as the categories are offered');
     // Direct select (docs/direct-select.md): four gestures pick four options, and a search runs only when asked for.
     const rawMode = (env.AGENT_INPUT_MODE ?? '').trim().toLowerCase();
     let inputMode: 'direct' | 'scan' = 'direct';
@@ -277,7 +280,7 @@ export function readConfig(env: Env, tokenFileDefault: string, hasAnthropicProfi
             timeZone,
             maxJobs,
             maxOptions,
-            speed: { yesNoFast, draftFirst },
+            speed: { yesNoFast, draftFirst, prefetch },
             inputMode,
         },
         checks,

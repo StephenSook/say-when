@@ -98,6 +98,11 @@ export interface StepEnd {
     payload?: Record<string, unknown>;
     /** The array in `payload` that may be shortened to fit. */
     listKey?: string;
+    /**
+     * The step's time when it is not the time since it began here: a prefetched search (src/prefetch.ts) reports how
+     * long its own run took. Unset: the time since `begin`.
+     */
+    ms?: number;
 }
 
 /** One timed step: `started` when it begins, then `ok` or `error` once, with the time it took. */
@@ -149,7 +154,7 @@ export class Step {
         if (this.finished) return Promise.resolve();
         this.finished = true;
         this.stopLease();
-        return this.events.write(this.stage, status, this.seq, detail, this.elapsedMs(), end);
+        return this.events.write(this.stage, status, this.seq, detail, end.ms ?? this.elapsedMs(), end);
     }
 }
 

@@ -8,12 +8,12 @@
 // Every step writes a pipeline event with its time and counts; failures degrade (no memory, no web) instead of
 // failing the job, because the person still needs options.
 
-import { ApifyHttpError, type QuestionClass, type SearchRow } from '@say-when/apify-client';
+import { ApifyHttpError, type QuestionClass, type SearchResult, type SearchRow } from '@say-when/apify-client';
 import { MossCallError, MossRunError, type MemoryHit, type Recall, type WebHit } from '@say-when/moss';
 
 import { DeadlineError, JobAbortedError, withDeadline } from './deadline.js';
 import type { Logger } from './log.js';
-import { label, StaleAttemptError, type JobEvents } from './pipeline.js';
+import { label, StaleAttemptError, wholeMs, type JobEvents } from './pipeline.js';
 import type { MemoryContext, WebContext } from './planner/types.js';
 import type { Classifier, MemoryPort, SearchPort, WebIndexPort } from './ports.js';
 import { excerpt, memoryHitPayload, searchRowPayload, sourceRefOf, webHitPayload, type PayloadHit } from './privacy.js';
@@ -232,6 +232,48 @@ export function placeQuery(question: string): string {
     return DEFAULT_PLACE_QUERY;
 }
 
+/** At most this many words in a category's maps query ("quiet cafe", "park with a view"). */
+const PLACE_QUERY_WORDS = 5;
+const PLACE_QUERY_CHARS = 60;
+// "... in San Francisco", "near Fort Mason": Maps already searches around AGENT_PLACES_NEAR, so a place only narrows it.
+const PLACE_TAIL = /\s+(?:in|near|around|at|by)\s+(?:the\s+)?\p{Lu}.*$/u;
+const TIME_TAIL = /\s+(?:today|tonight|now|right now|this (?:morning|afternoon|evening|weekend))$/i;
+// A query that reads like the spoken question, which Maps cannot use.
+const QUESTION_START = /^(?:anything|something|somewhere|what|where|when|which|who|how|is|are|can|could|do|does|did|should|would|will|want|any|let'?s)\b/i;
+
+/**
+ * A category's search words as a maps query: what to find, without the city or the time ("parks and gardens in San
+ * Francisco" is "parks and gardens"). Words that are still long, or read like the question, go through placeQuery.
+ */
+export function shortPlaceQuery(words: string): string {
+    const text = words.replace(/\s+/g, ' ').trim();
+    const cut = text.replace(PLACE_TAIL, '').replace(TIME_TAIL, '').replace(/[?.!,]+$/, '').trim();
+    const count = cut === '' ? 0 : cut.split(' ').length;
+    if (count > 0 && count <= PLACE_QUERY_WORDS && cut.length <= PLACE_QUERY_CHARS && !QUESTION_START.test(cut)) return cut;
+    return placeQuery(cut === '' ? text : cut);
+}
+
+/** One search as it goes out: Google Maps near AGENT_PLACES_NEAR, or the RAG web search. */
+export interface PlannedSearch {
+    kind: 'web' | 'maps';
+    query: string;
+}
+
+/**
+ * Direct select's category search: Maps with short place words when it is a place question and AGENT_PLACES_NEAR is
+ * set, the web search with the words as they are otherwise. The category search job and its prefetch
+ * (src/prefetch.ts) both plan with this, so a prefetched run is found again under the same words.
+ */
+export function categorySearch(deps: Pick<RetrievalDeps, 'placesNear'>, query: string, places: boolean): PlannedSearch {
+    const kind = places && deps.placesNear ? 'maps' : 'web';
+    return { kind, query: kind === 'maps' ? shortPlaceQuery(query) : query };
+}
+
+/** Sends one planned search with the sidecar's settings (src/wiring.ts searchPort sets the Actor limits). */
+export function sendSearch(deps: Pick<RetrievalDeps, 'placesNear'>, search: SearchPort, planned: PlannedSearch, signal: AbortSignal): Promise<SearchResult> {
+    return planned.kind === 'maps' ? search.places(planned.query, { signal, near: deps.placesNear ?? undefined }) : search.web(planned.query, { signal });
+}
+
 /**
  * Steps 2 and 3. A question that needs no outside facts writes one `search ok skipped` event (when web search is
  * allowed at all) and returns at once. Without consent for web search there is no search and no search event:
@@ -267,7 +309,12 @@ export async function searchStep(
         await events.instant('search', 'error', 'search off', 0, { counts: { needsWeb: true, searches: 0, rowCount: 0 } });
         return { status: 'failed', rows: [], kind: null };
     }
-    const kind: 'web' | 'maps' = (override ? override.places : check.kind === 'places') && deps.placesNear ? 'maps' : 'web';
+    const planned: PlannedSearch = override
+        ? categorySearch(deps, override.query, override.places)
+        : check.kind === 'places' && deps.placesNear
+          ? { kind: 'maps', query: placeQuery(row.questionText) }
+          : { kind: 'web', query: row.questionText };
+    const kind = planned.kind;
     const step = await events.begin('search', kind);
     if (!allowed()) {
         // Revoked while the step was starting: the question never goes out.
@@ -278,10 +325,7 @@ export async function searchStep(
     const combined = AbortSignal.any(stop ? [signal, deadline, stop] : [signal, deadline]);
     try {
         if (stop?.aborted) throw new DOMException('stopped', 'AbortError');
-        const result =
-            kind === 'maps'
-                ? await deps.search.places(override?.query ?? placeQuery(row.questionText), { signal: combined, near: deps.placesNear ?? undefined })
-                : await deps.search.web(override?.query ?? row.questionText, { signal: combined });
+        const result = await sendSearch(deps, deps.search, planned, combined);
         await step.ok(result.partial ? `${kind} partial` : kind, {
             counts: { needsWeb: true, searches: 1, rowCount: result.rows.length, partial: result.partial },
             payload: { reason: check.reason, rows: result.rows.map(searchRowPayload) },
@@ -299,6 +343,67 @@ export async function searchStep(
         deps.log.warn('search failed; planning without outside facts', { job: row.jobId, search: kind, deadline: deadline.aborted });
         return { status: 'failed', rows: [], kind };
     }
+}
+
+/** How a prefetched search ended (src/prefetch.ts). `ms` is how long its own run took. Never rejects. */
+export type PrefetchOutcome = { ok: true; result: SearchResult; ms: number } | { ok: false; error: unknown; ms: number; timedOut: boolean };
+
+/** A prefetched search a category search job takes over: already done, or still on its way. */
+export interface PrefetchedRun {
+    kind: 'web' | 'maps';
+    outcome: Promise<PrefetchOutcome>;
+}
+
+/**
+ * Steps 2 and 3 for a search that was prefetched when the categories were offered. Its events are this job's, as if
+ * it had searched itself: `search started`, then `ok` (or `error`) with the run's own time and `prefetched: true`
+ * (`waitMs` is what this job waited for it). Web search consent is read again once the run is back, and a revoked
+ * consent means none of its rows are used. Null when the prefetched run failed: the caller searches again, as it
+ * would have without a prefetch.
+ */
+export async function prefetchedSearchStep(
+    deps: RetrievalDeps,
+    events: JobEvents,
+    row: AgentQueueRow,
+    check: QuestionClass,
+    signal: AbortSignal,
+    allowed: () => boolean,
+    run: PrefetchedRun,
+): Promise<SearchOutcome | null> {
+    if (!row.webSearchAllowed || !allowed()) return { status: 'not_allowed', rows: [], kind: null };
+    const step = await events.begin('search', run.kind);
+    const waitStart = events.now();
+    const counts = { needsWeb: true, searches: 1, prefetched: true };
+    let outcome: PrefetchOutcome;
+    try {
+        // The run has its own deadline, started earlier; this one only bounds the wait, and the job's signal ends it.
+        outcome = await withDeadline(run.outcome, deps.searchTimeoutMs, 'prefetched search', signal);
+    } catch (error) {
+        if (signal.aborted || error instanceof JobAbortedError) throw new JobAbortedError();
+        await step.error(searchErrorLabel(run.kind, error, true), { counts: { ...counts, rowCount: 0, waitMs: wholeMs(events.now() - waitStart) } });
+        deps.log.warn('the prefetched search did not come back in time; planning without outside facts', { job: row.jobId, search: run.kind });
+        return { status: 'failed', rows: [], kind: run.kind };
+    }
+    if (signal.aborted) throw new JobAbortedError();
+    const waitMs = wholeMs(events.now() - waitStart);
+    if (!allowed()) {
+        // Revoked while the run was on its way: nothing it found is used or shown.
+        await step.error('search off');
+        return { status: 'not_allowed', rows: [], kind: null };
+    }
+    if (!outcome.ok) {
+        await step.error(searchErrorLabel(run.kind, outcome.error, outcome.timedOut), { ms: outcome.ms, counts: { ...counts, rowCount: 0, waitMs } });
+        deps.log.info('the prefetched search failed; searching again', { job: row.jobId, search: run.kind, deadline: outcome.timedOut });
+        return null;
+    }
+    const result = outcome.result;
+    await step.ok(result.partial ? `${run.kind} partial` : run.kind, {
+        ms: outcome.ms,
+        counts: { ...counts, rowCount: result.rows.length, partial: result.partial, waitMs },
+        payload: { reason: check.reason, rows: result.rows.map(searchRowPayload) },
+        listKey: 'rows',
+    });
+    return { status: 'done', rows: result.rows, kind: run.kind };
 }
 
 export interface Retrieved {

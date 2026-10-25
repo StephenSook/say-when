@@ -3,11 +3,13 @@
 // - Options: memory first, then Claude's options, each with a short earpiece label. A question that could use outside
 //   facts gets a Search option third (yes-style, no-style, Search the web, something else); small talk never does.
 //   Nothing is searched here.
-// - Categories (after a Search pick and its confirm): up to four categories tailored to the question, with no web
-//   call, and the search words each one stands for (kept in CategoryBook).
+// - Categories (after a Search pick and its confirm): up to four categories tailored to the question, planned with no
+//   web call, and the search words each one stands for (kept in CategoryBook). With AGENT_SEARCH_PREFETCH the search
+//   for each of the first three starts as the categories are published (src/prefetch.ts), since the person already
+//   confirmed it.
 // - Category search (after a Category pick): the Google Maps search near AGENT_PLACES_NEAR for a place question, the
-//   RAG web search otherwise, indexed the usual way (pipeline rows, the question's Moss web index), then up to four
-//   places or facts as replies with their sources.
+//   RAG web search otherwise (the prefetched run for that category when there is one), indexed the usual way
+//   (pipeline rows, the question's Moss web index), then up to four places or facts as replies with their sources.
 // The person always picks; a reply is said aloud at once, and an errand, a call or a search start waits for a read-back
 // and a fresh confirm in the module.
 
@@ -30,7 +32,18 @@ import {
 import { acceptedSource } from './options.js';
 import { JobEvents } from './pipeline.js';
 import { PlannerError, type PlanInput, type WebContext } from './planner/types.js';
-import { JobAbortedError, memoryContext, mossDeadline, recallMemory, retrieveStep, searchStep } from './retrieval.js';
+import { SearchPrefetch } from './prefetch.js';
+import {
+    categorySearch,
+    JobAbortedError,
+    memoryContext,
+    mossDeadline,
+    prefetchedSearchStep,
+    recallMemory,
+    retrieveStep,
+    searchStep,
+    sendSearch,
+} from './retrieval.js';
 import type { AgentQueueRow, AnswerMode, OptionInput, Tone } from './types.js';
 
 const clean = (text: string): string => text.replace(/\s+/g, ' ').trim();
@@ -228,6 +241,32 @@ function categoryBook(deps: JobDeps): CategoryBook {
     return deps.categoryBook;
 }
 
+function prefetchBook(deps: JobDeps): SearchPrefetch {
+    deps.prefetches ??= new SearchPrefetch(deps.db, deps.log, deps.clock);
+    return deps.prefetches;
+}
+
+/**
+ * Starts the search for each offered category (src/prefetch.ts), right before the categories are published: the
+ * person confirmed the search, and the categories job is still this attempt's (a pause or a new question cancels it),
+ * which `live` checks again before each search goes out, together with the module's web search consent. Returns how
+ * many searches went out.
+ */
+function startPrefetch(deps: JobDeps, row: AgentQueueRow, attempt: number, original: { id: bigint; text: string }, entries: readonly CategoryEntry[], signal: AbortSignal): number {
+    const search = deps.retrieval.search;
+    if (!deps.prefetch || !search || entries.length === 0) return 0;
+    const places = deps.retrieval.classify(original.text).kind === 'places';
+    const live = () =>
+        !signal.aborted && deps.db.agentQueue().some((r) => r.jobId === row.jobId && r.status === 'claimed' && r.claimedByMe && r.attempt === attempt);
+    return prefetchBook(deps).start(
+        original.id,
+        entries.map((entry) => categorySearch(deps.retrieval, entry.query, places)),
+        deps.retrieval.searchTimeoutMs,
+        live,
+        (planned, runSignal) => sendSearch(deps.retrieval, search, planned, runSignal),
+    );
+}
+
 /**
  * A categories or search turn is a new question row on the person's original question (spacetime/src/clock.ts
  * createFollowUp), so both share the original's id: the categories are kept under it, and found again under it.
@@ -297,7 +336,9 @@ export async function runCategoriesJob(row: AgentQueueRow, attempt: number, deps
         if (original.text.trim() === '') throw new JobInputError('empty_question');
         // No web call here, so the job carries no web search consent (the module checks it again at the Category pick).
         const ctx: PlanContext = { deps, row, events, signal, allowMemory: () => memoryConsent(deps, row, attempt), allowWeb: () => false };
-        // Only the question: no memory and no conversation, so the search words can carry nothing private.
+        // Only the question: no memory and no conversation, so the search words can carry nothing private. A place
+        // question searched on the maps is already centred on the venue, so its search words name no city.
+        const placesNear = deps.retrieval.placesNear !== null && deps.retrieval.classify(original.text).kind === 'places';
         const input: PlanInput = {
             question: original.text,
             origin: row.origin,
@@ -310,6 +351,7 @@ export async function runCategoriesJob(row: AgentQueueRow, attempt: number, deps
             recentErrand: null,
             search: 'none',
             task: 'categories',
+            ...(placesNear ? { placesNear: true } : {}),
             maxOptions: deps.maxOptions,
             nowMs: deps.now(),
             timeZone: deps.timeZone,
@@ -330,8 +372,11 @@ export async function runCategoriesJob(row: AgentQueueRow, attempt: number, deps
             await events.instant('plan', 'ok', 'categories stock', 0, { counts: { optionCount: options.length, final: true } });
         }
         categoryBook(deps).record(original.id, entries);
+        // Before the publish, which ends the job: a search goes out only while the job is still this attempt's. If the
+        // publish fails, the runs are dropped unused when their time to live is up.
+        const prefetched = startPrefetch(deps, row, attempt, original, entries, signal);
         await publish(deps.db, job, 'pick', options, true);
-        deps.log.info('categories published', { job: row.jobId, options: options.length });
+        deps.log.info('categories published', { job: row.jobId, options: options.length, prefetched });
     } finally {
         events.close();
     }
@@ -393,8 +438,15 @@ export async function runCategorySearchJob(row: AgentQueueRow, attempt: number, 
         const check = deps.retrieval.classify(original.text);
         const known = categoryBook(deps).find(original.id, category);
         const query = known ?? defaultCategoryQuery(original.text, category);
-        deps.log.info('category search', { job: row.jobId, known: known !== null, places: check.kind === 'places' });
-        const search = await searchStep(deps.retrieval, events, row, { ...check, needsWeb: true }, signal, allowWeb, undefined, { query, places: check.kind === 'places' });
+        const places = check.kind === 'places';
+        const searchCheck = { ...check, needsWeb: true };
+        // The run started when the categories were offered (src/prefetch.ts), under the same search words, if any.
+        const prefetched = deps.prefetch ? (deps.prefetches?.take(original.id, categorySearch(deps.retrieval, query, places)) ?? null) : null;
+        deps.log.info('category search', { job: row.jobId, known: known !== null, places, prefetched: prefetched !== null });
+        const fromPrefetch = prefetched ? await prefetchedSearchStep(deps.retrieval, events, row, searchCheck, signal, allowWeb, prefetched) : null;
+        if (signal.aborted) throw new JobAbortedError();
+        // No prefetch, or it failed: the search as before.
+        const search = fromPrefetch ?? (await searchStep(deps.retrieval, events, row, searchCheck, signal, allowWeb, undefined, { query, places }));
         if (signal.aborted) throw new JobAbortedError();
 
         // Indexed the usual way: the question's Moss web index, forgotten at the end.
