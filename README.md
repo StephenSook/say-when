@@ -26,19 +26,20 @@ Every step writes to SpacetimeDB, so the dashboard on any laptop updates live ov
 
 | Command | Signal | What it does |
 |---|---|---|
-| YES | Imagine squeezing your right fist | Picks the option just heard, or answers yes. While nothing is happening, it opens the person's own menu ("I need something", "Send a request", "Call", "Say something else"). |
-| NO | Imagine squeezing your left fist | Skips the option, or answers no. |
+| YES | Imagine squeezing your right fist (counts only at 90% decoder confidence or more) | Picks the option just heard, or answers yes. While nothing is happening, it opens the person's own menu ("I need something", "Send a request", "Call", "Say something else"). |
+| NO | Imagine squeezing your left fist (same 90% bar) | Skips the option, or answers no. |
 | CONFIRM | Single jaw clench | The only way anything leaves the room: it sends the form or places the call that was just read back. It only counts inside the confirm window after the full read-back. |
-| STOP | Double jaw clench (a held clench also counts) | Cancels, means "none of these", hangs up a call, and pauses. |
+| STOP | Hold a jaw clench (about 1 second) | Cancels, means "none of these", hangs up a call, and pauses. |
 
-The brain makes the choices and the jaw commits or stops. Taking the headset off (HEADSET-OFF) and two minutes with no command (auto-pause) also cancel anything pending.
+A double jaw clench means nothing: the decoder sends no command for it (PLAN D21). The brain makes the choices and the jaw commits or stops. Taking the headset off (HEADSET-OFF) and two minutes with no command (auto-pause) also cancel anything pending.
 
 The hand commands are imagined movements read over the motor cortex, so they only count after passing the test in [docs/brain-mode-test.md](docs/brain-mode-test.md), written before anyone measured. If they fail, YES becomes a single short jaw clench, CONFIRM goes back to a double clench, and NO becomes silence. The jaw clench is a muscle signal, not a brain signal. Nothing here reads thoughts.
 
 ## Safety rules
 
 - The model never clicks submit and never dials. An errand or call option only prepares and reads back; CONFIRM (a single jaw clench) releases it.
-- Fail closed. Silence, a timeout, NO, STOP, or a lost signal all mean "do not act".
+- Fail closed. Silence, a timeout, NO, STOP (a held jaw clench), or a lost signal all mean "do not act". A double jaw clench sends nothing, so two quick clenches never count as two CONFIRMs.
+- An imagined YES or NO counts only when the decoder is at least 90% sure for the whole hold (PLAN D21). Fewer false picks, at the cost of a stronger or longer imagined squeeze.
 - A confirm must be fresh: it starts after the read-back ends, lands inside the window, matches the digest of what was read back, and is used once.
 - Calls go only to people who consented. The voice says it is an automated assistant with an AI-generated voice and who it calls for, then what the sent request asked for (only fields the form marks speakable, each checked again before it is said) and when it was sent, and gives a callback number at the end before it hangs up.
 - The form-errand Actor only fills forms on an allowlist and refuses CAPTCHAs, logins, passwords, payments, and uploads.

@@ -20,7 +20,7 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⛔ blocked
 | 1.2 | Lock shared contracts (table and reducer names) | `PLAN.md` | Stephen | ✅ | 1.1 | Locked Oct 24 from `docs/spacetime.md` (see Shared Contracts below); announce changes with ⚠️ CONTRACT |
 | 2.1 | Headset reader and four-command decoder | `switch/` | Shashank | ⬜ | - | Which headset? See Q1 |
 | 2.2 | Calibration: per-person signal map and thresholds | `switch/` | Shashank | ⬜ | 2.1 | Idle false-activation rate goes on the dashboard |
-| 2.3 | STOP, HEADSET-OFF watchdog and idle auto-pause | `switch/` | Shashank | ⬜ | 2.1 | 0.5 s packet watchdog; a single jaw clench is CONFIRM, a double (or a held clench) is STOP (D17, replacing D16) |
+| 2.3 | STOP, HEADSET-OFF watchdog and idle auto-pause | `switch/` | Shashank | ⬜ | 2.1 | 0.5 s packet watchdog; a single jaw clench is CONFIRM (D17), a held clench is STOP, and a double clench means nothing (D21) |
 | 2.4 | Brain commands: imagined right fist = YES, left fist = NO | `switch/` | Shashank | ⬜ | 2.2 | Needs a C3/C4 headset (Q1). Must pass `docs/brain-mode-test.md` (left vs right vs rest) at the venue; else jaw-only fallback. See D11 |
 | 3.1 | Partner speech to text (Cartesia Ink-2) | `cartesia/` | Stephen | ✅ | - | Built and tested offline (117 tests in `cartesia/`). Live: voice asking with a test clip in progress; L3 on the real phone open |
 | 3.2 | Apify search and scrape client (RAG Web Browser, Google Maps) | `apify/client/` | Stephen | ✅ | - | Built, 166 tests, Codex round 1 fixed (4891a05) |
@@ -147,12 +147,13 @@ The headset reads two things: imagined hand squeezes and the jaw. No eyes.
 
 | Signal | Command | Means |
 |---|---|---|
-| Imagine squeezing your right fist | YES | Pick this one, or answer yes. While idle, it opens the person's own menu. |
-| Imagine squeezing your left fist | NO | Skip, or answer no. |
+| Imagine squeezing your right fist | YES | Pick this one, or answer yes. While idle, it opens the person's own menu. (Needs 90% decoder confidence since D21.) |
+| Imagine squeezing your left fist | NO | Skip, or answer no. (Same 90% bar, D21.) |
 | Single jaw clench | CONFIRM | The only way anything leaves the room (a form or a call). (Was a double clench until D17.) |
-| Double jaw clench, or a held clench | STOP | Cancel, none of these, hang up, pause. (Was a long clench until D16 and a single clench until D17.) |
+| Held jaw clench (about 1 second) | STOP | Cancel, none of these, hang up, pause. (Was a long clench until D16, a single clench until D17, and a double or a held clench until D21.) |
+| Double jaw clench | nothing | The decoder sends no command for it (D21). |
 
-How it plays out: a yes or no question costs one thought ("Are you tired?" then right fist, the voice says "Yes"); an open question plays four options in four tones and each one waits until the person answers (D19): YES picks it, NO moves to the next, silence reads it again; when the talk leads to an errand or a call, Claude offers it as a follow-up option ("Send the care team a lunch request", "Call my sister", "Nothing else"), YES picks it, the read-back plays, and only a single clench sends it (D17); while nothing is happening, YES opens the person's own menu, which keeps their independence; during a call a double clench hangs up (D17). HEADSET-OFF and the 2-minute idle auto-pause still cancel anything pending. Imagined movement is slow, so each option's response window is about 3 to 4 seconds, set at calibration. Proposed by Khadim; adopted by Stephen.
+How it plays out: a yes or no question costs one thought ("Are you tired?" then right fist, the voice says "Yes"); an open question plays four options in four tones and each one waits until the person answers (D19): YES picks it, NO moves to the next, silence reads it again; when the talk leads to an errand or a call, Claude offers it as a follow-up option ("Send the care team a lunch request", "Call my sister", "Nothing else"), YES picks it, the read-back plays, and only a single clench sends it (D17); while nothing is happening, YES opens the person's own menu, which keeps their independence; during a call a held clench hangs up (D21). HEADSET-OFF and the 2-minute idle auto-pause still cancel anything pending. Imagined movement is slow, so each option's response window is about 3 to 4 seconds, set at calibration. Proposed by Khadim; adopted by Stephen.
 
 **Locked Oct 24 by Stephen.**
 
@@ -169,13 +170,19 @@ SpacetimeDB is the whole live backend, not a store behind an API:
 
 **Locked Oct 23 by Stephen. Design detail in `docs/spacetime.md`.**
 
+### D21: Double jaw clench no longer means STOP; STOP is a held clench (Oct 24, team), and imagery commands need 90% confidence
+
+A single jaw clench stays CONFIRM (D17). STOP is now only a held clench: the decoder sends it once a clench has lasted `LONG_CLENCH_S` (0.8 s), while it is still held, and the words say "Hold a jaw clench (about 1 second)". A double jaw clench means nothing: the decoder still detects it (so two quick clenches are never sent as two CONFIRMs) but sends no command for it (`JAW_COMMAND` in `eeg-data/eeg/messages.py` has no `double` entry). Imagery commands need 90% confidence: an imagined YES or NO fires only when the smoothed probability of that hand stays at or above 0.9 for the whole dwell, the same bar for both hands, so every imagery gesture carries a confidence of at least 0.9 (`IMAGERY_THRESHOLD` in `eeg-data/eeg/config.py`, `live.py --threshold`, was 0.6). Trade-off: fewer false picks, but the wearer has to hold the imagined squeeze more strongly or for longer, and some real attempts will send nothing. The jaw-only fallback does not change (a single clench is YES, a double is CONFIRM, no STOP gesture). The backend does not change, since the decoder sends command names; only the decoder, the words in `web/lib/commands.ts`, the scripted /brain scenarios and the docs moved. Decided by the team (Stephen, about 9:40 PM).
+
+**Locked Oct 24 by the team.**
+
 ### D19: The scan waits for the person: silence never moves on (Oct 24, team)
 
 In the scan, each option (or the yes or no prompt) now waits for an answer. YES picks it, NO moves to the next option, and silence at the end of the response window reads the same option again instead of moving on. The option stays current from its first read, so a YES or NO given during any read of it lands on it. NO on the last option still starts the next pass, and the session's idle pause (two minutes with no accepted command) still ends a wait with nothing said. Rationale: imagined movement needs about 2 s of steady imagery to decode, and with a 3.5 s window per option the cursor moved on before the person could answer. Logic only in the module (`repeatOption` in `spacetime/src/clock.ts`, the StepEnd tick in `index.ts`); no table changes, so a republish keeps the data. `scanPolicy.silenceRepeats = false` restores the D11 timed scan.
 
 **Locked Oct 24 by the team.**
 
-### D17: Single jaw clench = CONFIRM, double = STOP (Oct 24, team), supersedes D16's jaw mapping
+### D17: Single jaw clench = CONFIRM, double = STOP (Oct 24, team), supersedes D16's jaw mapping (STOP superseded by D21)
 
 A single jaw clench is now CONFIRM and a double jaw clench is STOP; a held clench (about 0.8 s) is still STOP. Rationale: the team found that false single-clench STOPs paused the demo. A CONFIRM still only counts inside the confirm window after a full read-back (fresh, matching the read-back digest, used once), so a stray single clench anywhere else does nothing; during the quiet hold before the window it restarts the hold. To keep a stray clench from confirming, raise `JAW_RATIO` in `eeg-data/eeg/config.py` from 20 to about 30. The decoder reports a single only after 0.7 s with no second clench, so a CONFIRM lands about 0.7 s after the clench ends. The earpiece now says "To send it, clench once." The jaw-only fallback does not change: a single clench is YES, a double is CONFIRM, and there is no STOP gesture. The backend does not change, since the decoder sends command names. Decided by the team (Shashank, relayed by Stephen, about 8:00 PM).
 

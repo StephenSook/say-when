@@ -4,16 +4,17 @@ One page for the judging morning. Judging is 10:30 AM to 12:30 PM PDT at our tab
 
 Everything below runs against the demo database `say-when-demo`, the one https://eleven-calhacks.vercel.app reads. Commands run from the repo root on Stephen's Mac, which holds the Keychain keys and the owner's `spacetime` login.
 
-## Words we use (PLAN D17)
+## Words we use (PLAN D17, D21)
 
 | Command | Headset signal | Keyboard stand-in |
 |---|---|---|
 | YES | imagine squeezing the right fist | key Y |
 | NO | imagine squeezing the left fist | key N |
 | CONFIRM | single jaw clench | key C |
-| STOP | double jaw clench | key S |
+| STOP | held jaw clench (hold about 1 second) | key S |
 
-- Since D17 (Oct 24) a single clench is CONFIRM and a double is STOP; a held clench is also STOP. A CONFIRM only counts inside the confirm window after a full read-back, so a stray clench anywhere else does nothing. The earpiece says "To send it, clench once."
+- Since D21 (Oct 24, about 9:40 PM) a single clench is CONFIRM (D17), a held clench (about 1 second; the decoder fires at 0.8 s) is STOP, and a double clench means nothing: the decoder sends no command for it. A CONFIRM only counts inside the confirm window after a full read-back, so a stray clench anywhere else does nothing. The earpiece says "To send it, clench once."
+- Decoder settings (EEG laptop, `python live.py --window` in `eeg-data/`): an imagined YES or NO is sent only when the model is at least 90% sure for the whole 1 s hold (`--threshold`, default 0.9 since D21; it was 0.6). Fewer false picks, but the wearer has to hold the imagined squeeze more strongly or for longer, and some real attempts will send nothing. The bar is the same for both hands. If it is lowered on the day, say so; never present a lowered run as the 90% setting.
 - The jaw clench is a muscle signal. The imagined squeeze counts as a brain command only if the wearer passed `docs/brain-mode-test.md` today; otherwise say it is the experiment.
 - In a keyboard session say "key Y", never "brain" or "thought". The board already says "Keyboard input" for a `keyboard-` session.
 - Nothing reads thoughts. Nothing leaves the room without a read-back and a fresh CONFIRM.
