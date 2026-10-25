@@ -15,7 +15,9 @@ The live backend for Eleven (formerly NeuroLingo and before that Say When): one 
 | Environment | none | none |
 | Dashboard | https://spacetimedb.com/say-when-demo | https://spacetimedb.com/say-when-dev (owner login: logs, SQL console, usage) |
 
-With no `CARTESIA_API_KEY` set, `mint_voice_token` answers `voice_key_missing` and never a token, on both. Before the demo, the owner gets `say-when-demo` ready as in [Get the demo database ready](#get-the-demo-database-ready-owner-before-the-demo).
+With no `CARTESIA_API_KEY` set, `mint_voice_token` answers `voice_key_missing` and never a token, on both.
+
+**`say-when-direct` (direct select, D18).** A third database, created Sat Oct 24, 2026, about 8:45 PM PDT from branch `direct-select` (identity `c200a165db1a8df2e44dd28b9a0e58f96fb23c73d21570c1e3487e0e4ba609a0`), with `config.input_mode` `direct`: four gestures pick four options ([`docs/direct-select.md`](../docs/direct-select.md) 4.1). Published with the same command as below, naming `say-when-direct`; no Cartesia key, devices or consent rows yet. The scan databases above are untouched. Before the demo, the owner gets `say-when-demo` ready as in [Get the demo database ready](#get-the-demo-database-ready-owner-before-the-demo).
 
 ## What it does that a plain database would not (PLAN D12)
 
@@ -53,7 +55,7 @@ Node 22. From this folder:
 ```bash
 npm ci
 npm run typecheck              # the module, the scripts and the generated bindings
-npm test                       # vitest with the 2.12+ module test harness: 177 tests, no server needed
+npm test                       # vitest with the 2.12+ module test harness: 224 tests, no server needed
 spacetime build --module-path .
 ```
 
