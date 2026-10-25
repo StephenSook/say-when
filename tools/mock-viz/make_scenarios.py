@@ -81,7 +81,7 @@ IPSI_FRACTION = 0.1  # the same side as the hand moves by a tenth of it
 CLENCH_RISE = {"b16_20": (0.25, 0.45), "b20_26": (1.85, 2.3), "b26_30": (2.1, 2.6)}
 CLENCH_SIDE_SPREAD = 0.05  # each side gets the clench rise times 0.95 to 1.05
 # Clench shape per 100 ms frame: a lead-in frame, the gated frames, a trailing frame.
-GATE_SHAPES = {1: (1.0,), 2: (1.0, 0.95), 3: (0.95, 1.0, 0.95)}
+GATE_SHAPES = {1: (1.0,), 2: (1.0, 0.95), 3: (0.95, 1.0, 0.95), 9: (0.95,) + (1.0,) * 7 + (0.95,)}  # 9: a held clench
 LEAD_SHAPE, TRAIL_SHAPE = 0.15, 0.1
 EMG_PEAK = (95.0, 140.0)  # uV RMS at the top of a clench
 # Rest wander: AR(1) on band power, about 2 % standard deviation, never past 4 %, so at rest each band reads within
@@ -345,7 +345,8 @@ class Maker:
                     "t": r3(m_at),
                     "id": uuid4(self.rng),
                     "command": command,
-                    "confidence": r3(round(self.rng.uniform(0.76, 0.86), 2)) if source == "imagery" else None,
+                    # The decoder sends YES and NO only at 0.9 or more (PLAN D21).
+                    "confidence": r3(round(self.rng.uniform(0.90, 0.97), 2)) if source == "imagery" else None,
                     "source": source,
                 }
                 self.add(m_at, frame=marker)
@@ -534,24 +535,24 @@ PLANS = [
     ),
     Plan(
         name="02-right-fist-yes", seed=102, seconds=SEC,
-        description="Right fist: C3 8-12 Hz drops to about -30 from 3 to 6 s, C4 stays near 0, then YES (imagery, about 0.8).",
-        screen="C3 patch glows cyan from about 3.5 s, C4 dark; at 5.4 s a cyan ring pulse on C3 and the pill Guess YES 0.8x.",
+        description="Right fist: C3 8-12 Hz drops to about -30 from 3 to 6 s, C4 stays near 0, then YES (imagery, 0.9 to 0.97).",
+        screen="C3 patch glows cyan from about 3.5 s, C4 dark; at 5.4 s a cyan ring pulse on C3 and the pill Guess YES 0.9x.",
         imagery=[(3.0, 6.0, "c3", 1.0)],
         markers=[(5.4, "YES", "imagery")],
     ),
     Plan(
         name="03-left-fist-no", seed=103, seconds=SEC,
-        description="Left fist: the mirror of 02. C4 8-12 Hz drops to about -30, C3 near 0, then NO (imagery, about 0.8).",
-        screen="C4 patch glows amber, C3 dark; at 5.4 s an amber ring pulse on C4 and the pill Guess NO 0.8x.",
+        description="Left fist: the mirror of 02. C4 8-12 Hz drops to about -30, C3 near 0, then NO (imagery, 0.9 to 0.97).",
+        screen="C4 patch glows amber, C3 dark; at 5.4 s an amber ring pulse on C4 and the pill Guess NO 0.9x.",
         imagery=[(3.0, 6.0, "c4", 1.0)],
         markers=[(5.4, "NO", "imagery")],
     ),
     Plan(
-        name="04-double-clench-stop", seed=104, seconds=SEC,
-        description="Double jaw clench at 4.0 and 4.4 s: emgGate true for 2 frames each, 20-30 Hz +150 to +300 on both sides, then STOP (jaw, PLAN D17).",
-        screen="Muscle detected. Brain readings paused. during each clench with both patches dark; STOP pill in the jaw lane; no ring, no guess pill.",
-        clenches=[(4.0, 2), (4.4, 2)],
-        markers=[(4.9, "STOP", "jaw")],
+        name="04-held-clench-stop", seed=104, seconds=SEC,
+        description="Held jaw clench from 4.0 to 4.8 s: emgGate true for 9 frames, 20-30 Hz +150 to +300 on both sides; STOP at 4.8 s, while still held (jaw, PLAN D21).",
+        screen="Muscle detected. Brain readings paused. for about 0.9 s with both patches dark; STOP pill in the jaw lane; no ring, no guess pill.",
+        clenches=[(4.0, 9)],
+        markers=[(4.8, "STOP", "jaw")],
     ),
     Plan(
         name="05-single-clench-confirm", seed=105, seconds=SEC,
@@ -625,14 +626,14 @@ PLANS = [
     ),
     Plan(
         name="20-demo-run", seed=120, seconds=60.0,
-        description="About 60 s labeled replay: rest, right fist YES, rest, left fist NO, rest, double clench STOP, rest, single clench CONFIRM (PLAN D17).",
-        screen="Pill Replay; cyan glow and YES at about 10 s, amber glow and NO at about 22 s, muscle line and STOP at 33 s, CONFIRM at 45.8 s.",
+        description="About 60 s labeled replay: rest, right fist YES, rest, left fist NO, rest, held clench STOP, rest, single clench CONFIRM (PLAN D17, D21).",
+        screen="Pill Replay; cyan glow and YES at about 10 s, amber glow and NO at about 22 s, muscle line from 33 s and STOP at 33.8 s, CONFIRM at 45.8 s.",
         source="replay",
         recorded_at=None,
         note="Scripted demo run labeled as a replay. Nothing was recorded from a person. Not a measurement.",
         imagery=[(8.0, 11.0, "c3", 1.04), (20.0, 23.0, "c4", 0.97)],
-        clenches=[(33.0, 2), (33.4, 2), (45.0, 3)],
-        markers=[(10.4, "YES", "imagery"), (22.4, "NO", "imagery"), (33.9, "STOP", "jaw"), (45.8, "CONFIRM", "jaw")],
+        clenches=[(33.0, 9), (45.0, 3)],
+        markers=[(10.4, "YES", "imagery"), (22.4, "NO", "imagery"), (33.8, "STOP", "jaw"), (45.8, "CONFIRM", "jaw")],
     ),
     Plan(
         name="90-live-label-test", seed=190, seconds=8.0,

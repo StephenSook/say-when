@@ -91,12 +91,12 @@ MAX_INCOMING = 4096  # bytes; client messages are tiny
 CYCLE_S = 24.0
 RAMP_S = 0.5  # rise and fall of the imagery suppression
 IMAGERY = ((4.0, 7.0, 0), (11.0, 14.0, 1))  # (start, end, contralateral channel index)
-CLENCHES = ((18.0, 0.2), (18.4, 0.2), (21.8, 0.3))  # (onset, length): double, then single
+CLENCHES = ((18.0, 1.0), (21.8, 0.3))  # (onset, length): held (STOP, PLAN D21), then single
 CLENCH_EDGE_S = 0.04
 MARKERS = (
     (6.4, "YES", "imagery"),
     (13.4, "NO", "imagery"),
-    (18.8, "STOP", "jaw"),  # the double clench (PLAN D17)
+    (18.8, "STOP", "jaw"),  # the held clench, 0.8 s in, while still held (PLAN D21)
     (22.3, "CONFIRM", "jaw"),  # the single clench
 )
 CONTACT_BLIP = (15.0, 17.0)  # C4 reads "poor" in this window
@@ -279,7 +279,8 @@ class Script:
         return [(command, source) for _, command, source in crossed]
 
     def confidence(self) -> float:
-        return round(min(0.95, max(0.5, 0.8 + self.rng.uniform(-0.05, 0.05))), 2)
+        # The decoder sends YES and NO only at 0.9 or more (PLAN D21).
+        return round(min(0.97, max(0.9, 0.93 + self.rng.uniform(-0.03, 0.03))), 2)
 
 
 class Bridge:
