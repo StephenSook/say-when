@@ -20,6 +20,7 @@ import { PlannerError, type ConversationTurn, type MemoryContext, type PlanInput
 import type { DialerPort, ErrandPort, MemoryPort } from './ports.js';
 import type { ConsentMark, MemoryWatch } from './requests.js';
 import { withDeadline } from './deadline.js';
+import { runDirectOptionsJob, type CategoryBook } from './direct.js';
 import { JobAbortedError, memoryContext, mossDeadline, recallMemory, retrieveStep, searchStep, type RetrievalDeps } from './retrieval.js';
 import type { AgentQueueRow, AllowedForm, CallContact, OptionInput } from './types.js';
 
@@ -195,6 +196,14 @@ export interface JobDeps {
      * from memory alone are published while the search runs, and the options with web results follow. Off when unset.
      */
     draftFirst?: boolean;
+    /**
+     * Direct select (AGENT_INPUT_MODE, `direct` by default in the config; docs/direct-select.md): an options job never
+     * searches by itself, it offers a Search option instead, and the categories and category search jobs run the
+     * search once the person asked for it (src/direct.ts). Unset: the scan path, as before.
+     */
+    direct?: boolean;
+    /** The categories this sidecar offered and their search words (src/direct.ts). Made on first use when unset. */
+    categoryBook?: CategoryBook;
 }
 
 /**
@@ -205,7 +214,7 @@ export interface JobDeps {
 const RECENT_ERRAND_MS = 10 * 60_000;
 const CALL_TIME_NEEDED_MS = 2 * 60_000;
 
-function recentErrand(row: AgentQueueRow, nowMs: number): { title: string; sentAtMs: number } | null {
+export function recentErrand(row: AgentQueueRow, nowMs: number): { title: string; sentAtMs: number } | null {
     if (!row.recentErrandTitle || row.recentErrandSentAtMs === null) return null;
     const age = nowMs - row.recentErrandSentAtMs;
     return age >= 0 && age < RECENT_ERRAND_MS - CALL_TIME_NEEDED_MS ? { title: row.recentErrandTitle, sentAtMs: row.recentErrandSentAtMs } : null;
@@ -220,7 +229,7 @@ export class JobInputError extends Error {
 }
 
 /** The plan step's failure label, in the plan stage vocabulary. */
-function plannerLabel(error: unknown): string {
+export function plannerLabel(error: unknown): string {
     if (error instanceof PlannerError) return label('claude', error.code.replace(/_/g, ' '));
     return label('claude error');
 }
@@ -230,7 +239,7 @@ function plannerLabel(error: unknown): string {
  * PublishRefusedError when the module refuses the options, and ConsentWithdrawnError when `allowed` (read before
  * every try) says the consent the options rely on is gone.
  */
-async function publish(
+export async function publish(
     db: AgentDb,
     job: { jobId: bigint; attempt: number },
     answerMode: 'pick' | 'yes_no',
@@ -271,7 +280,7 @@ export class ConsentWithdrawnError extends Error {
     }
 }
 
-interface ConsentNow {
+export interface ConsentNow {
     webSearchAllowed: boolean;
     memoryAllowed: boolean;
     /** The module shows this attempt's job without memory consent: what the conversation kept must go. */
@@ -286,7 +295,7 @@ interface ConsentNow {
  * again yet) a revocation could be missing from them, a job no longer claimed by this attempt is about to be aborted,
  * and an `agent_consent` the sidecar cannot read is not consent, so none of them gets anything.
  */
-function consentNow(deps: JobDeps, row: AgentQueueRow, attempt: number): ConsentNow {
+export function consentNow(deps: JobDeps, row: AgentQueueRow, attempt: number): ConsentNow {
     const none = { webSearchAllowed: false, memoryAllowed: false, memoryRevoked: false };
     if (!deps.db.isCurrent()) return none;
     const now = deps.db.agentQueue().find((r) => r.jobId === row.jobId && r.status === 'claimed' && r.claimedByMe && r.attempt === attempt);
@@ -301,7 +310,7 @@ function consentNow(deps: JobDeps, row: AgentQueueRow, attempt: number): Consent
 }
 
 /** Memory consent for this attempt, forgetting the kept conversation whenever the module shows it withdrawn. */
-function memoryConsent(deps: JobDeps, row: AgentQueueRow, attempt: number): boolean {
+export function memoryConsent(deps: JobDeps, row: AgentQueueRow, attempt: number): boolean {
     const now = consentNow(deps, row, attempt);
     if (now.memoryRevoked) deps.conversation.clear();
     return now.memoryAllowed;
@@ -309,6 +318,8 @@ function memoryConsent(deps: JobDeps, row: AgentQueueRow, attempt: number): bool
 
 /** Options job: everything from the question to `agent_publish_options(final = true)`. */
 export async function runOptionsJob(row: AgentQueueRow, attempt: number, deps: JobDeps, signal: AbortSignal): Promise<void> {
+    // Direct select: no search here, a Search option instead (src/direct.ts).
+    if (deps.direct) return runDirectOptionsJob(row, attempt, deps, signal);
     const job = { jobId: row.jobId, attempt };
     const events = new JobEvents(deps.db, job, deps.log, deps.clock, { heartbeatMs: deps.leaseHeartbeatMs, signal });
     const questionKey = `q${row.questionId}`;
@@ -509,7 +520,7 @@ export async function runOptionsJob(row: AgentQueueRow, attempt: number, deps: J
     }
 }
 
-interface PlanContext {
+export interface PlanContext {
     deps: JobDeps;
     row: AgentQueueRow;
     events: JobEvents;
@@ -518,10 +529,10 @@ interface PlanContext {
     allowWeb: () => boolean;
 }
 
-type RecentErrand = { title: string; sentAtMs: number };
+export type RecentErrand = { title: string; sentAtMs: number };
 
 /** A plan turned into options, ready to publish. */
-interface Planned {
+export interface Planned {
     plan: PlanResult;
     options: OptionInput[];
     /** False once a consent the options rely on (memory, the conversation, web passages, the ranking) is withdrawn. */
@@ -530,15 +541,17 @@ interface Planned {
 
 /**
  * Steps 5 and 6: one plan step (`claude`, or `claude draft` for a draft): the planner call with its own retry, the
- * options built from the plan, and their order by memory affinity while memory consent holds.
+ * options built from the plan, and their order by memory affinity while memory consent holds (unless `rank` is off:
+ * direct select keeps the planner's order where it means something, yes first and the search third).
  */
-async function planOptions(
+export async function planOptions(
     ctx: PlanContext,
     input: PlanInput,
     memory: readonly MemoryContext[],
     web: readonly WebContext[],
     recent: RecentErrand | null,
-    detail: 'claude' | 'claude draft',
+    detail: 'claude' | 'claude draft' | 'claude categories' | 'claude results',
+    rank = true,
 ): Promise<Planned> {
     const { deps, row, events, signal, allowMemory, allowWeb } = ctx;
     const step = await events.begin('plan', detail);
@@ -556,7 +569,7 @@ async function planOptions(
     // 6. Options: call options are prepared by the Dialer now, so the read-back and digest exist at the pick.
     const built = buildOptions(plan, plan.sentMemory ? memory : [], plan.sentWeb ? web : [], (contact) => prepareCall(deps, contact, recent));
     let options = built.options;
-    if (stillAllowed() && plan.answerMode === 'pick' && allowMemory() && deps.retrieval.memory?.isOpen()) {
+    if (rank && stillAllowed() && plan.answerMode === 'pick' && allowMemory() && deps.retrieval.memory?.isOpen()) {
         try {
             const ranking = deps.retrieval.memory.rank(row.askedBy, built.candidates);
             const ordering = await withDeadline(ranking, mossDeadline(deps.retrieval, 'rank'), 'memory rank', signal);

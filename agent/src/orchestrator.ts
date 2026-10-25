@@ -11,6 +11,7 @@
 
 import { CallRunner } from './calls.js';
 import type { AgentDb } from './db/db.js';
+import { DirectRefusal, runCategoriesJob, runCategorySearchJob } from './direct.js';
 import { callReducer, type Verified } from './db/retry.js';
 import { ErrandRunner } from './errands.js';
 import { JobInputError, PublishRefusedError, runOptionsJob, runPreviewJob, runRememberJob, type JobDeps } from './jobs.js';
@@ -56,12 +57,17 @@ export function failureOf(error: unknown): { reasonCode: string; reason: string 
     if (error instanceof PlannerError) return { reasonCode: `planner_${error.code}`.slice(0, 40), reason: FAIL_SAY.planner };
     if (error instanceof PublishRefusedError) return { reasonCode: `publish_${error.why}`.slice(0, 40), reason: FAIL_SAY.agent };
     if (error instanceof JobInputError) return { reasonCode: error.code.slice(0, 40), reason: FAIL_SAY.agent };
+    if (error instanceof DirectRefusal) return { reasonCode: error.code.slice(0, 40), reason: error.sentence };
     return { reasonCode: 'agent_error', reason: FAIL_SAY.agent };
 }
 
-/** Which Pending job to claim first: previews (a person is waiting on a read-back), then the newest questions. */
+/**
+ * Which Pending job to claim first: previews and the direct select follow-ups (a person is waiting on a read-back, on
+ * categories or on search results), then the newest questions.
+ */
 function priority(a: AgentQueueRow, b: AgentQueueRow): number {
-    const rank = (row: AgentQueueRow) => (row.kind === 'errand_preview' ? 0 : row.kind === 'options' ? 1 : 2);
+    const rank = (row: AgentQueueRow) =>
+        row.kind === 'errand_preview' || row.kind === 'categories' || row.kind === 'category_search' ? 0 : row.kind === 'options' ? 1 : 2;
     return rank(a) - rank(b) || (a.kind === 'options' ? b.createdAtMs - a.createdAtMs : a.createdAtMs - b.createdAtMs);
 }
 
@@ -281,6 +287,12 @@ export class Orchestrator {
                     break;
                 case 'remember':
                     await runRememberJob(row, job.attempt, this.deps, job.abort.signal);
+                    break;
+                case 'categories':
+                    await runCategoriesJob(row, job.attempt, this.deps, job.abort.signal);
+                    break;
+                case 'category_search':
+                    await runCategorySearchJob(row, job.attempt, this.deps, job.abort.signal);
                     break;
             }
         } catch (error) {

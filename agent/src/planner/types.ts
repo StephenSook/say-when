@@ -51,7 +51,17 @@ export interface PlanInput {
      * What the search step did, so the planner knows whether outside facts are in the context. `pending`: a draft
      * written while the search still runs (AGENT_DRAFT_FIRST), so there are no outside facts yet.
      */
-    search: 'not_needed' | 'not_allowed' | 'done' | 'failed' | 'none' | 'pending';
+    search: 'not_needed' | 'not_allowed' | 'done' | 'failed' | 'none' | 'pending' | 'offered';
+    /**
+     * Direct select (docs/direct-select.md section 3). `options` (the default): answer the question. `categories`:
+     * after a confirmed Search pick, up to four categories to search, with no web call. `category_search`: after a
+     * Category pick, replies from the search results.
+     */
+    task?: PlanTask;
+    /** `options` task: a Search option may be offered (the question could use outside facts and web search is allowed). */
+    searchOffer?: boolean;
+    /** `category_search` task: the category the person picked. */
+    category?: string;
     maxOptions: number;
     nowMs: number;
     timeZone: string;
@@ -72,9 +82,15 @@ export function allowedInput(input: PlanInput): PlanInput {
     return out;
 }
 
+export type PlanTask = 'options' | 'categories' | 'category_search';
+
 export interface PlannedOption {
     kind: OptionKind;
+    /** The short words the earpiece reads (direct select): 1 to 3 words, a place name up to 5. */
+    label: string;
     text: string;
+    /** Category options only: the search words the category stands for. Empty otherwise. */
+    query: string;
     tone: Tone;
     laugh: boolean;
     /** The context refs this option relies on (`m1`, `w2`), checked to exist. */

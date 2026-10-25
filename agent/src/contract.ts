@@ -130,11 +130,12 @@ export type ViewName = keyof typeof VIEWS;
 export const DEVICE_STATUS = { wire: 'device_status', fields: ['identity', 'role'] } as const;
 
 /**
- * Event keys the module writes under (`listen:`, `q<n>:`, `e<n>:`, `c<n>:`, `s<n>:`), which `agent_progress` refuses
- * since module v2 (spacetime/src/agent.ts MODULE_KEY_RE). The sidecar's keys start with the job id, so they never
- * match; test/contract.test.ts checks this against the module source.
+ * Event keys the module writes under (`listen:`, `q<n>:`, `e<n>:`, `c<n>:`, `s<n>:`, and direct select's `w<n>:` for
+ * its search confirm rows), which `agent_progress` refuses since module v2 (spacetime/src/agent.ts MODULE_KEY_RE). The
+ * sidecar's keys start with the job id, so they never match; test/contract.test.ts checks this against the module
+ * source.
  */
-export const MODULE_EVENT_KEY = /^(listen:|[qecs][0-9]+:)/;
+export const MODULE_EVENT_KEY = /^(listen:|[qecsw][0-9]+:)/;
 
 /** How long after the CONFIRM `claim_call` still accepts a call (spacetime/src/consent.ts CALL_CLAIM_MS). */
 export const CALL_CLAIM_MS = 12_000;
@@ -148,9 +149,51 @@ export const DIGEST_PATTERN = /^[0-9a-f]{16}$/;
 export const STAGES = ['listen', 'search', 'retrieve', 'plan', 'speak', 'select', 'errand', 'call'] as const;
 export const STATUSES = ['started', 'ok', 'error'] as const;
 
+/**
+ * Direct select (docs/direct-select.md section 4, PLAN D18), as module 7eeaabb (branch `direct-select-module`)
+ * defines it. Everything the direct select code reads from the module goes through this one object and
+ * `toAgentQueueRow` (src/db/spacetime-db.ts), so a rename is one edit here. test/contract.test.ts checks these names
+ * against the module source and the generated bindings (docs/spacetime.md does not list them yet).
+ */
+export const DIRECT = {
+    /**
+     * The module's JobKind variants, snake-cased the way `tagOf` reads them, to the sidecar's job kinds. A variant that
+     * is not listed is a ContractError, so its rows are skipped and logged instead of run as the wrong job. The module
+     * calls the category search job `Search`; the sidecar says `category_search`, so it never reads as the option kind.
+     */
+    jobKindTags: {
+        options: 'options',
+        errand_preview: 'errand_preview',
+        remember: 'remember',
+        categories: 'categories',
+        search: 'category_search',
+    },
+    /**
+     * The `agent_queue` columns direct select adds: the person's original question (a categories or search turn is a
+     * new question row on it, with its words copied) and, for a search job, the category picked (its label, or its
+     * text when the label is empty). 0 and empty on every other job.
+     */
+    agentQueueFields: ['parent_question_id', 'parent_question_text', 'category'],
+    /** The `agent_queue` column with the Category option the person picked (`category_search` jobs). */
+    categoryField: 'category',
+    /**
+     * Whether a Category option carries its search words in `action_json` (`{"query": "..."}`). Off while the module
+     * refuses `action_json` on everything but errands and calls; the sidecar then keeps them itself (CategoryBook).
+     */
+    categoryActionJson: false,
+} as const;
+
+/**
+ * Direct select earpiece labels: at most 3 words, or 5 for a place name (docs/direct-select.md section 3), and at most
+ * the module's 40 characters (spacetime/src/agent.ts MAX_LABEL).
+ */
+export const LABEL_LIMITS = { words: 3, placeWords: 5, chars: 40 } as const;
+
 /** Limits the module enforces, so the sidecar fails early with a clear error instead of a refused reducer. */
 export const LIMITS = {
     optionText: 200,
+    /** `answer_option.label` (spacetime/src/agent.ts MAX_LABEL): the earpiece reads it whole; empty reads the text. */
+    optionLabel: 40,
     maxOptions: 4,
     countsJsonChars: 2048,
     countsKeyChars: 40,

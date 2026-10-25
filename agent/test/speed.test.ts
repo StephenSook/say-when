@@ -225,16 +225,16 @@ describe('the stock yes or no options', () => {
     it('are yes first and no second, replies, and pass the planner\'s own yes or no rules', () => {
         const options = stockYesNo();
         assert.deepEqual(
-            options.map((o) => [o.kind, o.text, o.provenance, o.actionJson, o.sources.length, o.memoryRefs.length]),
+            options.map((o) => [o.kind, o.label, o.text, o.provenance, o.actionJson, o.sources.length, o.memoryRefs.length]),
             [
-                ['reply', 'Yes.', 'stock', '', 0, 0],
-                ['reply', 'No.', 'stock', '', 0, 0],
+                ['reply', 'Yes', 'Yes.', 'stock', '', 0, 0],
+                ['reply', 'No', 'No.', 'stock', '', 0, 0],
             ],
         );
         const plan = validatePlan(
             {
                 answer_mode: 'yes_no',
-                options: options.map((o) => ({ kind: 'reply' as const, text: o.text, tone: o.tone || 'neutral', laugh: o.laugh, sources: [], errand: null, call: null })),
+                options: options.map((o) => ({ kind: 'reply' as const, label: o.label, text: o.text, query: '', tone: o.tone || 'neutral', laugh: o.laugh, sources: [], errand: null, call: null })),
             },
             { question: 'Are you tired?', origin: 'partner', menuItem: 'none', history: [], memory: [], web: [], forms: [], contacts: [], recentErrand: null, search: 'not_needed', maxOptions: 4, nowMs: 0, timeZone: 'UTC' },
         );

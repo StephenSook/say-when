@@ -5,7 +5,7 @@
 import type { PreparedCall } from '@say-when/cartesia/server';
 import type { CandidateOption, Recall } from '@say-when/moss';
 
-import { LIMITS } from './contract.js';
+import { DIRECT, LIMITS } from './contract.js';
 import type { MemoryContext, Plan, PlannedOption, WebContext } from './planner/types.js';
 import type { CallContact, OptionInput, Provenance, SourceRef, Tone } from './types.js';
 
@@ -67,7 +67,9 @@ export function buildOptions(plan: Plan, memory: readonly MemoryContext[], web: 
         }
 
         let actionJson = '';
-        if (planned.kind === 'errand' && planned.errand) {
+        if (planned.kind === 'category' && DIRECT.categoryActionJson && planned.query) {
+            actionJson = JSON.stringify({ query: planned.query });
+        } else if (planned.kind === 'errand' && planned.errand) {
             const { form, fields } = planned.errand;
             actionJson = JSON.stringify({ formKey: form.formKey, formUrl: form.formUrl, formTitle: form.formTitle, fields });
         } else if (planned.kind === 'call' && planned.call) {
@@ -89,6 +91,7 @@ export function buildOptions(plan: Plan, memory: readonly MemoryContext[], web: 
         const id = `o${options.length + 1}`;
         options.push({
             kind: planned.kind,
+            label: planned.label.slice(0, LIMITS.optionLabel),
             text: planned.text.slice(0, LIMITS.optionText),
             tone: planned.tone,
             laugh: planned.laugh,
@@ -134,6 +137,8 @@ export function memoryFirstOptions(recall: Recall, max: number): OptionInput[] |
             .slice(0, SOURCE_LIMITS.memoryRefs);
         return {
             kind: 'reply' as const,
+            // Scan mode only (no search runs in a direct select options job): the module reads the text.
+            label: '',
             text,
             tone: MEMORY_TONES[i] ?? '',
             laugh: false,

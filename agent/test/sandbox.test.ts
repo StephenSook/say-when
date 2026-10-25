@@ -34,6 +34,9 @@ function row(overrides: Partial<AgentQueueRow> = {}): AgentQueueRow {
         replyText: '',
         recentErrandTitle: '',
         recentErrandSentAtMs: null,
+        parentQuestionId: 0n,
+        parentQuestionText: '',
+        category: '',
         createdAtMs: 0,
         ...overrides,
     };

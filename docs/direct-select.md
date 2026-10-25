@@ -80,6 +80,14 @@ A list pick counts only if `scan_state.list_start_seq <= heard_step_seq <= scan_
 
 **Not done here.** The Cartesia key is not in `say-when-direct` yet (the owner adds it with the README's key command, naming `say-when-direct`); no consent rows or devices exist yet. Nothing was run against the live database beyond `ensure_timers`, a config read and the two routes.
 
+### 4.2 The agent sidecar as built (track 2, Sat Oct 24 2026, branch `direct-select-agent`)
+
+`AGENT_INPUT_MODE=direct` is the sidecar's default on this branch (`scan` keeps the scan path); the code is `agent/src/direct.ts`, every module name goes through `agent/src/contract.ts` `DIRECT`, and agent/README.md "Direct select" has the detail.
+- **Options job:** no search inside it. Every option has a `label` (1 to 3 words, a place name up to 5, at most 40 characters) and a one-sentence `text`. Small talk gets four replies. A question the local D8 check says could use outside facts, with web search consent, gets yes-style, no-style, `Search the web` (kind `search`, added by the sidecar if Claude leaves it out), something else; never right after a request was sent, on a menu turn or without consent. The yes or no fast path ("Yes", "No") stays for plain yes or no questions only.
+- **Categories job:** up to four `category` options from the question alone (no web call, no memory, no conversation); their search words are kept in the sidecar by original question. Stock categories if Claude fails.
+- **Search job (sidecar `category_search`):** Google Maps near `AGENT_PLACES_NEAR` for a place question, RAG web otherwise, with the category's words; rows through the usual pipeline events and the question's Moss web index; up to four `reply` options with sources. Places by name if Claude fails. No web search consent: `agent_fail` `web_search_off`, "Web search is turned off, so I did not search."
+- **Tests:** 351 passing in `agent/` (320 before), including contract checks against this module's source and bindings. Not run against `say-when-direct` yet. Not done: the call-transcript follow-up (stretch, section 3 item 5).
+
 ## 5. Honesty and safety (unchanged rules)
 
 - Nothing leaves the room (errand, message, call, web search start) without a read-back and a fresh confirm pick.
