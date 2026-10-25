@@ -39,6 +39,7 @@ import {
   initialScanState,
   isScanActive,
   isSignalPause,
+  optionsJobMaySearch,
   optionsOf,
   pause,
   pushIdle,
@@ -530,7 +531,7 @@ export const askQuestion = spacetimedb.reducer(
     createJob(ctx, 'Options', {
       sessionId: session.id,
       questionId: q.id,
-      webSearchAllowed: hasConsent(ctx.db, 'WebSearch', ''),
+      webSearchAllowed: optionsJobMaySearch(ctx), // D18: never in Direct mode, where a search needs its confirm
       memoryAllowed: hasConsent(ctx.db, 'Memory', ''),
     });
     writePipeline(ctx, {

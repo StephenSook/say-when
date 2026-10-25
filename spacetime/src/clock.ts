@@ -614,7 +614,9 @@ export function pickOption(ctx: Ctx, s: ScanState, session: Session, q: Question
  * read-back. Returns the accepted action word, or `{ ignore }` with the reason.
  */
 export function pickDirect(ctx: Ctx, s: ScanState, session: Session, q: Question, o: AnswerOption, gestureId: string): { action: string } | { ignore: string } {
-  if (o.kind.tag === 'Reply' && !contactIsGood(ctx.db, s.sessionId, ctx.timestamp)) return { ignore: 'no_contact' };
+  // A reply is said and a category starts its search at this pick, so both need good contact now (the dead-man
+  // deadline may have passed before its timer ran). The other kinds act only after their own read-back and confirm.
+  if ((o.kind.tag === 'Reply' || o.kind.tag === 'Category') && !contactIsGood(ctx.db, s.sessionId, ctx.timestamp)) return { ignore: 'no_contact' };
   if (o.kind.tag === 'Category') {
     if (!isCategoriesTurn(q)) return { ignore: 'not_allowed' };
     if (!hasConsent(ctx.db, 'WebSearch', '')) return { ignore: 'no_consent' };
@@ -649,6 +651,29 @@ export function pickDirect(ctx: Ctx, s: ScanState, session: Session, q: Question
 }
 
 // ---------- D18 follow-up turns: categories after a confirmed search, places after a category ----------
+
+/**
+ * Whether a new Options job may search the web. In Scan mode, as before, whenever web search consent is on. In
+ * Direct mode never (D18): a search starts only after the person picks Search and confirms it, so only a Search
+ * job (made by a Category pick on the categories turn that confirm opened) carries the permission.
+ */
+export function optionsJobMaySearch(ctx: Ctx): boolean {
+  return !isDirect(ctx.db) && hasConsent(ctx.db, 'WebSearch', '');
+}
+
+/**
+ * A pause voids a search the person started but the agent has not (D18): every search turn whose Search job is
+ * still Pending is cancelled with the pause's code, as an unclaimed confirmed errand is. A claimed one is already
+ * searching, like a submitting errand, and is left to finish.
+ */
+export function voidUnstartedSearches(ctx: Ctx, sessionId: bigint, code: string, actor: Actor): void {
+  for (const q of [...ctx.db.question.questionBySession.filter(sessionId)]) {
+    if (q.via !== 'category' || (q.status.tag !== 'Drafting' && q.status.tag !== 'Ready')) continue;
+    const jobs = [...ctx.db.agentJob.jobByQuestion.filter(q.id)].filter((j) => j.kind.tag === 'Search');
+    if (!jobs.some((j) => j.status.tag === 'Pending') || jobs.some((j) => j.status.tag === 'Claimed')) continue;
+    closeQuestion(ctx, q, { status: 'Cancelled', outcome: 'Cancelled', reason: code, actor, cue: 'not_sent' });
+  }
+}
 
 /** A categories turn: opened by a confirmed Search. Only its options may be Category options. */
 export function isCategoriesTurn(q: Question): boolean {
@@ -712,7 +737,7 @@ function pickCategory(ctx: Ctx, s: ScanState, session: Session, q: Question, o: 
     from: q,
     via: 'category',
     category: o.label !== '' ? o.label : o.text,
-    requestId: `category:${gestureId}`,
+    requestId: `category.${gestureId}`, // '.' never appears in a partner's request_id, so the two cannot collide
     job: 'Search',
   });
   appendLedger(ctx, session.id, 'question', 'Station', { questionId: follow.id, optionId: o.id, gestureId, outcome: 'category' });
@@ -727,7 +752,7 @@ function pickCategory(ctx: Ctx, s: ScanState, session: Session, q: Question, o: 
 export function openCategories(ctx: Ctx, sessionId: bigint, search: SearchRequest): Question | undefined {
   const parent = ctx.db.question.id.find(search.questionId);
   if (!parent) return undefined;
-  const follow = createFollowUp(ctx, sessionId, { from: parent, via: 'search', category: '', requestId: `search:${search.id}`, job: 'Categories' });
+  const follow = createFollowUp(ctx, sessionId, { from: parent, via: 'search', category: '', requestId: `search.${search.id}`, job: 'Categories' });
   setSearchFollowUp(ctx, search.id, follow.id);
   const s = ctx.db.scanState.sessionId.find(sessionId);
   if (s && !isScanActive(s) && s.phase.tag !== 'Paused') startNextIfQueued(ctx, s);
@@ -834,7 +859,7 @@ function pickMenuItem(ctx: Ctx, s: ScanState, session: Session, menuQ: Question,
   createJob(ctx, 'Options', {
     sessionId: session.id,
     questionId: follow.id,
-    webSearchAllowed: hasConsent(ctx.db, 'WebSearch', ''),
+    webSearchAllowed: optionsJobMaySearch(ctx),
     memoryAllowed: hasConsent(ctx.db, 'Memory', ''),
   });
   appendLedger(ctx, session.id, 'question', 'Station', { questionId: follow.id, optionId: o.id, gestureId, outcome: `menu:${o.menuItem.tag.toLowerCase()}` });
@@ -918,6 +943,7 @@ export function pause(ctx: Ctx, s: ScanState, reason: PauseReason['tag'], opts: 
     stepEndsAt: ctx.timestamp,
   });
   voidPending(ctx, s.sessionId, PAUSE_CODE[reason], opts.actor);
+  voidUnstartedSearches(ctx, s.sessionId, PAUSE_CODE[reason], opts.actor);
   appendLedger(ctx, s.sessionId, 'pause', opts.actor, {
     questionId: s.questionId,
     gestureId: opts.gestureId,

@@ -709,3 +709,81 @@ test('ensure_timers re-arms a missing search timer, and purge_session deletes se
   expect([...db.db.searchRequest.searchBySession.filter(sessionId)]).toHaveLength(0);
   expect([...db.db.searchTimer.searchId.filter(r.id)]).toHaveLength(0);
 });
+
+// ---------- The adversarial review's findings (Codex, Sat Oct 24 evening) ----------
+
+/** A confirmed search and a Category pick: the search turn is waiting for the agent to claim its Search job. */
+function categoryPicked(db: Test) {
+  const { r } = searchAwaiting(db);
+  gesture(db, 'PICK_1', { heardDigest: r.digest });
+  const cats = searchOf(db).followUpQuestionId;
+  answer(db, cats, 'Categories', CATEGORIES);
+  live(db, 1100);
+  expect(gesture(db, 'PICK_1').outcome).toBe('accepted:pick_category');
+  return [...db.db.question.questionBySession.filter(scan(db).sessionId)].find((x) => x.via === 'category')!;
+}
+
+test('in direct mode an options job may not search the web, whatever the consent; scan mode keeps it', () => {
+  const db = newDb('direct');
+  grantConsent(db, 'web_search');
+  const q = ask(db);
+  const job = claim(db, q.id);
+  expect(job.webSearchAllowed).toBe(false);
+  expect(
+    failure(() =>
+      as(db, AGENT, (ctx) => m.agentProgress(ctx, { jobId: job.id, attempt: job.attempt, eventKey: `${job.id}:1:search`, stage: 'search', status: 'started', detail: 'web', ms: 0, countsJson: '', payloadJson: '' })),
+    ),
+  ).toBe('web search is not allowed for this job');
+
+  const scanDb = newDb();
+  grantConsent(scanDb, 'web_search');
+  expect(claim(scanDb, ask(scanDb).id).webSearchAllowed).toBe(true);
+});
+
+test('a pause voids a search turn the agent has not claimed yet, and a resume does not bring it back', () => {
+  const db = newDb('direct');
+  const places = categoryPicked(db);
+  expect(gesture(db, 'HEADSET_OFF').outcome).toBe('accepted:pause');
+  expect([question(db, places.id).status.tag, scan(db).phase.tag]).toEqual(['Cancelled', 'Paused']);
+  const job = jobsOf(db, places.id).find((j) => j.kind.tag === 'Search')!;
+  expect(job.status.tag).toBe('Cancelled');
+  expect(failure(() => as(db, AGENT, (ctx) => m.agentClaim(ctx, { jobId: job.id })))).toBe('not pending');
+  live(db, 3500); // healthy contact: the automatic resume
+  expect([scan(db).phase.tag, question(db, places.id).status.tag]).toEqual(['Idle', 'Cancelled']);
+});
+
+test('a search turn the agent already claimed is left to finish after a pause, like a submitting errand', () => {
+  const db = newDb('direct');
+  const places = categoryPicked(db);
+  const job = claim(db, places.id, 'Search');
+  as(db, OWNER, (ctx) => m.operatorPause(ctx, {}));
+  expect(question(db, places.id).status.tag).toBe('Drafting');
+  expect(db.db.agentJob.id.find(job.id)!.status.tag).toBe('Claimed');
+});
+
+test('a category pick needs good contact now: after the dead-man deadline it starts nothing', () => {
+  const db = newDb('direct');
+  const { r } = searchAwaiting(db);
+  gesture(db, 'PICK_1', { heardDigest: r.digest });
+  answer(db, searchOf(db).followUpQuestionId, 'Categories', CATEGORIES);
+  advance(db, 1600); // past the 1500 ms lease, its timer not run
+  expect(gesture(db, 'PICK_1').outcome).toBe('ignored:no_contact');
+  expect([...db.db.question.questionBySession.filter(scan(db).sessionId)].filter((q) => q.via === 'category')).toHaveLength(0);
+});
+
+test("follow-up request ids never collide with a partner's request_id", () => {
+  const db = newDb('direct');
+  grantConsent(db, 'web_search');
+  as(db, 'partner', (ctx) => m.askQuestion(ctx, { requestId: 'search:1', text: 'Plans today?', via: 'typed', listenMs: 0 }));
+  as(db, 'partner', (ctx) => m.askQuestion(ctx, { requestId: 'search-1', text: 'Plans today?', via: 'typed', listenMs: 0 }));
+  const q = db.db.question.requestId.find('search-1')!;
+  const v = publish(db, q.id, PLANS);
+  clips(db, q.id, v, 800);
+  live(db, 200);
+  expect(gesture(db, 'PICK_3').outcome).toBe('accepted:pick_search');
+  const r = searchOf(db);
+  as(db, STATION, (ctx) => m.reportReadbackDone(ctx, { kind: 'search', id: r.id, digest: r.digest }));
+  live(db, 1500);
+  expect(gesture(db, 'PICK_1', { heardDigest: r.digest }).outcome).toBe('accepted:confirm_search');
+  expect(question(db, searchOf(db).followUpQuestionId).requestId).toBe(`search.${r.id}`);
+});
