@@ -122,4 +122,28 @@ describe('the heard log', () => {
       [6n],
     );
   });
+
+  test('a held read (waiting behind the partner question) outlives later steps and counts from its real start; a released one is unheard', () => {
+    const log = new HeardLog();
+    log.add({ stepSeq: 9n, optionStartSeq: 0n, phase: 'preparing', optionId: 0n }, 500);
+    log.add({ stepSeq: 10n, optionStartSeq: 10n, phase: 'reading', optionId: OPT1 }, 1_000);
+    assert.equal(log.hold(10n), true);
+    log.add({ stepSeq: 12n, optionStartSeq: 12n, phase: 'reading', optionId: OPT2 }, 2_000);
+    assert.equal(log.hold(12n), true);
+    log.add({ stepSeq: 13n, optionStartSeq: 12n, phase: 'window', optionId: OPT2 }, 2_500);
+    assert.deepEqual(log.lookup(2_900), { stepSeq: 9n, optionId: 0n }, 'nothing of the list is heard before it plays');
+    assert.equal(log.played(10n, 3_000), true, 'still playable after steps 12 and 13');
+    assert.deepEqual(log.lookup(3_000 + HEARD_MARGIN_MS), { stepSeq: 10n, optionId: OPT1 });
+    log.release(12n);
+    assert.equal(log.played(12n, 4_000), false, 'released: over for good');
+    assert.deepEqual(log.lookup(9_000), { stepSeq: 10n, optionId: OPT1 }, 'its window is unheard too');
+    assert.equal(log.hold(10n), false, 'a read already playing is not held');
+    assert.equal(log.hold(99n), false, 'an unknown read is not held');
+
+    // Without a hold, the next step ends a read that never played (the old rule).
+    const plain = new HeardLog();
+    plain.add({ stepSeq: 10n, optionStartSeq: 10n, phase: 'reading', optionId: OPT1 }, 1_000);
+    plain.add({ stepSeq: 12n, optionStartSeq: 12n, phase: 'reading', optionId: OPT2 }, 2_000);
+    assert.equal(plain.played(10n, 3_000), false);
+  });
 });

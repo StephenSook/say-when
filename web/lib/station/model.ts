@@ -16,6 +16,7 @@ import type { CommandEntry, CommandEntryStatus } from './commands';
 import { decoderUrl, type DecoderHealthWord } from './decoder';
 import { KEYBOARD_LEGEND } from './keys';
 import { optionEarText } from './phrases';
+import { spokenQuestionText } from './question';
 import { commandSignal, CONFIRM_SHORT, legendLine, optionBadge } from '../commands';
 import { GESTURE_PICKS, pickCommand } from '../data/types';
 import type { PauseReasonWord, StationSnapshot } from './snapshot';
@@ -327,6 +328,13 @@ export function earpieceHero(s: StationSnapshot, now: number): EarpieceHero {
     return { title, words: null, note: 'Silent test: options are not voiced.', bar: scanBar(s, now) };
   }
   if (s.playing === 'readback') return { title: 'The read-back', words: null, note: null, bar: null };
+  // The partner's question, said before its options (lib/station/question.ts); its words as the earpiece says them.
+  if (s.playing === 'question') {
+    const words = share ? spokenQuestionText(s.session.questionText) : '';
+    return { title: "The partner's question", words: words !== '' ? words : null, note: 'Its options follow.', bar: null };
+  }
+  const queued = s.earpiece.queued ?? 0;
+  const behind = queued > 0 ? `The earpiece is behind the question: ${queued} still to read.` : null;
   if (scan && (scan.phase === 'reading' || scan.phase === 'window')) {
     if (scan.answerMode === 'yes_no') return { title: 'Yes or no?', words: null, note: null, bar: scanBar(s, now) };
     const option = s.options.find((o) => o.rank === scan.cursor);
@@ -336,12 +344,12 @@ export function earpieceHero(s: StationSnapshot, now: number): EarpieceHero {
     const kind = KIND_SUFFIX[option?.kind ?? ''] ?? '';
     const waiting = s.earpiece.waitingFor !== null && option && s.earpiece.waitingFor === option.optionId;
     // In the wait after the list (D18) the cursor rests on the last option: say what the person can do instead.
-    if (scan.phase === 'window') return { title: `Waiting for a pick: ${pickRange(scan.optionCount)}`, words: null, note: null, bar: scanBar(s, now) };
+    if (scan.phase === 'window') return { title: `Waiting for a pick: ${pickRange(scan.optionCount)}`, words: null, note: behind, bar: scanBar(s, now) };
     return {
       title: `${item} ${scan.cursor}${of}${tone}${kind}`,
       // With sharing on: what the earpiece says, "One: good.", then the full words the room would hear.
       words: share && option ? earWords(option) : null,
-      note: waiting ? 'Its voice is not ready yet. It plays the moment it is.' : null,
+      note: waiting ? 'Its voice is not ready yet. It plays the moment it is.' : behind,
       bar: scanBar(s, now),
     };
   }

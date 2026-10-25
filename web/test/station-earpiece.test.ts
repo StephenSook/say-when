@@ -2,7 +2,9 @@
  * Earpiece audio (lib/station/earpiece.ts, docs/station.md 2.9 and 7.3 A6) with a fake player and a fake AudioOut:
  * rank order, one `report_clip_ready` per option, none for a 0 ms clip, no synthesis for a yes or no version, the
  * pending version after the current one, jobs cancelled when options leave, playback only on a new Reading step,
- * stops on Idle and Paused, the play start in the heard log, and `report_word_timings` once per read.
+ * stops on Idle and Paused, the play start in the heard log, and `report_word_timings` once per read. The partner's
+ * question (Oct 25): said before its list, reads the module starts meanwhile queued behind it and heard from their
+ * real start, never cut in once the list began, dropped with its queue on a pause or a stop.
  */
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
@@ -51,7 +53,7 @@ function scan(patch: Partial<ScanLite>): ScanLite {
   return { sessionId: 3n, questionId: 7n, version: 1, phase: 'preparing', answerMode: 'pick', cursor: 0, optionCount: 2, stepSeq: 1n, optionStartSeq: 0n, ...patch };
 }
 
-function harness(options: { silent?: boolean; timings?: boolean; timingsFail?: Error; ready?: () => boolean } = {}) {
+function harness(options: { silent?: boolean; timings?: boolean; timingsFail?: Error; ready?: () => boolean; promptsBusy?: () => boolean } = {}) {
   let now = 1_000;
   const out = new FakeOut();
   const channel = new Channel<FakeClip>(out);
@@ -94,6 +96,7 @@ function harness(options: { silent?: boolean; timings?: boolean; timingsFail?: E
           },
     waitForLive: async () => true,
     sleep: async () => {},
+    ...(options.promptsBusy ? { promptsBusy: options.promptsBusy } : {}),
   });
   const finish = async (id: bigint, c: FakeClip = clip(`clip ${id}`)) => {
     jobs.get(id.toString())!.resolve(c);
@@ -102,6 +105,7 @@ function harness(options: { silent?: boolean; timings?: boolean; timingsFail?: E
   return {
     ear,
     out,
+    channel,
     heard,
     asked,
     cancelled,
@@ -351,5 +355,173 @@ describe('playback driven by scan_state', () => {
     d.ear.onScan(scan({ phase: 'reading', cursor: 1, stepSeq: 2n, optionStartSeq: 2n }), 1_000);
     await flush();
     assert.equal(tries, 2);
+  });
+});
+
+describe("the partner's question before its list", () => {
+  /** Options 11 and 12 of question 7 voiced, and the scan Preparing question 7 at step 1. */
+  async function preparing(options: Parameters<typeof harness>[0] = {}) {
+    const h = harness(options);
+    h.ear.setOptions([row(11n, 1), row(12n, 2)]);
+    await h.finish(11n);
+    await h.finish(12n);
+    h.ear.onScan(scan({ phase: 'preparing', stepSeq: 1n }), 900);
+    return h;
+  }
+
+  test('it plays first; reads the clock starts meanwhile wait, follow it in order, and count as heard from their real start', async () => {
+    const h = await preparing();
+    assert.equal(h.ear.playQuestion(7n, clip('question')), 'played');
+    assert.deepEqual(h.out.plays, ['question']);
+    assert.equal(h.ear.getState().question, 7n);
+
+    h.ear.onScan(scan({ phase: 'reading', cursor: 1, stepSeq: 2n, optionStartSeq: 2n }), 1_000);
+    h.ear.onScan(scan({ phase: 'reading', cursor: 2, stepSeq: 3n, optionStartSeq: 3n }), 2_000);
+    assert.deepEqual(h.out.plays, ['question'], 'the options never talk over the question');
+    assert.equal(h.ear.getState().queued, 2);
+    assert.deepEqual(h.heard.lookup(2_500), { stepSeq: 1n, optionId: 0n }, 'nothing of the list is heard yet');
+    await flush();
+    assert.equal(h.timingCalls(), 0, 'no word timings before a read plays');
+
+    h.advance(2_000);
+    h.out.end();
+    await flush();
+    assert.deepEqual(h.out.plays, ['question', 'clip 11']);
+    // Played at 3000 plus 60 ms latency, heard 200 ms later, although step 3 began before it played.
+    assert.deepEqual(h.heard.lookup(3_259), { stepSeq: 1n, optionId: 0n });
+    assert.deepEqual(h.heard.lookup(3_260), { stepSeq: 2n, optionId: 11n });
+
+    h.ear.onScan(scan({ phase: 'window', cursor: 2, stepSeq: 4n, optionStartSeq: 3n }), 3_500);
+    h.advance(1_200);
+    h.out.end();
+    await flush();
+    assert.deepEqual(h.out.plays, ['question', 'clip 11', 'clip 12']);
+    assert.deepEqual(h.heard.lookup(4_460), { stepSeq: 4n, optionId: 12n }, 'the wait after the list counts from its last read');
+    const state = h.ear.getState();
+    assert.equal(state.queued, 0);
+    assert.equal(state.question, null);
+    assert.equal(state.lagMedianMs, null, 'a read that waited behind the question is not a voice lag');
+    assert.deepEqual(
+      h.timings.map((t) => t.stepSeq),
+      [2n, 3n],
+      'each read reports its own step once it plays',
+    );
+    assert.equal(h.reports.length, 2, 'the question is never reported as a clip');
+  });
+
+  test('once caught up, the next read plays the moment the clock starts it', async () => {
+    const h = await preparing();
+    h.ear.playQuestion(7n, clip('question'));
+    h.ear.onScan(scan({ phase: 'reading', cursor: 1, stepSeq: 2n, optionStartSeq: 2n }), 1_000);
+    h.out.end();
+    await flush();
+    h.out.end();
+    await flush();
+    assert.deepEqual(h.out.plays, ['question', 'clip 11']);
+    h.ear.onScan(scan({ phase: 'reading', cursor: 2, stepSeq: 3n, optionStartSeq: 3n }), 3_000);
+    assert.deepEqual(h.out.plays, ['question', 'clip 11', 'clip 12']);
+  });
+
+  test('a queued read whose clip is not ready when the question ends plays once it is', async () => {
+    const h = harness();
+    h.ear.setOptions([row(11n, 1), row(12n, 2)]);
+    await h.finish(11n);
+    assert.deepEqual(h.asked, [11n, 12n], 'option 2 is still being voiced');
+    h.ear.onScan(scan({ phase: 'preparing', stepSeq: 1n }), 900);
+    h.ear.playQuestion(7n, clip('question'));
+    h.ear.onScan(scan({ phase: 'reading', cursor: 1, stepSeq: 2n, optionStartSeq: 2n }), 1_000);
+    h.ear.onScan(scan({ phase: 'reading', cursor: 2, stepSeq: 3n, optionStartSeq: 3n }), 2_000);
+    h.out.end();
+    await flush();
+    h.out.end();
+    await flush();
+    assert.deepEqual(h.out.plays, ['question', 'clip 11']);
+    assert.equal(h.ear.getState().queued, 1);
+    await h.finish(12n);
+    assert.deepEqual(h.out.plays, ['question', 'clip 11', 'clip 12']);
+    assert.equal(h.ear.getState().queued, 0);
+  });
+
+  test('once its list has begun it is not said and nothing is cut; nor while paused or after a newer question', async () => {
+    const h = await preparing();
+    h.ear.onScan(scan({ phase: 'reading', cursor: 1, stepSeq: 2n, optionStartSeq: 2n }), 1_000);
+    assert.equal(h.ear.playQuestion(7n, clip('question')), 'late');
+    assert.deepEqual(h.out.plays, ['clip 11']);
+    assert.equal(h.out.stops, 0);
+    h.ear.onScan(scan({ phase: 'paused', stepSeq: 3n }), 1_500);
+    assert.equal(h.ear.playQuestion(7n, clip('question')), 'late');
+
+    const g = await preparing();
+    g.ear.onScan(scan({ questionId: 9n, phase: 'preparing', stepSeq: 2n }), 1_000);
+    assert.equal(g.ear.playQuestion(7n, clip('question')), 'late');
+    assert.deepEqual(g.out.plays, []);
+
+    const silent = harness({ silent: true });
+    assert.equal(silent.ear.playQuestion(7n, clip('question')), 'late');
+  });
+
+  test('it waits for a read-back or a stock phrase, and cuts only a read of an older question', async () => {
+    let phrase = true;
+    const h = await preparing({ promptsBusy: () => phrase });
+    assert.equal(h.ear.playQuestion(7n, clip('question')), 'wait');
+    phrase = false;
+    void h.channel.play(clip('read-back'), 'readback');
+    assert.equal(h.ear.playQuestion(7n, clip('question')), 'wait');
+    assert.deepEqual(h.out.plays, ['read-back']);
+    h.out.end();
+    await flush();
+    assert.equal(h.ear.playQuestion(7n, clip('question')), 'played');
+
+    const g = harness();
+    g.ear.setOptions([row(61n, 1, { questionId: 6n })]);
+    await g.finish(61n);
+    g.ear.onScan(scan({ questionId: 6n, phase: 'reading', cursor: 1, stepSeq: 2n, optionStartSeq: 2n }), 1_000);
+    g.ear.onScan(scan({ phase: 'preparing', stepSeq: 3n }), 1_500);
+    assert.equal(g.ear.playQuestion(7n, clip('question')), 'played', 'the module moved on from question 6');
+    assert.deepEqual(g.out.plays, ['clip 61', 'question']);
+  });
+
+  test('a pause or a stop drops the question and the reads behind it (unheard); the next list plays at once', async () => {
+    const h = await preparing();
+    h.ear.playQuestion(7n, clip('question'));
+    h.ear.onScan(scan({ phase: 'reading', cursor: 1, stepSeq: 2n, optionStartSeq: 2n }), 1_000);
+    h.ear.onScan(scan({ phase: 'paused', stepSeq: 3n }), 1_500);
+    await flush();
+    assert.equal(h.out.stops, 1);
+    assert.equal(h.ear.getState().queued, 0);
+    assert.deepEqual(h.heard.lookup(9_000), { stepSeq: 3n, optionId: 0n }, 'the queued read never counts as heard');
+    h.ear.onScan(scan({ phase: 'reading', cursor: 1, stepSeq: 4n, optionStartSeq: 4n }), 2_000);
+    assert.deepEqual(h.out.plays, ['question', 'clip 11'], 'a resume reads the list at once');
+
+    const g = await preparing();
+    g.ear.playQuestion(7n, clip('question'));
+    g.ear.onScan(scan({ phase: 'reading', cursor: 1, stepSeq: 2n, optionStartSeq: 2n }), 1_000);
+    g.ear.stopOptions();
+    assert.equal(g.out.stops, 1, 'stopOptions stops the question too');
+    await flush();
+    g.ear.onScan(scan({ phase: 'reading', cursor: 2, stepSeq: 3n, optionStartSeq: 3n }), 2_000);
+    assert.deepEqual(g.out.plays, ['question', 'clip 12']);
+  });
+
+  test('Idle does not cut the question but drops the reads queued behind it', async () => {
+    const h = await preparing();
+    h.ear.playQuestion(7n, clip('question'));
+    h.ear.onScan(scan({ phase: 'reading', cursor: 1, stepSeq: 2n, optionStartSeq: 2n }), 1_000);
+    h.ear.onScan(scan({ phase: 'idle', stepSeq: 3n }), 1_500);
+    assert.equal(h.out.stops, 0);
+    assert.equal(h.ear.getState().queued, 0);
+    h.out.end();
+    await flush();
+    assert.deepEqual(h.out.plays, ['question']);
+    h.ear.onScan(scan({ phase: 'reading', cursor: 1, stepSeq: 4n, optionStartSeq: 4n }), 2_000);
+    assert.deepEqual(h.out.plays, ['question', 'clip 11'], 'not left waiting behind a question that ended');
+  });
+
+  test('a question stopped from outside (a safety cue stops the channel) does not leave reads waiting forever', async () => {
+    const h = await preparing();
+    h.ear.playQuestion(7n, clip('question'));
+    h.channel.stop();
+    h.ear.onScan(scan({ phase: 'reading', cursor: 1, stepSeq: 2n, optionStartSeq: 2n }), 1_000);
+    assert.deepEqual(h.out.plays, ['question', 'clip 11']);
   });
 });

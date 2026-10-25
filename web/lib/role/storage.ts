@@ -100,6 +100,7 @@ export const STATION_KEYS = {
   switchKey: 'neurolingo/station/switch_key',
   assistantSpeed: 'neurolingo/station/assistant_speed',
   optionSpeed: 'neurolingo/station/option_speed',
+  readQuestion: 'neurolingo/station/read_question',
 } as const;
 
 /** The decoder's port on 127.0.0.1 (docs/station.md 2.4; proposed, Shashank confirms). */
@@ -169,6 +170,15 @@ export function saveSpeed(which: 'assistant' | 'option', speed: number | null, s
   if (speed === null) return removeItem(key, storage);
   if (!Number.isFinite(speed) || speed < SPEED_RANGE.min || speed > SPEED_RANGE.max) return false;
   return writeItem(key, String(speed), storage);
+}
+
+/** "Read the partner's question in the earpiece": on unless it was turned off on this browser. */
+export function readReadQuestion(storage: StorageLike | null = browserStorage()): boolean {
+  return readItem(STATION_KEYS.readQuestion, storage) !== 'off';
+}
+
+export function saveReadQuestion(on: boolean, storage: StorageLike | null = browserStorage()): boolean {
+  return writeItem(STATION_KEYS.readQuestion, on ? 'on' : 'off', storage);
 }
 
 // ---------- The speaker's volume and progress ----------

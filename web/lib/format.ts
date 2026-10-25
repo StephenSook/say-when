@@ -165,3 +165,11 @@ const PHONE_LIKE = /\+?\(?\d(?:[\s().-]{0,2}\d){6,}/g;
 export function maskPhoneNumbers(text: string): string {
   return text.replace(PHONE_LIKE, '[number hidden]');
 }
+
+/**
+ * The same match as maskPhoneNumbers with other words in its place, for text that is spoken rather than shown:
+ * the earpiece says "Call me at a number" (lib/station/question.ts).
+ */
+export function replacePhoneNumbers(text: string, words: string): string {
+  return text.replace(PHONE_LIKE, () => words);
+}

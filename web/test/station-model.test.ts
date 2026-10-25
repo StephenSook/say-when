@@ -255,6 +255,20 @@ describe('during a session', () => {
     assert.equal(silent.note, 'Silent test: options are not voiced.');
   });
 
+  test("the earpiece hero names the partner's question while it plays, its words only with sharing on, and says when the options run behind it", () => {
+    const asked = { id: 7n, ownership: 'mine' as const, label: 'headset-demo', error: null, questionId: 3n, questionText: 'Call me at 510-555-0100?', origin: 'partner' as const };
+    const off = earpieceHero(running({ playing: 'question', session: asked, scan: scan({ phase: 'reading', cursor: 1 }) }), NOW);
+    assert.equal(off.title, "The partner's question");
+    assert.equal(off.words, null);
+    assert.equal(off.note, 'Its options follow.');
+    const on = earpieceHero(running({ playing: 'question', session: asked, config: { ...base().config!, shareText: true } }), NOW);
+    assert.equal(on.words, 'Call me at a number?', 'as the earpiece says it: never a phone number');
+    const behind = earpieceHero(running({ playing: 'option', scan: scan({ phase: 'reading', cursor: 2 }), earpiece: { ...base().earpiece, queued: 1 } }), NOW);
+    assert.equal(behind.note, 'The earpiece is behind the question: 1 still to read.');
+    const caughtUp = earpieceHero(running({ playing: 'option', scan: scan({ phase: 'reading', cursor: 2 }) }), NOW);
+    assert.equal(caughtUp.note, null);
+  });
+
   test('the last errand line says the reason only while sharing is on', () => {
     const work = { errand: { status: 'Refused', formTitle: 'Dinner', reason: 'Calls to Leon are on hold.' }, call: null };
     assert.equal(lastWorkLine(running({ work })), 'Last request: Not sent.');

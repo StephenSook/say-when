@@ -12,12 +12,14 @@ import {
   readDecoderPort,
   readInputMode,
   readOptionSpeed,
+  readReadQuestion,
   readReplyVolume,
   readSpeakerProgress,
   readSwitchKey,
   readToken,
   saveDecoderPort,
   saveInputMode,
+  saveReadQuestion,
   saveReplyVolume,
   saveSpeakerProgress,
   saveSpeed,
@@ -136,6 +138,17 @@ describe('the station setup values', () => {
     assert.equal(readOptionSpeed(storage), 1.2);
     assert.equal(saveSpeed('option', null, storage), true);
     assert.equal(readOptionSpeed(storage), null);
+  });
+
+  test("reading the partner's question in the earpiece is on unless turned off", () => {
+    const storage = memoryStorage();
+    assert.equal(readReadQuestion(storage), true);
+    assert.equal(saveReadQuestion(false, storage), true);
+    assert.equal(storage.items.get('neurolingo/station/read_question'), 'off');
+    assert.equal(readReadQuestion(storage), false);
+    assert.equal(saveReadQuestion(true, storage), true);
+    assert.equal(readReadQuestion(storage), true);
+    assert.equal(readReadQuestion(throwingStorage), true, 'a storage that throws keeps the default');
   });
 });
 

@@ -8,6 +8,7 @@
  *  scan_state, my_options --------> HeardLog <-------+        (heard step and option at the onset)
  *  scan_state, my_options, cues --> Earpiece, CueSpeaker (two channels, chimes)
  *  my_session.errand/.call/.search > Readback ---> report_readback_done
+ *  my_session question -----------> QuestionReader ---> Earpiece.playQuestion ("Question: ...", then the options)
  *  worker tick every heartbeat_ms -> Heartbeat ---> heartbeat(beat_seq, decoder_healthy)
  *
  * Row callbacks are registered once per connection object (lib/role/connection.ts), never in a render. The SDK runs
@@ -27,9 +28,11 @@ import {
   readDecoderPort,
   readInputMode,
   readOptionSpeed,
+  readReadQuestion,
   readSwitchKey,
   saveDecoderPort,
   saveInputMode,
+  saveReadQuestion,
   saveSpeed,
   saveSwitchKey,
   type InputMode,
@@ -46,6 +49,7 @@ import { canLearnSwitchKey, isPickKey, isTypingTarget, keyboardCommand, SwitchPa
 import { cliTargetOf, SESSION_LABEL_RE, sessionLabel } from './model';
 import { isMenuItemText, MENU_ITEM_TEXTS, optionEarText, phraseText, warmPhraseKeys, type PhraseKey } from './phrases';
 import { indexedDbClipStore, persistentSynth, type ClipStore } from './phrase-store';
+import { QuestionReader, type SessionQuestion } from './question';
 import { Readback, readbackSegments, type WorkLite } from './readback';
 import type { Ownership, PauseReasonWord, Purpose, ScanView, StationSnapshot } from './snapshot';
 import { StalenessWatch } from './staleness';
@@ -82,6 +86,17 @@ function micros(ts: { microsSinceUnixEpoch: bigint } | undefined | null): bigint
   return ts ? ts.microsSinceUnixEpoch : null;
 }
 
+/** `my_session`'s scanned question, as lib/station/question.ts reads it. */
+function sessionQuestion(row: SessionRow | null): SessionQuestion | null {
+  if (!row) return null;
+  return {
+    questionId: row.questionId,
+    text: row.questionText,
+    origin: row.origin.tag === 'Menu' ? 'menu' : 'partner',
+    lastGestureOutcome: row.lastGestureOutcome,
+  };
+}
+
 function perfNow(): number {
   return typeof performance !== 'undefined' ? performance.now() : Date.now();
 }
@@ -115,6 +130,7 @@ export class StationEngine {
   private readonly optionsChannel: Channel<Clip>;
   private readonly promptsChannel: Channel<Clip>;
   private readonly earpiece: Earpiece<Clip>;
+  private readonly question: QuestionReader<Clip>;
   private readonly readback: Readback<Clip>;
   private readonly cues: CueSpeaker<Clip>;
   private readonly sender: CommandSender;
@@ -132,6 +148,8 @@ export class StationEngine {
   private learning = false;
   private assistantSpeed: number | null;
   private optionSpeed: number | null;
+  /** Say a new partner question in the earpiece before its options (lib/station/question.ts). */
+  private readQuestion: boolean;
 
   private phrases = { ready: 0, failed: 0, total: 0, warming: false };
   private warmRun = 0;
@@ -174,6 +192,7 @@ export class StationEngine {
     this.switchKey = readSwitchKey(this.storage);
     this.assistantSpeed = readAssistantSpeed(this.storage);
     this.optionSpeed = readOptionSpeed(this.storage);
+    this.readQuestion = readReadQuestion(this.storage);
     this.profile = this.makeProfile();
     this.audio = createAudioUnlock();
 
@@ -206,7 +225,19 @@ export class StationEngine {
       wordTimings: () => wordTimingsReducer(this.conn()),
       waitForLive,
       onVoiceError: (error) => this.voiceError(error),
+      promptsBusy: () => this.promptsChannel.busy(),
       onChange: () => this.changed(),
+    });
+
+    // The partner's question, "Question: ...", voiced by the same player as the option clips (assistant voice) and
+    // played by the earpiece before its list. Direct select only (see directSelect).
+    this.question = new QuestionReader<Clip>({
+      now: perfNow,
+      enabled: () => this.readQuestion && this.sessionRuns() && !this.isSilent() && this.directSelect(),
+      ready: () => this.player !== null,
+      synth: (text) => this.speak(utterance({ kind: 'prompt', text }, this.profile)),
+      play: (questionId, clip) => this.earpiece.playQuestion(questionId, clip),
+      onVoiceError: (error) => this.voiceError(error),
     });
 
     this.readback = new Readback<Clip>({
@@ -380,6 +411,7 @@ export class StationEngine {
     this.decoder = null;
     this.readback.stop();
     this.cues.clear();
+    this.question.cancel();
     this.earpiece.dispose();
     this.player?.close();
     this.player = null;
@@ -435,6 +467,17 @@ export class StationEngine {
   /** "Press your switch now": the next key's code becomes the switch key. */
   learnSwitch(on = true): void {
     this.learning = on;
+    this.changed();
+  }
+
+  /**
+   * "Read the partner's question in the earpiece" (on by default): a new partner question is said before its
+   * options. Turning it off drops a question still being voiced; one already playing finishes.
+   */
+  setReadQuestion(on: boolean): void {
+    this.readQuestion = on;
+    saveReadQuestion(on, this.storage);
+    if (!on) this.question.cancel();
     this.changed();
   }
 
@@ -647,6 +690,8 @@ export class StationEngine {
     if (row) {
       this.sender.noteOutcome(row.lastGestureId, row.lastGestureOutcome);
       if (row.questionId !== 0n) this.earpiece.setAnswerHint(row.questionId, row.answerMode.tag === 'YesNo' ? 'yes_no' : 'pick');
+      // A new partner question is voiced now, ahead of its options' clips, and said before its list.
+      if (this.sessionRuns()) this.question.update(sessionQuestion(row));
       const [errand, call, search] = this.workRows(row);
       if (this.sessionRuns()) this.readback.update(errand, call, perfNow(), search);
     }
@@ -988,6 +1033,8 @@ export class StationEngine {
     this.stale = false;
     this.heard.setSilent(this.isSilent());
     this.earpiece.setOptions(this.options);
+    // The question current now (Continue after a reload) was asked before this page took the session: not said.
+    this.question.begin(sessionQuestion(this.sessionRow));
     const conn = this.conn();
     if (conn) {
       this.readSession(conn);
@@ -1002,6 +1049,7 @@ export class StationEngine {
     this.switchPattern.reset();
     this.readback.reset();
     this.cues.clear();
+    this.question.cancel();
     this.earpiece.stopOptions();
     this.earpiece.setOptions([]);
     this.ownership = 'none';
@@ -1035,6 +1083,15 @@ export class StationEngine {
 
   private isSilent(): boolean {
     return this.silent && this.mode === 'keyboard';
+  }
+
+  /**
+   * The module runs direct select (D18, `config.input_mode` Direct): a pick counts for any step of the live list, so
+   * reads may wait behind the partner's question. The scan fallback resolves YES by the step heard, where a read that
+   * played late would count as stale, so it gets no question.
+   */
+  private directSelect(): boolean {
+    return this.configRow?.inputMode?.tag === 'Direct';
   }
 
   private makeProfile(): VoiceProfile {
@@ -1220,6 +1277,7 @@ export class StationEngine {
         learningSwitch: this.learning,
         assistantSpeed: this.assistantSpeed,
         optionSpeed: this.optionSpeed,
+        readQuestion: this.readQuestion,
       },
       decoder:
         decoder && decoderState

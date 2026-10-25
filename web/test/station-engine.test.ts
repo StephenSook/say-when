@@ -74,6 +74,7 @@ function configRow() {
     confirmWindowMs: 8_000,
     readbackDeadlineMs: 30_000,
     pairingTtlMs: 300_000,
+    inputMode: { tag: 'Direct' },
   };
 }
 
@@ -193,6 +194,104 @@ describe('direct select on the station (D18)', () => {
       conn.named('gesture').map((g) => g.args.command),
       ['PICK_3', 'PICK_4', 'STOP'],
     );
+    engine.stop();
+  });
+});
+
+describe("the partner's question in the earpiece (Oct 25)", () => {
+  /** A paired keyboard station with a fake Cartesia player and a fake earpiece output; voiced unless `silent`. */
+  async function voicedStation(options: { silent?: boolean } = {}) {
+    const paired = await pairedEngine();
+    const spoken: string[] = [];
+    const plays: string[] = [];
+    paired.internals.player = {
+      speak: (u: { transcript: string }) => {
+        spoken.push(u.transcript);
+        return { contextId: 'q', done: Promise.resolve({ name: u.transcript, durationMs: 2_000, totalMs: 300, words: [] }), cancel() {} };
+      },
+      close() {},
+    };
+    paired.internals.optionsOut = {
+      play: (c: { name: string }) => {
+        plays.push(c.name);
+        return new Promise(() => {});
+      },
+      stop() {},
+      positionMs: () => 0,
+    };
+    paired.engine.chooseMode('keyboard');
+    if (options.silent) paired.engine.setSilent(true);
+    return { ...paired, spoken, plays };
+  }
+
+  test('a new partner question is said as "Question: ..." on the options channel; menu and follow-up turns are not', async () => {
+    const { engine, conn, spoken, plays } = await voicedStation();
+    engine.startSession();
+    await flush();
+    assert.equal(engine.getState().session.ownership, 'mine');
+    conn.db.mySession.set([sessionRow({ questionId: 7n, questionText: 'Want some tea? Call 510-555-0100.' })]);
+    await flush();
+    assert.deepEqual(spoken, ['Question: Want some tea? Call a number.']);
+    assert.deepEqual(plays, ['Question: Want some tea? Call a number.']);
+    assert.equal(engine.getState().playing, 'question');
+    assert.equal(engine.getState().setup.readQuestion, true, 'on by default');
+    assert.equal(conn.named('reportClipReady').length, 0, 'the question is never reported as an option clip');
+
+    // The module's categories turn after a confirmed search copies the question's words; then the person's menu.
+    conn.db.mySession.set([sessionRow({ questionId: 8n, questionText: 'Want some tea? Call 510-555-0100.', lastGestureOutcome: 'accepted:confirm_search' })]);
+    await flush();
+    conn.db.mySession.set([sessionRow({ questionId: 9n, questionText: 'I need something', origin: { tag: 'Menu' } })]);
+    await flush();
+    assert.equal(spoken.length, 1);
+    engine.stop();
+  });
+
+  test('turned off, nothing is said, and the choice is kept on this browser', async () => {
+    const { engine, conn, spoken, internals } = await voicedStation();
+    engine.startSession();
+    await flush();
+    engine.setReadQuestion(false);
+    assert.equal(engine.getState().setup.readQuestion, false);
+    assert.equal(internals.storage.getItem('neurolingo/station/read_question'), 'off');
+    conn.db.mySession.set([sessionRow({ questionId: 7n, questionText: 'Tea?' })]);
+    await flush();
+    assert.deepEqual(spoken, []);
+    engine.setReadQuestion(true);
+    conn.db.mySession.set([sessionRow({ questionId: 8n, questionText: 'Coffee?' })]);
+    await flush();
+    assert.deepEqual(spoken, ['Question: Coffee?']);
+    engine.stop();
+  });
+
+  test('Continue does not say the question asked before this page took the session; the silent test says nothing', async () => {
+    const { engine, conn, spoken } = await voicedStation();
+    conn.db.mySession.set([sessionRow({ questionId: 7n, questionText: 'Asked before the reload?' })]);
+    await flush();
+    engine.continueSession();
+    await flush();
+    assert.deepEqual(spoken, []);
+    conn.db.mySession.set([sessionRow({ questionId: 8n, questionText: 'And now?' })]);
+    await flush();
+    assert.deepEqual(spoken, ['Question: And now?']);
+    engine.stop();
+
+    const silent = await voicedStation({ silent: true });
+    silent.engine.startSession();
+    await flush();
+    silent.conn.db.mySession.set([sessionRow({ questionId: 7n, questionText: 'Tea?' })]);
+    await flush();
+    assert.deepEqual(silent.spoken, []);
+    silent.engine.stop();
+  });
+
+  test('the scan fallback gets no question: a read played late there would count as a stale step', async () => {
+    const { engine, conn, spoken } = await voicedStation();
+    conn.db.config.set([{ ...configRow(), inputMode: { tag: 'Scan' } }]);
+    engine.startSession();
+    await flush();
+    conn.db.mySession.set([sessionRow({ questionId: 7n, questionText: 'Tea?' })]);
+    await flush();
+    assert.deepEqual(spoken, []);
     engine.stop();
   });
 });

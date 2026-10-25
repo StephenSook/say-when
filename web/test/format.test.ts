@@ -12,6 +12,7 @@ import {
   formatSeconds,
   formatTimeLeft,
   maskPhoneNumbers,
+  replacePhoneNumbers,
   timeZoneLabel,
   toMillis,
 } from '../lib/format';
@@ -140,5 +141,12 @@ describe('maskPhoneNumbers', () => {
   test('leaves times, prices, ratings and short counts alone', () => {
     const text = 'At 12:41:06, 7 pm, $1,104, rated 4.6 by 212 people, 0.3 mi away, level 2.';
     assert.equal(maskPhoneNumbers(text), text);
+  });
+
+  test('replacePhoneNumbers: the same match, with spoken words in its place (taken literally)', () => {
+    assert.equal(replacePhoneNumbers('Call me at (510) 555-0100, or +1 510 555 0101?', 'a number'), 'Call me at a number, or a number?');
+    assert.equal(replacePhoneNumbers('Call 5105550100', '$& $1'), 'Call $& $1');
+    const text = 'At 12:41:06, 7 pm, $1,104.';
+    assert.equal(replacePhoneNumbers(text, 'a number'), text);
   });
 });
