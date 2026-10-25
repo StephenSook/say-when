@@ -147,12 +147,12 @@ export function ask(test: Test, text = 'Do you want some water?'): Question {
   return test.db.question.requestId.find(requestId)!;
 }
 
-export function pendingJob(test: Test, questionId: bigint, kind: 'Options' | 'ErrandPreview' | 'Remember' = 'Options') {
+export function pendingJob(test: Test, questionId: bigint, kind: 'Options' | 'ErrandPreview' | 'Remember' | 'Categories' | 'Search' = 'Options') {
   return [...test.db.agentJob.jobByQuestion.filter(questionId)].find((j) => j.kind.tag === kind && j.status.tag === 'Pending');
 }
 
 /** The agent claims the question's pending job of this kind. Returns the claimed row. */
-export function claim(test: Test, questionId: bigint, kind: 'Options' | 'ErrandPreview' | 'Remember' = 'Options') {
+export function claim(test: Test, questionId: bigint, kind: 'Options' | 'ErrandPreview' | 'Remember' | 'Categories' | 'Search' = 'Options') {
   const job = pendingJob(test, questionId, kind);
   if (!job) throw new Error(`no pending ${kind} job for question ${questionId}`);
   as(test, AGENT, (ctx) => m.agentClaim(ctx, { jobId: job.id }));
