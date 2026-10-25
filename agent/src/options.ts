@@ -26,7 +26,7 @@ export interface BuiltOptions {
     options: OptionInput[];
     /** For moss rankOptions: the same ids as `options` (`o1`..), with the best cited web score as support. */
     candidates: CandidateOption[];
-    /** Call options the Dialer refused to prepare (consent, calling hours, a stale errand). */
+    /** Call options the Dialer refused to prepare (consent, do-not-call, a hold, a stale errand). */
     droppedCalls: number;
 }
 

@@ -130,8 +130,10 @@ const PUBLIC_CODES: ReadonlySet<string> = new Set([
   'http', 'timeout', 'network', 'aborted', 'server_error', 'bad_response', 'unconfirmed_duplicate', 'error',
   // The Dialer's refusals.
   'bad_request', 'errand_not_allowed', 'not_consented', 'consent_expired', 'do_not_call', 'opt_out_hold',
-  'hold_file_error', 'emergency_number', 'bad_number', 'errand_stale', 'outside_hours', 'already_used', 'line_busy',
+  'hold_file_error', 'emergency_number', 'bad_number', 'errand_stale', 'already_used', 'line_busy',
   'agent_mismatch', 'agent_unverified',
+  // No longer produced (PLAN D20 removed calling hours); kept so a row written before then still shows its code.
+  'outside_hours',
   // The sidecar, its option planner's error codes and its database error kinds.
   'agent_error', 'errands_not_configured', 'bad_fields', 'read_back_too_long', 'bad_preview', 'bad_result',
   'not_configured', 'call_failed', 'dial_unknown', 'end_unknown', 'confirm_time_unknown', 'confirm_expired',

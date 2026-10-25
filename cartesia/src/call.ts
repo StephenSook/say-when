@@ -26,7 +26,7 @@ export interface ConsentEntry {
     /** The name the call uses, for example "Leon". */
     name: string;
     phone: string;
-    /** The recipient's own IANA time zone, for example "America/New_York". Calling hours are checked in it. */
+    /** The recipient's own IANA time zone, for example "America/New_York". The call says when the request was sent in it. */
     timeZone: string;
     /** What they agreed to, word for word. */
     consentText: string;
@@ -280,38 +280,8 @@ export function clearHoldInFile(options: { file: string; contactId: string; reas
     return cleared;
 }
 
-/** Calls only go out between 9 AM and 9 PM. */
-export const CALL_WINDOW = { startMinute: 9 * 60, endMinute: 21 * 60 } as const;
-/** The demo is in San Francisco, and California bars these calls from 9 PM to 9 AM (PUC 2872(c)). */
-export const VENUE_TIME_ZONE = 'America/Los_Angeles';
-
-function localClock(ms: number, timeZone: string): { day: string; minute: number } {
-    const parts = new Intl.DateTimeFormat('en-US', {
-        timeZone,
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        hourCycle: 'h23',
-    }).formatToParts(new Date(ms));
-    const get = (type: string) => parts.find((part) => part.type === type)?.value ?? '';
-    return { day: `${get('year')}-${get('month')}-${get('day')}`, minute: Number(get('hour')) * 60 + Number(get('minute')) };
-}
-
-function fitsWindow(startMs: number, spanMs: number, timeZone: string): boolean {
-    const start = localClock(startMs, timeZone);
-    const end = localClock(startMs + spanMs, timeZone);
-    return start.day === end.day && start.minute >= CALL_WINDOW.startMinute && end.minute < CALL_WINDOW.endMinute;
-}
-
-/**
- * The whole call (ringing plus the duration cap) must fit inside 9 AM to 9 PM in the recipient's own time zone, and
- * also in Pacific time for the venue. A wrong zone can therefore only make the window smaller, never larger.
- */
-export function insideCallingHours(startMs: number, spanMs: number, recipientTimeZone: string): boolean {
-    return isUsableTimeZone(recipientTimeZone) && fitsWindow(startMs, spanMs, recipientTimeZone) && fitsWindow(startMs, spanMs, VENUE_TIME_ZONE);
-}
+// There is no time-of-day limit on calls (PLAN D20, Oct 24): consent, the AI disclosure, the read-back and a fresh
+// CONFIRM still apply to every call. The recipient's time zone only sets the time the call says.
 
 function clockTime(ms: number, timeZone: string): string {
     return new Intl.DateTimeFormat('en-US', { timeZone, hour: 'numeric', minute: '2-digit' }).format(new Date(ms)).replace(/\s+/g, ' ');
@@ -338,7 +308,6 @@ export type RefusalCode =
     | 'emergency_number'
     | 'bad_number'
     | 'errand_stale'
-    | 'outside_hours'
     | 'expired'
     | 'digest_mismatch'
     | 'already_used'
@@ -359,7 +328,6 @@ export const REFUSALS: Readonly<Record<RefusalCode, string>> = {
     emergency_number: 'I never call emergency numbers. This is not an emergency tool.',
     bad_number: 'That is not a number I can call.',
     errand_stale: 'There is no request sent in the last ten minutes to call about.',
-    outside_hours: 'It is too late or too early to call. Calls only go out between 9 AM and 9 PM their time.',
     expired: 'That call request expired. Ask again.',
     digest_mismatch: 'The call changed after it was read back, so I did not call.',
     already_used: 'That confirm was already used, so I did not call again.',
@@ -819,8 +787,6 @@ export interface PreflightReport {
     holdsReadable: boolean;
     scriptProblems: string[];
     agent: AgentCheck;
-    /** True when every consented recipient is inside calling hours right now. */
-    insideHoursNow: boolean;
     /** Contacts every call to would be refused right now, whatever the request (ids and codes only, never numbers). */
     unreachable: { contact: string; code: CallRefusal['code'] }[];
 }
@@ -920,7 +886,9 @@ export class Dialer {
         if (this.lists.doNotCall.has(number)) return refusal('do_not_call');
         if (this.holdUnsaved || this.lists.holds.has(number)) return refusal('opt_out_hold');
         if (now - errandSentAt > this.maxErrandAgeMs || errandSentAt - now > 60_000) return refusal('errand_stale');
-        if (!insideCallingHours(now, this.spanMs(), contact.timeZone)) return refusal('outside_hours');
+        // No time-of-day check (PLAN D20). The zone still sets the time the call says, so one it cannot read refuses
+        // here instead of failing while the message is built.
+        if (!isUsableTimeZone(contact.timeZone)) return refusal('bad_request');
         return null;
     }
 
@@ -1115,10 +1083,9 @@ export class Dialer {
         const scriptProblems = checkAgentScript(this.script);
         const agent = await verifyAgent({ apiKey: this.config.apiKey, agentId: this.config.agentId, fetch: this.deps.fetch });
         const now = this.now();
-        const insideHoursNow = this.lists.consent.length > 0 && this.lists.consent.every((entry) => insideCallingHours(now, this.spanMs(), entry.timeZone));
         const holdsReadable = this.refreshHolds();
-        // The same per-contact checks prepare() runs, minus the request and the hour, so a setup that refuses every
-        // call (a contact whose number is the callback number, for one) cannot report ready.
+        // The same per-contact checks prepare() runs, minus the request, so a setup that refuses every call (a contact
+        // whose number is the callback number, for one) cannot report ready.
         const unreachable = this.lists.consent.flatMap((entry) => {
             const number = toUsE164(entry.phone);
             const code: CallRefusal['code'] | null =
@@ -1127,6 +1094,7 @@ export class Dialer {
                 : isEmergencyNumber(number) ? 'emergency_number'
                 : this.lists.doNotCall.has(number) ? 'do_not_call'
                 : this.lists.holds.has(number) ? 'opt_out_hold'
+                : !isUsableTimeZone(entry.timeZone) ? 'bad_request'
                 : null;
             return code === null ? [] : [{ contact: entry.id, code }];
         });
@@ -1138,7 +1106,6 @@ export class Dialer {
             holdsReadable,
             scriptProblems,
             agent,
-            insideHoursNow,
             unreachable,
         };
     }
@@ -1315,7 +1282,7 @@ export class Dialer {
             }
             // The last check, after the last application callback above, with nothing between it and the request:
             // a STOP, HEADSET-OFF, opt-out or list change made from the dialing notice still stops the call.
-            // Every guard runs again: consent, do-not-call, the number, the hours and a CONFIRM at most 30 seconds
+            // Every guard runs again: consent, do-not-call, holds, the number and a CONFIRM at most 30 seconds
             // old by its own time, so a CONFIRM that went stale while the agent was checked never rings a phone.
             const at = this.now();
             if (handle.cancelReason) return end('cancelled');
