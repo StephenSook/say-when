@@ -58,6 +58,7 @@ import {
   claimCall as claimCallImpl,
   claimErrand as claimErrandImpl,
   completeErrand as completeErrandImpl,
+  errandEmail as errandEmailImpl,
   errandTimedOut,
   hasConsent,
   readbackDone,
@@ -866,6 +867,27 @@ export const completeErrand = spacetimedb.reducer(
   (ctx, { errandId, ...rest }) => {
     requireRole(ctx, 'Agent');
     completeErrandImpl(ctx, errandId, rest);
+  },
+);
+
+/**
+ * PLAN D25: one step of the care team email the sidecar sends after a Submitted errand (sending, sent or failed),
+ * fenced by the errand's claim attempt like `complete_errand`. Never in the judge try sandbox.
+ */
+export const agentErrandEmail = spacetimedb.reducer(
+  {
+    errandId: t.u64(),
+    attempt: t.u32(),
+    status: t.string(),
+    detail: t.string(),
+    ms: t.u32(),
+    countsJson: t.string(),
+    payloadJson: t.string(),
+  },
+  (ctx, { errandId, ...rest }) => {
+    requireRole(ctx, 'Agent');
+    if (sandboxOn(ctx.db)) throw new SenderError('no email in the try sandbox');
+    errandEmailImpl(ctx, errandId, rest);
   },
 );
 
