@@ -55,7 +55,10 @@ class DemoEngine:
         mu = amp[:, None] * np.sin(2 * np.pi * 10 * t) + self.rng.normal(0, 3, (8, self.n))
         beta = 0.4 * amp[:, None] * np.sin(2 * np.pi * 20 * t) + self.rng.normal(0, 2, (8, self.n))
         jaw = 120.0 if phase == "clench" else 1.0
-        window = {"8-12": mu, "16-20": beta, "20-26": beta, config.COV_BAND: mu + beta}
+        slow = 4.0 * np.sin(2 * np.pi * 1.0 * t) + self.rng.normal(0, 1, (8, self.n))
+        window = {"0.05-5": slow, "8-12": mu, "12-16": beta, "16-20": beta, "20-26": beta, "26-30": 0.6 * beta,
+                  config.COV_BAND: mu + beta}
+        raw = mu + beta + slow + (jaw / 4.0) * self.rng.normal(0, 1, (8, self.n))
         target = {"rest": [0.1, 0.1, 0.8], "left": [0.8, 0.1, 0.1], "right": [0.1, 0.8, 0.1], "clench": [0.3, 0.3, 0.4]}
         p = np.clip(np.array(target[phase]) + self.rng.normal(0, 0.05, 3), 0.01, None)
         p /= p.sum()
@@ -70,7 +73,7 @@ class DemoEngine:
             self._sent_phase = n_phase
             commands.append(messages.gesture("CONFIRM", time.time() - 0.5, 0.9, "jaw"))
         return Update(commands=commands, t=time.time(), proba=dict(zip(self.classes, p)), smoothed=dict(zip(self.classes, p)),
-                      status=phase.upper(), jaw_level=jaw * (1 + 0.1 * math.sin(el)), window=window,
+                      status=phase.upper(), jaw_level=jaw * (1 + 0.1 * math.sin(el)), window=window, raw=raw,
                       samples=self.total_samples)
 
     def stop(self):

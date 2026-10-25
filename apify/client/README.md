@@ -206,7 +206,7 @@ Only the first 2,000 characters are classified (`MAX_QUESTION_CHARS`, leading sp
 ## Costs and latency (indicative)
 
 - **RAG Web Browser:** the Actor's README benchmark shows 16 to 31 s per query (three queries, 1 or 3 results, 4 or 8 GB). When we checked on Oct 23, 2026, the Store listed $0.00348 per search and $0.00228 per fetched page on the Free tier. Fewer results and `raw-http` (its default) are faster.
-- **Google Maps Scraper:** on Oct 23 the Store listed $0.004 per place, plus $0.001 per place for each paid filter; we use none. By default each call runs with 4,096 MB, a 120 s limit and `maxTotalChargeUsd=0.25`. It publishes no latency figure.
+- **Google Maps Scraper:** on Oct 23 the Store listed $0.004 per place, plus $0.001 per place for each paid filter; we use none. By default each call runs with 4,096 MB, a 120 s limit and `maxTotalChargeUsd=0.5`. That cap is Apify's minimum: on Oct 24 a cap of 0.25 was refused before the run started (HTTP 400 `max-total-charge-usd-below-minimum`, "Maximum cost per run is less than the allowed minimum of $0.50"), so `maxChargeUsd` below 0.50 now throws a `RangeError` instead. The cap is a ceiling, not the price. It publishes no latency figure; in our Oct 24 probe with a 0.50 cap, one run returned 6 places in 11.4 s.
 - **Form errand:** in our local measurement on the demo form, a cold preview took about 5 s and a submit about 3 s.
 - **Memory:** Apify's Free plan caps the combined memory of all running runs and builds (16,384 MB on its limits page when we checked). RAG Web Browser Standby takes 8,192 MB and a Maps run 4,096 MB, so avoid parallel Maps runs and builds during a demo.
 

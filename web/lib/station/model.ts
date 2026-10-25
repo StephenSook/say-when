@@ -390,6 +390,7 @@ export const COMMAND_STATUS: Readonly<Record<CommandEntryStatus, RunStatus>> = {
 
 const SOURCE_WORDS: Readonly<Record<string, string>> = {
   key: 'key',
+  button: 'button',
   switch: 'switch',
   imagery: 'imagery',
   jaw: 'jaw',

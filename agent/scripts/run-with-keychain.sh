@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Starts the Eleven agent sidecar with its keys read from the macOS Keychain at run time.
 #
-#   agent/scripts/run-with-keychain.sh [--allow-non-dev] [run|pair|check]
+#   agent/scripts/run-with-keychain.sh [--allow-non-dev] [run|pair|check|warm]
 #
-# run (the default) is what `npm start` runs, pair is `npm run pair`, check is `npm run check`.
+# run (the default) is what `npm start` runs, pair is `npm run pair`, check is `npm run check`, warm is `npm run warm`
+# (run it in a second terminal while the sidecar runs, right before a judge's first question).
 #
 # Each key is read from its Keychain item into this process's environment and handed to the sidecar by exec. No key
 # is printed, logged, echoed, written to a file or put on a command line. Settings files are skipped
@@ -20,9 +21,9 @@ command="run"
 for arg in "$@"; do
     case "$arg" in
         --allow-non-dev) allow_non_dev=1 ;;
-        run | pair | check) command="$arg" ;;
+        run | pair | check | warm) command="$arg" ;;
         *)
-            echo "usage: $0 [--allow-non-dev] [run|pair|check]" >&2
+            echo "usage: $0 [--allow-non-dev] [run|pair|check|warm]" >&2
             exit 2
             ;;
     esac

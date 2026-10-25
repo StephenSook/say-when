@@ -4,10 +4,10 @@
  * The phone call's big card (docs/ui.md "Screen 2", docs/mockups/agents.html): five numbered
  * steps on the left and the transcript on the right.
  *
- * 1 Prepared and read back the call script plays in the earpiece, with its digest
+ * 1 Prepared and read back the call script plays in the earpiece; its digest is in the tooltip only
  * 2 CONFIRM                the confirm window; only CONFIRM places the call (a double jaw clench with the headset)
  * 3 Ringing                Dialing, then Ringing with a ring timer (our own events: Cartesia has no ringing)
- * 4 Connected              the live duration; STOP hangs up (a long jaw clench with the headset)
+ * 4 Connected              the live duration; STOP hangs up (a single jaw clench with the headset)
  * 5 Ended                  with the reason in plain words
  *
  * The contact shows by name only. Never a phone number.
@@ -32,7 +32,7 @@ import {
   type CallPlan,
   type SafetyWord,
 } from './model';
-import { Digest, Note, numbered, Quote } from './StepParts';
+import { Note, numbered, Quote, WithDigest } from './StepParts';
 import { Countdown, Elapsed, LiveDuration } from './Timers';
 import { Transcript } from './Transcript';
 
@@ -89,17 +89,7 @@ function scriptStep(call: CallRequest, status: RunStatus, notCalled: ReactNode, 
     case 'done':
       return {
         ...step,
-        label: numbered(
-          1,
-          <>
-            Prepared and read back
-            {call.scriptDigest ? (
-              <>
-                , digest <Digest value={call.scriptDigest} />
-              </>
-            ) : null}
-          </>,
-        ),
+        label: numbered(1, <WithDigest value={call.scriptDigest}>Prepared and read back</WithDigest>),
         time: clock(call.readAloudAt),
         detail: text ? <Quote text={text} /> : undefined,
       };

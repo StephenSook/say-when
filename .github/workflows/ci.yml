@@ -39,7 +39,21 @@ jobs:
           tracked=$(git ls-files | grep -E '(^|/)\.env($|\.)' | grep -v '\.env\.example$' || true)
           if [ -n "$tracked" ]; then echo "Tracked env files: $tracked"; exit 1; fi
       - name: Shell scripts parse
-        run: bash -n .githooks/check-plan.sh scripts/plan
+        run: bash -n .githooks/check-plan.sh scripts/plan scripts/demo-up.sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Demo scripts (demo-up.sh with a fake Keychain and call check, demo-owner.mjs with a fake CLI)
+        working-directory: scripts
+        run: |
+          status=0
+          node --test test/demo-owner.test.mjs test/demo-up.test.mjs > test.log 2>&1 || status=$?
+          cat test.log
+          test "$status" -eq 0
+          grep -qE '^# fail 0$' test.log
+          pass=$(awk '/^# pass/ {print $3}' test.log)
+          echo "passing tests: $pass"
+          test "$pass" -ge 50
       - name: PLAN.md table is intact
         run: |
           rows=$(grep -cE '^\| [0-9]+\.[0-9]+ \|' PLAN.md)
@@ -102,7 +116,7 @@ jobs:
           grep -qE '^# fail 0$' test.log
           pass=$(awk '/^# pass/ {print $3}' test.log)
           echo "passing tests: $pass"
-          test "$pass" -ge 191
+          test "$pass" -ge 192
 
   cartesia:
     name: Cartesia (speech, voice, call)
@@ -129,7 +143,7 @@ jobs:
           grep -qE '^# fail 0$' test.log
           pass=$(awk '/^# pass/ {print $3}' test.log)
           echo "passing tests: $pass"
-          test "$pass" -ge 164
+          test "$pass" -ge 167
 
   moss:
     name: Moss (memory and web retrieval)
@@ -210,7 +224,7 @@ jobs:
           grep -qE '^# fail 0$' test.log
           pass=$(awk '/^# pass/ {print $3}' test.log)
           echo "passing tests: $pass"
-          test "$pass" -ge 504
+          test "$pass" -ge 524
       - run: npm run build
 
   telemetry:
@@ -282,4 +296,4 @@ jobs:
           grep -qE '^# fail 0$' test.log
           pass=$(awk '/^# pass/ {print $3}' test.log)
           echo "passing tests: $pass"
-          test "$pass" -ge 212
+          test "$pass" -ge 306

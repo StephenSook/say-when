@@ -253,6 +253,7 @@ function DraftView({ panel }: { panel: DraftPanel }) {
               <Row
                 key={option.id}
                 current={picked}
+                pick={picked}
                 main={
                   <>
                     <span className={cx(styles.rank, 'num')}>{option.rank}</span>

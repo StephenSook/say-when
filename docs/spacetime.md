@@ -1050,7 +1050,7 @@ Two harness facts the tests rely on: a fired one-shot row is not deleted in the 
 2. **`answer_option.option_by_question`** (new index): cleanup by question without a prefix scan of `option_by_qv`.
 3. **Cue `call_refused`** (new kind): a picked call option refused for no consent, expiry or a used request id needed its own spoken line.
 4. **`set_timing`** also takes `menu_enabled` and `auto_resume`, so PLAN Q9 needs no schema change, and refuses `liveness_lease_ms` at or below `heartbeat_ms` (every beat would lapse).
-5. **Gesture precedence.** The table in 4.2 is per state; when more than one thing is live the module decides in this order: a pause; an errand or call nobody has claimed (read-back and confirm); the scan; a live call or a submitting errand; idle. STOP adds rather than orders: it always hangs up every live call (D11: a long clench hangs up), then does what it does in that order (section 13, row 13). Before deciding, a due idle pause is applied (section 13, row 10).
+5. **Gesture precedence.** The table in 4.2 is per state; when more than one thing is live the module decides in this order: a pause; an errand or call nobody has claimed (read-back and confirm); the scan; a live call or a submitting errand; idle. STOP adds rather than orders: it always hangs up every live call (D11, D16: a single clench hangs up), then does what it does in that order (section 13, row 13). Before deciding, a due idle pause is applied (section 13, row 10).
 6. **Contact is continuous.** CONFIRM's contact check also requires that the newest lease has not lapsed; `healthy_since` survives only across beats with no lapse between them; a resume counts healthy time from the later of `healthy_since` and `paused_at`. Without these, healthy time from before a HEADSET_OFF pause would resume it at once. Tests cover all three.
 7. **No grace candidate across a pause or a cancelled veto.** A resume or a NO in the veto starts the option fresh, so a YES heard before the pause cannot land after it.
 8. **Jobs end with their work.** An Options job is cancelled when its question ends in any way (picked, none, no pick, stopped, cancelled, superseded), and a preview job when its errand is stopped; a later write from that job gets `SenderError('stale attempt')`, which the sidecar already treats as "drop this work". The plan's no-op path (a final publish for an ended question marks the job Done) still exists for a job that was not cancelled.
@@ -1248,6 +1248,36 @@ The publish then ran with the client break accepted: `env -u CARTESIA_API_KEY sp
 - **A read stays `started`.** The scan's own `q<id>:scan:end` step (`ok`) closes the run on the screens, so no read step is ever updated in place: `pipeline_event` stays append-only.
 - **A call stopped by a timer, a pause or a new question has no stop gesture.** Its `reason_code` (`window_closed`, `confirm_expired`, `headset_lost`, `interrupted`, ...) says what stopped it.
 - **`held` reads the Dialer's sentence** for failed, unknown and refused outcomes, whose own codes (`call_failed`, `dial_unknown`, `end_unknown`, a refusal code) do not say the contact is on hold. The sentence is the sidecar's documented report (`agent/README.md`, Calls) and never leaves the private row: only the boolean reaches the board.
+
+---
+
+## 15. The judge try sandbox (Sat Oct 24, PLAN 5.11)
+
+A judge opens `/try` on their own phone or laptop and runs Eleven on the real backend, with on-screen YES, NO, CONFIRM and STOP standing in for the headset. It runs on its own database, `say-when-try`, so nothing a judge does touches `say-when-dev` or `say-when-demo`. The rules live in `spacetime/src/sandbox.ts` and apply only while the owner has turned them on; with no `sandbox_settings` row, or `on` false, every reducer and view behaves as before. They are turned on only on `say-when-try` (and its keyless test twin `say-when-try-dev`).
+
+### 15.1 What changes while the sandbox is on
+
+| Rule | Where |
+|---|---|
+| A Station is paired the moment it asks (never as a caregiver). A Partner, Speaker or Agent still waits for the owner. | `request_pairing` |
+| A try is its own station's: it asks (`ask_question`) and says its reply (`reply_spoken`, only for a question of its active try). So no Partner or Speaker device exists to outlive a try. | `isTryStation` in `index.ts` |
+| `my_session` and `my_options` show a Station only the try it armed, so an earlier judge's page never reads the next try. | `stationSessionId` in `views.ts` |
+| One try at a time. A new try replaces the active one only when its station has sent no heartbeat for `stale_try_ms` (15 s: the judge closed the tab) or it is older than `max_try_ms` (6 minutes); a live one answers `busy: someone else is trying Eleven right now`. The replaced try ends with ledger reason `replaced`. | `start_session` |
+| A heartbeat ends a try that has run past `max_try_ms` (ledger reason `try_time`). | `heartbeat` |
+| No Remember job: the sandbox's memory holds only its sample notes, so one judge's words are never recalled for the next. | `reply_spoken` |
+| Caps, each refusing with a sentence that starts `try limit:`: 5 questions per try, 12 tries per hour, 150 questions per day, 90 pairings per hour, Cartesia tokens per device (120) and in all (1200) per hour (a mint past them returns `voice_try_limit`). | `sandbox_meter`, a private counter table |
+
+The owner sets it with `set_sandbox` (owner only), for example `spacetime call --no-config --server maincloud say-when-try set_sandbox '"{\"on\":true}"'`; any limit can be set by its snake_case name (`questions_per_try`, `tries_per_hour`, `questions_per_day`, `pairings_per_hour`, `tokens_per_device_per_hour`, `tokens_per_hour`, `max_try_ms`, `stale_try_ms`). An unknown key or a value out of range changes nothing. `sandbox_settings` is public (limits only); `sandbox_meter` is private. `try_limit` joined the public codes for the sidecar's refusal (`agent/README.md`, The try sandbox).
+
+### 15.2 The database
+
+`say-when-try` was created from this module on Oct 24 (with no Cartesia key yet), then: `ensure_timers`; `set_sandbox {"on":true}`; `set_timing {"menu_enabled":false}`; consent for `web_search`, `memory` (the sample notes) and `board_text` (the judge types the question, and the page shows it), and `errand care_team_request` (the form-errand Actor's built-in demo form, which sends nothing anywhere); `set_board_sharing true`. No call consent: calls stay off. The sidecar's identity for it was paired by the owner. The voice needs the module's `CARTESIA_API_KEY`, set by the owner with an `--env-only` publish.
+
+### 15.3 How it was checked
+
+- Module tests: 189 (`src/tests/sandbox.test.ts`, 12), each rule with a failing test written first, and mutations caught for each (Agent or Partner auto-paired, a caregiver pairing, any station counted as the try's, views showing another try, a Remember job, a reply of a replaced try, the max age ignored, the question cap off by one, the token cap dropped).
+- Live on `say-when-try-dev`, Oct 24 about 2:55 to 3:00 PM PDT, no keys, with the stand-in agent (`spacetime/scripts/watch-scan.ts`) and `/try` from a production build in a headless browser at 390 by 844 and 1280 by 900: the station paired without the owner (the agent waited for the owner's approval); Start, a typed question asked by the station, four made-up options, YES on option 4 by button, a yes or no question answered NO by button, End try, Start again with 5 questions. `gesture_log` shows `source = "button"` with `accepted:pick` and `accepted:answer_no`; sessions 1 and 2 ended `replaced` (a reload left them quiet) and session 3 `session_end` by its station.
+- Not yet run: the real sidecar and the voice on `say-when-try` (they wait for the keys), an errand (a read-back needs the voice), and two judges at once (covered by the module tests only).
 
 ---
 

@@ -117,9 +117,13 @@
   background: var(--active);
 }
 
-.current,
-.picked {
+.current {
   border-color: var(--accent);
+}
+
+/* The pick is green here as on every screen; the cursor stays the accent. */
+.picked {
+  border-color: var(--pick);
 }
 
 .current .shown,
@@ -127,9 +131,12 @@
   font-weight: var(--weight-strong);
 }
 
-.current .n,
-.picked .n {
+.current .n {
   color: var(--accent);
+}
+
+.picked .n {
+  color: var(--pick);
 }
 
 /* Paused or headset off: the cursor stops where it was, outlined but not lit. */
@@ -169,7 +176,7 @@
 }
 
 .pickedWord {
-  color: var(--accent);
+  color: var(--pick);
   font-weight: var(--weight-strong);
 }
 
@@ -249,5 +256,13 @@
 @media (min-width: 721px) and (max-height: 860px) {
   .option {
     margin-bottom: 0;
+  }
+}
+
+/* A 720 px projector: the rows lose half their padding too, so the reply said out loud shows under the options. */
+@media (min-width: 721px) and (max-height: 760px) {
+  .option {
+    padding-top: var(--s1);
+    padding-bottom: var(--s1);
   }
 }

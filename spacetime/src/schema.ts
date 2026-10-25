@@ -721,6 +721,44 @@ export const wordTiming = table(
 );
 export type WordTiming = Infer<typeof wordTiming.rowType>;
 
+/**
+ * The judge try sandbox (PLAN 5.11, docs/spacetime.md 15). One row, id 0, written only by the owner's `set_sandbox`.
+ * No row, or `on` false, means every rule in the module is exactly as before: the sandbox is turned on only on the
+ * `say-when-try` database. Public: limits only, no content, so the try page can show them.
+ * Added after the first publish: a new table is a safe migration.
+ */
+export const sandboxSettings = table(
+  { public: true },
+  t.row('SandboxSettings', {
+    id: t.u8().primaryKey(),
+    on: t.bool(),
+    questionsPerTry: t.u32(),
+    triesPerHour: t.u32(),
+    questionsPerDay: t.u32(),
+    pairingsPerHour: t.u32(),
+    tokensPerDevicePerHour: t.u32(),
+    tokensPerHour: t.u32(),
+    maxTryMs: t.u32(),
+    staleTryMs: t.u32(),
+    updatedAt: t.timestamp(),
+  }),
+);
+export type SandboxSettings = Infer<typeof sandboxSettings.rowType>;
+
+/**
+ * The sandbox's counters: one row per key (`pairings`, `tries`, `questions`, `tokens`, `tokens:<identity>`), each a
+ * count inside a fixed window that starts at its first use. Private; numbers only.
+ */
+export const sandboxMeter = table(
+  {},
+  t.row('SandboxMeter', {
+    key: t.string().primaryKey(),
+    windowStartedAt: t.timestamp(),
+    count: t.u32(),
+  }),
+);
+export type SandboxMeter = Infer<typeof sandboxMeter.rowType>;
+
 const spacetimedb = schema(
   {
     config,
@@ -750,6 +788,8 @@ const spacetimedb = schema(
     pairingTimer,
     spentGesture,
     wordTiming,
+    sandboxSettings,
+    sandboxMeter,
   },
   {
     // Optional, so a teammate can publish a dev database with no secrets. Values arrive from shell variables

@@ -9,12 +9,12 @@ import { describe, test } from 'node:test';
 import { isPhoneRoute, isRolePageRoute } from '../lib/routes';
 
 describe('route rule', () => {
-  test('the station, the speaker and the headset page are role pages', () => {
-    for (const path of ['/station', '/speaker', '/station/', '/speaker/x', '/eeg']) assert.equal(isRolePageRoute(path), true, path);
+  test('the station, the speaker, the try page and the quiz are role pages', () => {
+    for (const path of ['/station', '/speaker', '/station/', '/speaker/x', '/try', '/quiz']) assert.equal(isRolePageRoute(path), true, path);
   });
 
   test('dashboards and the phone are not role pages', () => {
-    for (const path of ['/', '/live', '/agents', '/conversation', '/partner', '/stations', '/speakers', '/judge', '/eegs', null, '']) {
+    for (const path of ['/', '/live', '/agents', '/conversation', '/partner', '/stations', '/speakers', '/judge', '/brain', '/quizzes', null, '']) {
       assert.equal(isRolePageRoute(path), false, String(path));
     }
   });
@@ -31,6 +31,6 @@ describe('route rule', () => {
     const shell = readFileSync(join(process.cwd(), 'components', 'shell', 'Shell.tsx'), 'utf8');
     const provider = readFileSync(join(process.cwd(), 'lib', 'data', 'provider.tsx'), 'utf8');
     assert.match(shell, /if \(isRolePageRoute\(pathname\)\) return <BareFrame>/);
-    assert.match(provider, /if \(isRolePageRoute\(window\.location\.pathname\)\) return;/);
+    assert.match(provider, /if \(isRolePageRoute\(window\.location\.pathname\) \|\| isBrainRoute\(window\.location\.pathname\)\) return;/);
   });
 });

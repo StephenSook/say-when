@@ -36,15 +36,14 @@ export function Note({ children }: { children: ReactNode }) {
   return <p className={styles.note}>{children}</p>;
 }
 
-/** The first 8 characters of a digest in Geist Mono; the full value is in the tooltip. */
-export function Digest({ value }: { value: string }) {
+/**
+ * A read-back step's words, with the read-back's digest in the tooltip only. The hex is our proof that a CONFIRM
+ * matched what was read, not the person's job, so it stays off the screen (the judge page states the check).
+ */
+export function WithDigest({ value, children }: { value: string | null; children: ReactNode }) {
   const short = shortDigest(value);
-  if (!short) return null;
-  return (
-    <span className={styles.digest} title={`Full digest ${value.trim()}. A CONFIRM counts only if it matches.`}>
-      {short}
-    </span>
-  );
+  if (!short || value === null) return <>{children}</>;
+  return <span title={`Digest ${short} (full ${value.trim()}). A CONFIRM counts only if it matches.`}>{children}</span>;
 }
 
 /** The values the form agent read back off the filled page, label beside value. */

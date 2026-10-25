@@ -17,7 +17,7 @@ npm run bindings    # after every spacetime generate: copies spacetime/bindings/
 npm run cartesia    # after any change in cartesia/src: copies the browser code into lib/cartesia
 ```
 
-Routes: `/live`, `/agents`, `/conversation` (also `/`), and `/partner` for the phone. Keys 1, 2 and 3 switch the dashboard screens.
+Routes: `/live`, `/agents`, `/conversation` (also `/`), `/brain` (Screen 1, the live brain), `/replies` (Suggested replies, the tree of saved notes, web and drafting that grows from the pipeline rows), `/partner` for the phone, and `/try`, the judge try sandbox (below). Keys 1 to 5 switch the dashboard screens.
 
 ### Against the live database
 
@@ -27,6 +27,8 @@ The dashboard reads the SpacetimeDB module on Maincloud as an anonymous viewer: 
 NEXT_PUBLIC_SPACETIMEDB_HOST=https://maincloud.spacetimedb.com NEXT_PUBLIC_SPACETIMEDB_DB=say-when-dev npm run build
 npx next start -p 3217     # http://localhost:3217/conversation shows say-when-dev, chip Live
 ```
+
+Production (Vercel project `neurolingo-web`, served at https://eleven-calhacks.vercel.app): both values are stored as Production environment variables on the project (`NEXT_PUBLIC_SPACETIMEDB_HOST=https://maincloud.spacetimedb.com`, `NEXT_PUBLIC_SPACETIMEDB_DB=say-when-demo`), so `vercel --prod` from `web/` builds against the demo database. Before Oct 24 they were passed as `--build-env` flags; one deploy without the flags shipped pages with no database ("This page has no database to pair with") and was rolled back. After any deploy, run the deployed smoke test (`cd scripts && npm run smoke`).
 
 The board shows the module's current or most recent session (`config.active_session_id`). To watch it move, run the module's smoke test from `spacetime/` (owner only, made-up content, about 90 s; `spacetime/README.md`, "Smoke test"); it starts a session, plays a station and a stand-in agent, ends the session and revokes its devices. `?replay=1` still plays the bannered sample replay on the same build.
 
@@ -71,7 +73,7 @@ The scan clock's phases are idle, preparing, reading, window, veto and paused (`
 | YES | imagine squeezing the right fist | Pick this option, or answer yes. While nothing is happening, it opens the person's menu. |
 | NO | imagine squeezing the left fist | Skip this option, or answer no. |
 | CONFIRM | double jaw clench | The only way anything leaves the room (a form or a call), after the read-back. |
-| STOP | long jaw clench, about 1 s | Cancel, none of these, hang up, pause. |
+| STOP | single jaw clench | Cancel, none of these, hang up, pause. |
 
 HEADSET_OFF is a system event, not a command the person gives. It and the 2-minute idle auto-pause cancel anything pending. Errands and calls are not gestures: Claude offers them as follow-up options, YES picks one, the read-back plays, and only a fresh CONFIRM matched to the read-back digest sends it. Silence moves on.
 
@@ -91,9 +93,18 @@ Each screen has its own file pair. Change only yours; everything else is shared.
 | Live data | `components/screens/LiveData.tsx`, `LiveData.module.css` | docs/ui.md Screen 1, docs/mockups/live.html |
 | Agents | `components/screens/Agents.tsx`, `Agents.module.css` | docs/ui.md Screen 2, docs/mockups/agents.html |
 | Conversation | `components/screens/Conversation.tsx`, `Conversation.module.css` | docs/ui.md Screen 3, docs/mockups/conversation.html |
+| Suggested replies | `components/screens/Replies.tsx`, `components/replies/`, `lib/tree/` (model, layout, camera) | PLAN.md 5.10; tests in `test/reply-tree.test.ts` |
 | Partner phone | `components/screens/Partner.tsx`, `Partner.module.css` | docs/ui.md Screen 4, docs/mockups/partner.html |
 
 The dashboard screens render inside the shell's `<main>` behind `ConnectionGate`, so rows exist when they render; do not render another `<main>`. The phone view has no header and no gate: it draws its own top row and handles loading and offline itself.
+
+### The stage view (/stage)
+
+`/stage` (and `/stage?replay=1`) is the projector screen for the live demo: the whole loop on one screen, so nobody switches tabs. It is not a tab and has no screen key; open it by its address. It is made of the other screens' parts, fed by the same rows (`components/stage/`): the partner's question (Conversation's header), the Suggested replies tree as the main area, a side column with the brain slot, what is in the earpiece now (or the pick and where its errand or call is) and what was said out loud, and the command strip in the session's true input words. The connection and input chips are the shell's.
+
+- Frame (`lib/stage/layout.ts`): from 1600 px wide the side column is 520 px (a 1920 x 1080 projector); from 960 px it is 400 px and the question sits on one row (1280 x 720); under 960 px wide or 540 px tall it is one column with the tree as a list. On a projector the stage fills the window, so nothing scrolls.
+- Brain slot: the live brain (Screen 1, `components/brain/BrainScreen.tsx`, switched on in `components/stage/live-brain.ts`) shows only on a loopback address (`localhost` or `127.0.0.1`, the laptop that runs the EEG bridge) or with `?brain=1`, because Screen 1 opens a socket to `ws://127.0.0.1:8766` as it loads; `?brain=0` turns it off anywhere. Everywhere else, the deployed site included, the slot is the decoder panel (`components/stage/DecoderPanel.tsx`, `lib/stage/decoder.ts`): the session's input, the newest command that counted (large, with what the person did, when, and the decoder's confidence in a headset session) and the other recent ones (a repeat that did not count says so). Only an imagined fist gets a color (YES cyan, NO amber); a keyboard session names keys. It draws no brain activity.
+- Tests: `test/stage.test.ts` (the frame, the slot, the decoder panel's words, and the side column over a loop of the sample replay).
 
 Hooks, from `@/lib/data/provider`:
 
@@ -146,6 +157,29 @@ No token is ever put in a page address, a link, a log line, an error message or 
 `lib/cartesia` drops the `.js` ending of each relative import (`stripJsSpecifiers` in `scripts/cartesia-files.json`): `next build` (Turbopack) does not resolve `./tts.js` to `tts.ts`, and `test/cartesia-copy.test.ts` applies the same rewrite before comparing.
 
 The decoder runs on `ws://127.0.0.1:8765`. From an https page, Chrome 156 holds that socket in "connecting", with no error, until someone answers its local network permission prompt (checked Oct 24 in a Playwright Chrome on a Mac; `docs/station.md` 5.1); after 3 s the station says to click Allow. From `http://localhost` no prompt is needed.
+
+## Screen 1, the live brain (`/brain`)
+
+A template brain in the standard EEG top view (nose up, C3 left, C4 right) with two soft patches under the C3 and C4 electrodes. Each patch glows only as the 8-12 Hz (mu) rhythm at that electrode quiets against the wearer's own rest baseline: cyan on the C3 side (right-fist imagery, which Eleven maps to YES), amber on the C4 side (left-fist imagery, mapped to NO). The brain has no yes area. The decoder's guess is a separate pill and ring pulse; the jaw clench is a muscle lane under the brain and never touches it. Below the brain: one row per band of the decoder's filter bank (Mu 8-12 Hz to High beta 26-30 Hz, then the slow potential) over the last 20 s, the decoder's guesses, and the jaw lane. Contact problems show in the legend; the rest is in the info dialog.
+
+- Data: only the local bridge on `ws://127.0.0.1:8766` (`tools/VIZ_PROTOCOL.md`). It never opens the station channel on 8765 and never touches SpacetimeDB, so no EEG leaves the EEG laptop. Open `/brain` on that laptop and mirror it to the projector.
+- Connecting: the page opens the local decoder by itself only on the EEG laptop's own server (localhost, 127.0.0.1) or with `?bridge=1`. On the public site it shows "Decoder not connected" with a Connect button, so a judge's laptop never retries a missing decoder or meets Chrome's local-network prompt unasked. It also opens no SpacetimeDB source.
+- Mock data: `tools/mock-viz/` and `tools/viz_replay.py` replay every state to the page; `test/brain-mock-scenarios.test.ts` runs them through the page's logic.
+- Without the headset: run the synthetic bridge in `tools/` (it labels itself, and the page shows SYNTHETIC TEST SIGNAL). See `tools/VIZ_PROTOCOL.md`.
+- Options: `?wearer=Name` puts the wearer's name in the caption; `?bloom=0` turns the glow pass off on a slow laptop.
+- Code: rules and words in `lib/brain/model.ts`, message checks in `lib/brain/protocol.ts`, the client in `lib/brain/stream.ts`, the scene in `components/brain/`. Tests: `test/brain-*.test.ts`, including the left and right check.
+- The brain model is the Human Reference Atlas "Brain, Male" v1.3, licensed CC BY 4.0, credited on screen; how it was prepared is in `tools/brain-asset/README.md`.
+
+## The judge try sandbox (`/try`, PLAN 5.11)
+
+A judge runs Eleven from their own phone or laptop, with no headset and no setup: Start, type a question, watch the steps (heard, saved notes from Moss, the web search from Apify, drafting by Claude), see and hear the spoken options, and pick with on-screen YES, NO, CONFIRM and STOP. The page says so in its first line: "On-screen buttons stand in for the headset's YES, NO, CONFIRM and STOP." Keys Y, N, C and S work too on a laptop.
+
+- **Its own database.** `say-when-try` by default (`NEXT_PUBLIC_TRY_SPACETIMEDB_DB` overrides it, for example `say-when-try-dev` for a keyless test), never the demo's. The module's try sandbox there pairs the page's Station without the owner and ties the try to it, caps it (5 questions, 6 minutes, a few tries an hour) and lets a closed tab's try give way to the next judge (docs/spacetime.md 15).
+- **One identity.** The page is a Station: it starts the try with the label `try`, asks the question, relays each button with source `button` (never as a headset signal), and says the picked reply through the room voice engine from `/speaker`, reporting `reply_spoken` through its own station. No key reaches the page: the module mints 60 s voice tokens.
+- **Honest states.** With no voice key on the database the scan runs silently and the reply shows as "Picked. Voice is off, so it was not said out loud", never as said. With no agent online it says so. A cap shows its own "Try limit: ..." sentence; a busy database says someone else is trying.
+- **Shared on purpose.** The database's sharing toggle is on (the judge typed the question), and the page says so: "What you type shows on this sandbox's public board." The saved notes are made up and each reads "Sample note: ...".
+- Code: `app/try/`, `components/try/` (the wiring in `useTry.ts`), the view rules in `lib/try/model.ts`; `/try` is a bare role page in `lib/routes.ts`, so the demo board source never starts there. Tests: `test/try.test.ts`.
+- Checked live on `say-when-try-dev` with the stand-in agent and no keys (docs/spacetime.md 15.3). The keyed run (Claude, Apify, Moss, Cartesia) waits for the sidecar's keys on Render (`agent/README.md`, The try sandbox).
 
 ## Checks
 

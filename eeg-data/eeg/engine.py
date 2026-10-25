@@ -26,6 +26,7 @@ class Update:
     commands: List[dict] = field(default_factory=list)
     jaw_events: List[dict] = field(default_factory=list)   # raw single / double / long clenches
     window: Optional[Dict[str, np.ndarray]] = None          # latest filtered 2 s window per band (for displays)
+    raw: Optional[np.ndarray] = None                         # latest raw samples, a copy (for the viz spectrum)
     samples: int = 0
 
 
@@ -46,6 +47,7 @@ class Engine:
         self.bank = FilterBank(self.fs)
         self.jaw = JawDetector(self.fs)
         self.buf = None
+        self.raw = np.empty((len(config.CHANNELS), 0))     # copy of the newest raw samples, after the one read
         self.since_pred = 0
         self.total_samples = 0
         self.last_packet = None
@@ -100,6 +102,7 @@ class Engine:
             time.sleep(0.003)
             return up
         self.last_packet, self.headset_off_sent = now, False
+        self.raw = np.concatenate([self.raw, eeg], axis=1)[:, -int(2.5 * self.fs):]
         self._filter(eeg)
         self.total_samples += ts.size
         up.samples = self.total_samples
@@ -117,6 +120,7 @@ class Engine:
         if self.use_imagery and self.since_pred >= self.step:
             self.since_pred = 0
             up.window = {b: a.copy() for b, a in self.buf.items()}
+            up.raw = self.raw.copy()
             p = self.model.proba({b: a[None] for b, a in self.buf.items()})[0]
             up.proba = {c: float(v) for c, v in zip(self.classes, p)}
             ev = self.hands.update(float(ts[-1]), up.proba)

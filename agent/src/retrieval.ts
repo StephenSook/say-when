@@ -9,7 +9,7 @@
 // failing the job, because the person still needs options.
 
 import { ApifyHttpError, type QuestionClass, type SearchRow } from '@say-when/apify-client';
-import { MossCallError, MossRunError, type Recall, type WebHit } from '@say-when/moss';
+import { MossCallError, MossRunError, type MemoryHit, type Recall, type WebHit } from '@say-when/moss';
 
 import { DeadlineError, JobAbortedError, withDeadline } from './deadline.js';
 import type { Logger } from './log.js';
@@ -17,6 +17,7 @@ import { label, StaleAttemptError, type JobEvents } from './pipeline.js';
 import type { MemoryContext, WebContext } from './planner/types.js';
 import type { Classifier, MemoryPort, SearchPort, WebIndexPort } from './ports.js';
 import { excerpt, memoryHitPayload, searchRowPayload, sourceRefOf, webHitPayload, type PayloadHit } from './privacy.js';
+import { isPastRequest, pastRequestQuery, type FormRef } from './requests.js';
 import type { AgentQueueRow } from './types.js';
 
 export { JobAbortedError };
@@ -70,10 +71,63 @@ export function searchErrorLabel(kind: 'web' | 'maps', error: unknown, deadline:
     return label(kind, 'error');
 }
 
+/** At most this many allowed forms get a past-request query per question. */
+const MAX_PAST_REQUEST_FORMS = 4;
+
+/** The newer of two hits; the first when their times tie or are unknown. */
+function newer(a: MemoryHit | null, b: MemoryHit): MemoryHit {
+    if (!a) return b;
+    return (b.at ?? -Infinity) > (a.at ?? -Infinity) ? b : a;
+}
+
 /**
- * Step 1: the person's memory for this question and this partner. Null when memory is off, closed or failed.
- * `allowed` reads the job's memory consent as the module shows it now: it is checked again after every wait, since
- * consent can be revoked while a job runs.
+ * A form's past-request query, bounded on its own: a query that fails or never answers only leaves its form out, and
+ * never costs the question's own recall.
+ */
+async function findPastRequests(memory: MemoryPort, row: AgentQueueRow, form: FormRef, deadlineMs: number): Promise<MemoryHit[]> {
+    try {
+        const result = await withDeadline(memory.recall(pastRequestQuery(form), row.askedBy), deadlineMs, 'past request recall');
+        return result.hits;
+    } catch {
+        return [];
+    }
+}
+
+/**
+ * The question's recall, plus the newest past request (src/requests.ts) of each allowed form, first, so the planner
+ * can offer to send the same form again. One local query per form by its title and key, run beside the question's
+ * own query. The two rank by similarity and can find different notes, so the newest note of each form is taken from
+ * both; every other past request is left out, since only the newest one is "last time".
+ */
+async function recallWithPastRequests(
+    memory: MemoryPort,
+    row: AgentQueueRow,
+    forms: readonly FormRef[],
+    deadlineMs: number,
+    signal: AbortSignal,
+): Promise<{ recall: Recall; pastRequests: number }> {
+    const unique = forms.filter((form, i) => forms.findIndex((f) => f.formKey === form.formKey) === i);
+    // The query budget limits the extra queries only; a note the question's own recall found counts for every form.
+    const finding = Promise.all(unique.slice(0, MAX_PAST_REQUEST_FORMS).map((form) => findPastRequests(memory, row, form, deadlineMs)));
+    const recall = await withDeadline(memory.recall(row.questionText, row.askedBy), deadlineMs, 'memory recall', signal);
+    // Each past-request query has its own deadline, started with the question's, so this wait is bounded too.
+    const found = await finding;
+    const past: MemoryHit[] = [];
+    unique.forEach((form, i) => {
+        let best: MemoryHit | null = null;
+        for (const hit of [...(found[i] ?? []), ...recall.hits]) {
+            if (hit.type === 'pref' && isPastRequest(hit.text, form)) best = newer(best, hit);
+        }
+        if (best && !past.some((hit) => hit.id === best?.id)) past.push(best);
+    });
+    const rest = recall.hits.filter((hit) => !isPastRequest(hit.text));
+    return { recall: { ...recall, hits: [...past, ...rest] }, pastRequests: past.length };
+}
+
+/**
+ * Step 1: the person's memory for this question and this partner, with the newest past request of each allowed form
+ * (`forms`). Null when memory is off, closed or failed. `allowed` reads the job's memory consent as the module shows
+ * it now: it is checked again after every wait, since consent can be revoked while a job runs.
  */
 export async function recallMemory(
     deps: RetrievalDeps,
@@ -81,6 +135,7 @@ export async function recallMemory(
     row: AgentQueueRow,
     signal: AbortSignal,
     allowed: () => boolean = () => true,
+    forms: readonly FormRef[] = [],
 ): Promise<Recall | null> {
     if (!row.memoryAllowed || !allowed()) {
         await events.instant('retrieve', 'ok', 'memory off', 0, { counts: { hitCount: 0, memoryAllowed: false } });
@@ -92,14 +147,15 @@ export async function recallMemory(
     }
     const step = await events.begin('retrieve', 'memory recall');
     try {
-        const recall = allowed() ? await withDeadline(deps.memory.recall(row.questionText, row.askedBy), mossDeadline(deps, 'recall'), 'memory recall', signal) : null;
+        const recalled = allowed() ? await recallWithPastRequests(deps.memory, row, forms, mossDeadline(deps, 'recall'), signal) : null;
+        const recall = recalled?.recall ?? null;
         if (!recall || !allowed()) {
             // Revoked while the step started or while Moss answered: nothing from memory is used or shown.
             await step.ok('memory recall', { counts: { hitCount: 0, memoryAllowed: false } });
             return null;
         }
         await step.ok('memory recall', {
-            counts: { hitCount: recall.hits.length, instant: recall.instant.length, mossMs: recall.mossMs ?? undefined },
+            counts: { hitCount: recall.hits.length, instant: recall.instant.length, pastRequests: recalled?.pastRequests ?? 0, mossMs: recall.mossMs ?? undefined },
             payload: { hits: recall.hits.map(memoryHitPayload) },
             listKey: 'hits',
         });
@@ -132,7 +188,8 @@ export function placeQuery(question: string): string {
  * Steps 2 and 3. A question that needs no outside facts writes one `search ok skipped` event (when web search is
  * allowed at all) and returns at once. Without consent for web search there is no search and no search event:
  * the module refuses search events for such a job. `allowed` reads that consent as the module shows it now, and is
- * checked again right before the question goes out.
+ * checked again right before the question goes out. `stop` ends a search whose result can no longer be used; it
+ * closes its step with `search stopped` and returns no rows.
  */
 export async function searchStep(
     deps: RetrievalDeps,
@@ -141,6 +198,7 @@ export async function searchStep(
     check: QuestionClass,
     signal: AbortSignal,
     allowed: () => boolean = () => true,
+    stop?: AbortSignal,
 ): Promise<SearchOutcome> {
     if (!check.needsWeb) {
         if (row.webSearchAllowed && allowed()) {
@@ -164,8 +222,9 @@ export async function searchStep(
         return { status: 'not_allowed', rows: [], kind: null };
     }
     const deadline = AbortSignal.timeout(deps.searchTimeoutMs);
-    const combined = AbortSignal.any([signal, deadline]);
+    const combined = AbortSignal.any(stop ? [signal, deadline, stop] : [signal, deadline]);
     try {
+        if (stop?.aborted) throw new DOMException('stopped', 'AbortError');
         const result =
             kind === 'maps'
                 ? await deps.search.places(placeQuery(row.questionText), { signal: combined, near: deps.placesNear ?? undefined })
@@ -178,6 +237,11 @@ export async function searchStep(
         return { status: 'done', rows: result.rows, kind };
     } catch (error) {
         if (signal.aborted) throw new JobAbortedError();
+        if (stop?.aborted) {
+            // Stopped on purpose: its result could no longer be used (a yes or no draft went final).
+            await step.ok('search stopped', { counts: { needsWeb: true, searches: 1, rowCount: 0 } });
+            return { status: 'none', rows: [], kind };
+        }
         await step.error(searchErrorLabel(kind, error, deadline.aborted), { counts: { needsWeb: true, searches: 1, rowCount: 0 } });
         deps.log.warn('search failed; planning without outside facts', { job: row.jobId, search: kind, deadline: deadline.aborted });
         return { status: 'failed', rows: [], kind };

@@ -15,6 +15,8 @@ export interface Step {
   detail?: ReactNode;
   /** A more precise status word for screen readers and the tooltip, such as "Not sent". */
   statusWord?: string;
+  /** The step is the person's pick: once done, its check is the pick green. */
+  pick?: boolean;
 }
 
 export interface StepListProps {
@@ -39,7 +41,7 @@ export function StepList({ steps, label, size = 'md', className }: StepListProps
           className={cx(styles.step, styles[step.status])}
           aria-current={step.status === 'working' || step.status === 'waiting' ? 'step' : undefined}
         >
-          <StatusMark status={step.status} showWord={false} word={step.statusWord} className={styles.mark} />
+          <StatusMark status={step.status} showWord={false} word={step.statusWord} pick={step.pick} className={styles.mark} />
           <span className={styles.label}>{step.label}</span>
           <span className={cx(styles.time, 'num')}>{step.time}</span>
           {step.detail !== undefined && step.detail !== null ? <div className={styles.detail}>{step.detail}</div> : null}

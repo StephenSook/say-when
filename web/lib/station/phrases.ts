@@ -47,6 +47,14 @@ export type PhraseKey = keyof typeof PHRASES;
 /** The module's four menu items (spacetime/src/clock.ts MENU_ITEMS), read like answers in the reply voice. */
 export const MENU_ITEM_TEXTS: readonly string[] = ['I need something', 'Send a request', 'Call', 'Say something else'];
 
+/**
+ * A menu row is voiced from the phrase cache (and so kept in the browser's phrase store) only when its words are one
+ * of the four module menu items; any other words are voiced fresh and never stored.
+ */
+export function isMenuItemText(text: string): boolean {
+  return MENU_ITEM_TEXTS.includes(text);
+}
+
 /** How the person confirms in each input mode. */
 export const ACT_WORDS: Readonly<Record<InputMode, string>> = {
   headset: 'clench twice',

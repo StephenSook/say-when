@@ -1,0 +1,507 @@
+/*
+ * The stage view (/stage), one projector screen. The tree takes the main area; a side column holds the brain slot,
+ * the earpiece and what was said out loud; the command strip runs along the bottom. Color is for state only: lilac
+ * is the earpiece cursor, green is the pick (--pick, as on every screen), and cyan and amber mark an imagined right and left
+ * fist, the brain part, nowhere else.
+ */
+
+.root {
+  --hand-yes: #38e1ff; /* an imagined right fist (YES), the brain part only; the same as /brain */
+  --hand-yes-soft: rgba(56, 225, 255, 0.16);
+  --hand-no: #ffb020; /* an imagined left fist (NO), the brain part only; the same as /brain */
+  --hand-no-soft: rgba(255, 176, 32, 0.16);
+  display: grid;
+}
+
+/* The projector and the laptop frames: out of the page's 1440 px column to the window's edges, one window tall. */
+.wide,
+.compact {
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
+  margin-top: calc(-1 * var(--s4));
+  margin-bottom: calc(-1 * var(--s12));
+  grid-template-columns: minmax(0, 1fr) var(--side-w, 520px);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    'head side'
+    'tree side'
+    'strip strip';
+  overflow: hidden;
+}
+
+/* Under 960 px: one column, the tree as a list at the end. */
+.stacked {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas:
+    'head'
+    'side'
+    'strip'
+    'tree';
+  gap: var(--s4);
+}
+
+/* The partner's question, larger than on Conversation: it is read from the back of the room. */
+.head {
+  grid-area: head;
+  min-width: 0;
+  padding: 0 var(--s6) var(--s4);
+}
+
+.head > div {
+  margin: 0;
+}
+
+.head h2 {
+  max-width: none;
+  font-size: 36px;
+}
+
+.waitingHead {
+  font-size: var(--text-lead);
+  line-height: var(--leading-tight);
+  color: var(--fg-muted);
+}
+
+.tree {
+  grid-area: tree;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  border-top: 1px solid var(--divider);
+}
+
+.canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.side {
+  grid-area: side;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  min-width: 0;
+  min-height: 0;
+  padding: 0 var(--s6) var(--s4);
+  border-left: 1px solid var(--divider);
+  overflow: hidden;
+}
+
+.slot {
+  display: flex;
+  flex-direction: column;
+  /* When the column is short (a 720 px window, a banner above), the slot gives up room first, never the reply. */
+  flex: 0 1 auto;
+  min-height: 0;
+}
+
+/* The live brain gets the larger part of the column: it is drawn, not read. */
+.slotLive {
+  flex: 1 1 55%;
+}
+
+.strip {
+  grid-area: strip;
+  padding: var(--s3) var(--s6);
+  border-top: 1px solid var(--divider);
+}
+
+/* The command strip keeps its own look; only its outer space is the stage's. */
+.strip > ul {
+  margin: 0;
+}
+
+/* ---- Brain slot: the live brain (Screen 1), drawn for a whole window, fitted into the slot's box ---- */
+
+.liveBrain {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+}
+
+.liveBrain > div {
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+}
+
+.liveBrain > div > * {
+  width: auto;
+  margin-left: 0;
+}
+
+/* Screen 1's title and subtitle: the slot keeps its mode pill and gives the room to the brain. */
+.liveBrain > div > div:first-child {
+  justify-content: flex-end;
+  padding-top: var(--s3);
+}
+
+.liveBrain > div > div:first-child > div:first-child {
+  display: none;
+}
+
+/* On a 1280 px screen the band strip has no room; the brain and its guess stay. */
+.compact .liveBrain > div > section:nth-of-type(2) {
+  display: none;
+}
+
+/* ---- Brain slot: the decoder panel ---- */
+
+.decoder {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  min-height: 0;
+  overflow: hidden;
+  padding: var(--s4) var(--s4) var(--s4) var(--s6);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--card);
+}
+
+.decoderHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s1) var(--s4);
+}
+
+.decoderTitle {
+  font-size: var(--text-title);
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-tight);
+}
+
+.decoderHow {
+  color: var(--fg-muted);
+  font-size: var(--text-meta);
+}
+
+.decoderNone {
+  color: var(--fg-muted);
+  font-size: var(--text-title);
+}
+
+.last {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--s1) var(--s3);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .last {
+    animation: last-in var(--dur-slow) var(--ease-out);
+  }
+}
+
+@keyframes last-in {
+  from {
+    opacity: 0.2;
+  }
+}
+
+.lastWord {
+  font-size: 44px;
+  font-weight: var(--weight-strong);
+  line-height: 1;
+  letter-spacing: 0.01em;
+}
+
+.hand_yes {
+  color: var(--hand-yes);
+}
+
+.hand_no {
+  color: var(--hand-no);
+}
+
+.lastMeta {
+  grid-column: 2;
+  color: var(--fg);
+  font-size: var(--text);
+}
+
+.ignored .earlierWord {
+  color: var(--fg-muted);
+}
+
+.mark {
+  display: block;
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--ring);
+  border-radius: 50%;
+}
+
+.markSmall {
+  width: 12px;
+  height: 12px;
+  border-width: 1.5px;
+}
+
+.markHand_yes {
+  border-color: var(--hand-yes);
+  background: var(--hand-yes);
+  box-shadow: 0 0 0 4px var(--hand-yes-soft);
+}
+
+.markHand_no {
+  border-color: var(--hand-no);
+  background: var(--hand-no);
+  box-shadow: 0 0 0 4px var(--hand-no-soft);
+}
+
+.markSmall.markHand_yes,
+.markSmall.markHand_no {
+  box-shadow: none;
+}
+
+.markIgnored {
+  border-style: dashed;
+  background: none;
+  box-shadow: none;
+}
+
+.earlier {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  min-height: 0;
+  overflow: hidden;
+  margin: 0;
+  padding: var(--s3) 0 0;
+  border-top: 1px solid var(--divider);
+  list-style: none;
+}
+
+.earlierRow {
+  display: grid;
+  grid-template-columns: 12px auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--s3);
+  font-size: var(--text);
+}
+
+.earlierWord {
+  font-weight: var(--weight-strong);
+}
+
+.earlierSignal {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.earlierAgo {
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+/* ---- The earpiece, the pick, the wait, and what was said out loud ---- */
+
+.now {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  flex: 1 0 auto;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding: var(--s4) var(--s4) var(--s4) var(--s6);
+  border: 2px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--card);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .card {
+    animation: card-in var(--dur-row) var(--ease-out);
+  }
+}
+
+@keyframes card-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* "In the earpiece now", the bar and the phase on one row, so the phase never drops below an empty bar. */
+.card > div:first-child {
+  flex-wrap: nowrap;
+}
+
+.card > div:first-child > span:first-child {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* In the earpiece now: the cursor's lilac outline and tint, as on Conversation. */
+.cardEar {
+  border-color: var(--accent);
+  background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--card);
+}
+
+.cardStopped {
+  border-color: var(--line);
+  opacity: 0.7;
+}
+
+/* The pick: green, as on the tree. */
+.cardPicked {
+  border-color: var(--pick);
+  background: linear-gradient(var(--pick-soft), var(--pick-soft)), var(--card);
+}
+
+.cardText {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+  margin: 0;
+  font-size: 28px;
+  line-height: var(--leading-tight);
+  color: var(--fg);
+}
+
+.rank {
+  flex: none;
+  color: var(--fg-muted);
+  font-size: var(--text-title);
+}
+
+.pickedWord {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  color: var(--pick);
+  font-size: var(--text-title);
+  font-weight: var(--weight-strong);
+}
+
+.pickedMark {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--pick);
+  box-shadow: 0 0 0 4px var(--pick-soft);
+}
+
+.veto {
+  color: var(--fg);
+  font-size: var(--text);
+}
+
+.agent {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: var(--text-title);
+  line-height: var(--leading-tight);
+}
+
+.noteBox {
+  padding: var(--s2) 0;
+}
+
+/* "Said out loud" sits at the foot of the column. Before a reply, its "Nothing yet" is quieter than a reply. */
+.aloud {
+  margin-top: auto;
+}
+
+.aloud > div > p {
+  font-size: var(--text-title);
+}
+
+/* A 1280 px laptop or projector: the same frame, a little tighter, and the question on one row. */
+.compact .head {
+  padding: 0 var(--s4) var(--s3);
+}
+
+.compact .head > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--s3);
+}
+
+.compact .head p {
+  margin: 0;
+}
+
+.compact .head h2 {
+  font-size: 24px;
+}
+
+/* The command strip below already names each signal. */
+.compact .decoderHow,
+.compact .earlierSignal {
+  display: none;
+}
+
+.compact .earlierRow {
+  grid-template-columns: 12px auto minmax(0, 1fr);
+}
+
+.compact .earlierAgo {
+  text-align: right;
+}
+
+.compact .lastMeta {
+  font-size: var(--text-meta);
+}
+
+/* The reply itself (SaidAloud's first line), a size down. */
+.compact .aloud > div > div > p:first-child {
+  font-size: 22px;
+}
+
+.compact .side {
+  gap: var(--s3);
+  padding: 0 var(--s4) var(--s3);
+}
+
+.compact .strip {
+  padding: var(--s2) var(--s4);
+}
+
+.compact .lastWord {
+  font-size: 32px;
+}
+
+.compact .cardText {
+  font-size: 22px;
+}
+
+.compact .agent {
+  font-size: var(--text);
+}
+
+.compact .decoder,
+.compact .card {
+  padding: var(--s3) var(--s3) var(--s3) var(--s4);
+}
+
+.stacked .head,
+.stacked .side,
+.stacked .strip {
+  padding-left: 0;
+  padding-right: 0;
+  border: none;
+}
+
+.stacked .head h2 {
+  font-size: var(--text-lead);
+}
+
+.stacked .cardText {
+  font-size: 22px;
+}

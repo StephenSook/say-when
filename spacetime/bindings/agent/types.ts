@@ -848,6 +848,28 @@ export const Role = __t.enum("Role", {
 });
 export type Role = __Infer<typeof Role>;
 
+export const SandboxMeter = __t.object("SandboxMeter", {
+  key: __t.string(),
+  windowStartedAt: __t.timestamp(),
+  count: __t.u32(),
+});
+export type SandboxMeter = __Infer<typeof SandboxMeter>;
+
+export const SandboxSettings = __t.object("SandboxSettings", {
+  id: __t.u8(),
+  on: __t.bool(),
+  questionsPerTry: __t.u32(),
+  triesPerHour: __t.u32(),
+  questionsPerDay: __t.u32(),
+  pairingsPerHour: __t.u32(),
+  tokensPerDevicePerHour: __t.u32(),
+  tokensPerHour: __t.u32(),
+  maxTryMs: __t.u32(),
+  staleTryMs: __t.u32(),
+  updatedAt: __t.timestamp(),
+});
+export type SandboxSettings = __Infer<typeof SandboxSettings>;
+
 // The tagged union or sum type for the algebraic type `ScanMode`.
 export const ScanMode = __t.enum("ScanMode", {
   Answer: __t.unit(),

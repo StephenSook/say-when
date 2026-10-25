@@ -181,7 +181,7 @@ describe('the D11 command map', () => {
       'YES, imagined right fist',
       'NO, imagined left fist',
       'CONFIRM, double jaw clench',
-      'STOP, long jaw clench',
+      'STOP, single jaw clench',
     ]);
     assert.equal(commandWord('HEADSET_OFF', 'headset'), 'Headset off');
     assert.equal(commandWord('CONFIRM', 'headset'), 'CONFIRM');

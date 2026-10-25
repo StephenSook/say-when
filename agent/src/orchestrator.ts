@@ -18,6 +18,7 @@ import type { Logger } from './log.js';
 import { StaleAttemptError } from './pipeline.js';
 import { PlannerError } from './planner/types.js';
 import { JobAbortedError } from './retrieval.js';
+import type { Admission } from './sandbox.js';
 import type { AgentQueueRow, JobKind } from './types.js';
 
 export interface OrchestratorOptions {
@@ -25,6 +26,11 @@ export interface OrchestratorOptions {
     maxJobs?: number;
     /** How long an aborted job may take to stop before its slot is released. Default 5 s. */
     abortGraceMs?: number;
+    /**
+     * The judge try sandbox's caps (src/sandbox.ts): asked once per claimed job, before it runs. A refused job is
+     * failed with the code and sentence it gives, and nothing is spent on it. Absent: every job runs.
+     */
+    admit?: (row: AgentQueueRow) => Admission;
 }
 
 interface Running {
@@ -66,6 +72,7 @@ export class Orchestrator {
     private readonly work = new Set<Promise<void>>();
     private readonly maxJobs: number;
     private readonly abortGraceMs: number;
+    private readonly admit: ((row: AgentQueueRow) => Admission) | null;
     private stopping = false;
     private ticking = false;
     private again = false;
@@ -83,6 +90,7 @@ export class Orchestrator {
         this.calls = runners.calls;
         this.maxJobs = Math.max(1, options.maxJobs ?? 3);
         this.abortGraceMs = Math.max(0, options.abortGraceMs ?? 5_000);
+        this.admit = options.admit ?? null;
         // A runner whose claim never reached the module asks for another look at the views.
         this.errands.setWake(() => this.tick());
         this.calls.setWake(() => this.tick());
@@ -250,6 +258,19 @@ export class Orchestrator {
         }
         if (this.stopping && row.kind !== 'errand_preview') job.abort.abort();
         log.info('job claimed', { job: row.jobId, kind: row.kind, attempt: job.attempt });
+        const admission = this.admit?.(row);
+        if (admission && !admission.ok) {
+            // Past a sandbox cap: nothing is spent, and the module shows the code on the board.
+            log.info('job refused by the try caps', { job: row.jobId, why: admission.why });
+            const outcome = await callReducer(
+                db,
+                'agentFail',
+                { jobId: row.jobId, attempt: job.attempt, reasonCode: admission.reasonCode, reason: admission.reason },
+                { onUnknown: 'repeat' },
+            );
+            if (!outcome.ok && outcome.kind !== 'stale') log.error('agent_fail was not recorded; the lease will requeue the job', { job: row.jobId, why: outcome.kind });
+            return;
+        }
         try {
             switch (row.kind) {
                 case 'options':

@@ -573,7 +573,7 @@ listen({
 ```
 
    `listen` starts the mic before the socket opens and holds up to about 5 s of audio until it does (**checked**: `MAX_PENDING_CHUNKS = 50` of 100 ms). With `endOn: 'release'`, turn ends do not stop the session; turns are joined with spaces (**checked**). No turn profile is set, so the server default applies.
-2. **Release:** `session.release()`, then `partner_listening(requestId, false)`. `done` resolves after the last events (at most 3 s of drain, 5 s release deadline; **checked** defaults).
+2. **Release:** `session.release()`, then `partner_listening(requestId, false)`. `done` resolves after the last events (at most 5 s of drain, 5 s release deadline; **checked** defaults). The drain was 3 s until Oct 24, when a live test caught a slow Ink-2 final transcript 3.5 s after the close command and the question was cut to "What should we have for" (**measured**).
 3. **Result:**
 
 | `done` result | Phone |
@@ -878,7 +878,7 @@ Three tracks run in parallel after a short shared start. All files are in `web/`
 | O3 | Result of Chrome test 5.1 on the EEG laptop | where the station is served (deployed https or `http://localhost:3000`) | first person with the laptop |
 | O4 | Approve the input labeling: session labels `<mode>-<purpose>` and W1 on the dashboards, and whether R1 lands before the Sat 8 PM schema freeze | showing any keyboard or switch session to judges | Stephen |
 | O5 | Closed Oct 24: Vercel project `neurolingo-web`, root `web/`, production alias `neurolingo-web.vercel.app`, reading `say-when-demo` | the deployed station, speaker and partner asking | Stephen |
-| O6 | Which device is the speaker: a laptop with a loudspeaker, or a phone (5.6) | B2 testing | Leon or Stephen |
+| O6 | Which device is the speaker: a laptop with a loudspeaker, or a phone (5.6) | B2 testing | Stephen |
 | O7 | Household names for Ink-2 keyterms need a private route; v1 ships none | name accuracy only | Stephen |
 | O8 | Confirm that the paired partner phone keeps following the room toggle (no words with sharing off), as designed in 4.4 | B3 details | Stephen |
 | O9 | The Cartesia plan: Free allows 2 TTS contexts and about 20,000 credits a month (`cartesia/README.md`); rehearsals plus the demo may need more | rehearsal count | Stephen |

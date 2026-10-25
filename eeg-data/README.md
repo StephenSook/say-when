@@ -107,7 +107,18 @@ One JSON object per line, in the shape PLAN.md agrees with the station page:
 {"type": "health", "decoderHealthy": true}
 ```
 
-`command` is YES, NO, CONFIRM, STOP or HEADSET_OFF. `source` is imagery, jaw or watchdog. A health message goes out every 250 ms. `--log file.jsonl` also appends to a file. Sending these over `ws://127.0.0.1:8765` to the station is not wired yet.
+`command` is YES, NO, CONFIRM, STOP or HEADSET_OFF. `source` is imagery, jaw or watchdog. A health message goes out about every 200 ms. `--log file.jsonl` also appends to a file.
+
+`live.py` also serves two local WebSocket channels, both on 127.0.0.1 only and only to the web app's origins (`localhost:3000` and the Vercel site, plus any `--allow-origin`):
+
+| Channel | For | What |
+|---|---|---|
+| `ws://127.0.0.1:8765` | the station page and `/quiz` | the gesture and health messages above, plus an `eeg` frame about 10 times a second (model bars, jaw level) that the station ignores |
+| `ws://127.0.0.1:8766` | Screen 1, `/brain` | the viz protocol in [tools/VIZ_PROTOCOL.md](../tools/VIZ_PROTOCOL.md): the decoder's own six filter-bank bands at C3 and C4 as ERD against a display-only baseline, the spectrum, contact and a marker per command. It passes `tools/check_viz_bridge.py --expect-source live`. Its own thread and server, so it cannot hold up 8765; a baseline asked for by the page never changes the decoder. |
+
+`python live.py --demo` sends a fake signal on both channels without a headset; on 8766 it says `source: "synthetic"`, so `/brain` shows its synthetic badge. `--no-serve` and `--no-viz` turn the channels off.
+
+To use the web pages on the EEG laptop: run `live.py`, then `npm run dev` in `web/` and open `http://localhost:3000/brain` (live brain) or `http://localhost:3000/quiz` (true or false practice: TRUE = right fist, FALSE = left fist).
 
 ## Layout
 

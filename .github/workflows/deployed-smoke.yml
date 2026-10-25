@@ -1,0 +1,46 @@
+name: deployed-smoke
+
+# Checks the DEPLOYED site, not the code: every page answers 200 with an Eleven title and no page or console error,
+# the sample replay renders, the judge page shows its lists and stats, and the public stats route answers JSON.
+# Read only: it never writes to the database (scripts/deployed-smoke.mjs says how).
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: Site to check
+        required: false
+        default: https://eleven-calhacks.vercel.app
+  schedule:
+    # Hourly, at an offset minute: GitHub delays schedules that start on the hour the most.
+    - cron: '17 * * * *'
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Deployed site smoke test (pages, titles, no errors, stats route)
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    defaults:
+      run:
+        working-directory: scripts
+    env:
+      DEPLOYED_URL: ${{ inputs.url || 'https://eleven-calhacks.vercel.app' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: scripts/package-lock.json
+      - run: npm ci
+      # Only the headless shell, and no --with-deps: the runner image already carries the libraries Chrome needs, and
+      # on Oct 24 the apt step behind --with-deps took minutes per font package and ran a run into its time limit.
+      # If a library goes missing, the launch fails and the run says so.
+      - name: Install the Chromium headless shell that matches playwright 1.64.0
+        run: npx playwright install --only-shell chromium
+      - name: Smoke test the deployed site
+        run: npm run smoke

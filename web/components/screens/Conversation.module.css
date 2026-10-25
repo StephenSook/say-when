@@ -45,6 +45,13 @@
   white-space: nowrap;
 }
 
+/* A 720 px projector: half the page's top padding goes, so the reply said out loud shows under the options. */
+@media (min-width: 721px) and (max-height: 760px) {
+  .root {
+    margin-top: calc(-1 * var(--s4));
+  }
+}
+
 @media (max-width: 720px) {
   .foot {
     flex-direction: column;

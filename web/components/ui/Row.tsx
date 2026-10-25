@@ -29,6 +29,8 @@ export interface RowProps {
   sideMeta?: ReactNode;
   /** The current row: active fill plus a 3 px accent bar on the left. Pair it with a word on screen. */
   current?: boolean;
+  /** With `current`: the row is the person's pick, so the bar on the left is the pick green. */
+  pick?: boolean;
   /** Grow in from zero height and fade over 240 ms. Use for rows that arrive live. */
   enter?: boolean;
   /** Makes the whole row a button. */
@@ -39,7 +41,7 @@ export interface RowProps {
 }
 
 /** One row: a main line over a muted meta line, numbers in tabular figures (docs/ui.md "Row"). */
-export function Row({ main, meta, side, sideMeta, current = false, enter = false, onSelect, title, className }: RowProps) {
+export function Row({ main, meta, side, sideMeta, current = false, pick = false, enter = false, onSelect, title, className }: RowProps) {
   const body = (
     <span className={styles.grid}>
       <span className={styles.main}>{main}</span>
@@ -49,7 +51,7 @@ export function Row({ main, meta, side, sideMeta, current = false, enter = false
     </span>
   );
   return (
-    <li className={cx(styles.row, current && styles.current, enter && styles.enter, className)} title={title}>
+    <li className={cx(styles.row, current && styles.current, current && pick && styles.pick, enter && styles.enter, className)} title={title}>
       <span className={styles.clip}>
         {onSelect ? (
           <button type="button" className={styles.button} onClick={onSelect} aria-current={current ? 'true' : undefined}>

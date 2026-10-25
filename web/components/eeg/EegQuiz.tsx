@@ -5,7 +5,6 @@ import { cx } from '@/lib/cx';
 import { EEG_PORT, parseLiveFrame, type EegFrame } from '@/lib/eeg/live';
 import { idleQuiz, onCommand, pickQuestions, score, secondsLeft, startQuiz, tick, type QuizState } from '@/lib/eeg/quiz';
 import { DECODER_RETRY_MS, HEALTH_FRESH_MS, decoderUrl } from '@/lib/station/decoder';
-import { BrainMap, DEFAULT_CHANNELS } from './BrainMap';
 import styles from './EegQuiz.module.css';
 
 type Link = 'connecting' | 'open' | 'closed';
@@ -17,7 +16,8 @@ const BARS: { key: string; label: string }[] = [
 ];
 
 /**
- * /eeg: the headset decoder's live signal and a true or false practice quiz, on the EEG laptop.
+ * /quiz: a true or false practice quiz on the EEG laptop, with the decoder's live left, right and rest bars.
+ * The live brain is Screen 1 at /brain.
  * It talks only to the local decoder (ws://127.0.0.1:8765, eeg-data/live.py) and nothing else: no module,
  * no agent. TRUE is YES (imagine the right fist), FALSE is NO (the left fist).
  */
@@ -102,12 +102,8 @@ export function EegQuiz() {
 
       <div className={styles.grid}>
         <section className={styles.card} aria-label="Signal">
-          <BrainMap channels={frame?.channels ?? DEFAULT_CHANNELS} activeHand={frame?.activeHand ?? null} live={live} />
           <p className={styles.caption}>
-            Blue: power below your resting level, that area is working. Imagining the right fist should turn the left side blue.
-          </p>
-          <p className={styles.handLine}>
-            {live && frame.activeHand ? `${frame.activeHand === 'right' ? 'Right' : 'Left'} hand area active` : ' '}
+            What the decoder reads right now. The full live brain is on <a href="/brain">/brain</a>.
           </p>
           <div className={styles.bars}>
             {BARS.map((b) => {
@@ -130,11 +126,6 @@ export function EegQuiz() {
               <span className={styles.barValue}>{Math.round(frame?.jaw ?? 0)}x</span>
             </div>
           </div>
-          {live ? (
-            <p className={styles.meta}>
-              Left side {Math.round(frame.hemispheres.left)}%, right side {Math.round(frame.hemispheres.right)}%
-            </p>
-          ) : null}
         </section>
 
         <section className={styles.card} aria-label="True or false quiz">

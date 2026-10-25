@@ -11,11 +11,13 @@ import type { CallRequest } from '@say-when/cartesia/server';
 import { LIMITS } from './contract.js';
 import type { AgentDb } from './db/db.js';
 import { callReducer } from './db/retry.js';
+import { classifyYesNo, stockYesNo } from './fastpath.js';
 import type { Logger } from './log.js';
 import { applyOrder, buildOptions, looksYesNo, memoryFirstOptions } from './options.js';
 import { JobEvents, label, StaleAttemptError } from './pipeline.js';
-import { PlannerError, type ConversationTurn, type PlanInput, type PlannerPort, type PlanResult } from './planner/types.js';
+import { PlannerError, type ConversationTurn, type MemoryContext, type PlanInput, type PlannerPort, type PlanResult, type WebContext } from './planner/types.js';
 import type { DialerPort, ErrandPort, MemoryPort } from './ports.js';
+import type { ConsentMark, MemoryWatch } from './requests.js';
 import { withDeadline } from './deadline.js';
 import { JobAbortedError, memoryContext, mossDeadline, recallMemory, retrieveStep, searchStep, type RetrievalDeps } from './retrieval.js';
 import type { AgentQueueRow, AllowedForm, CallContact, OptionInput } from './types.js';
@@ -56,6 +58,11 @@ export interface PreviewRecord {
     fieldsJson: string;
     /** False when the attach's reply was lost, so it is not known whether this preview is the one on the errand. */
     certain: boolean;
+    /**
+     * Memory consent taken right before the preview was attached, so before the CONFIRM. A past request is kept only if
+     * it held without a break from here to the write (src/requests.ts MemoryWatch). Null or unset: no note.
+     */
+    memory?: ConsentMark | null;
 }
 
 /** The previews this sidecar attached, by errand id. The submit gate (src/errands.ts) reads it. */
@@ -95,6 +102,8 @@ export interface JobDeps {
     maxOptions: number;
     /** Mark written-back replies shareable (AGENT_MEMORY_SHAREABLE): only if the person agreed. */
     memoryShareable: boolean;
+    /** Memory consent marks for past requests (src/requests.ts). Unset: previews carry no mark, so no note is kept. */
+    memoryWatch?: MemoryWatch;
     /** Wall clock, epoch ms. */
     now: () => number;
     /** Monotonic clock for durations. */
@@ -103,6 +112,16 @@ export interface JobDeps {
     requestId: () => string;
     /** How often an open step renews the job lease (src/pipeline.ts). Default LEASE_HEARTBEAT_MS. */
     leaseHeartbeatMs?: number;
+    /**
+     * The yes or no fast path (AGENT_YES_NO_FAST, on by default in the config): a clear yes or no question gets the
+     * stock Yes and No at once instead of a plan (src/fastpath.ts). Off when unset.
+     */
+    yesNoFast?: boolean;
+    /**
+     * Draft first (AGENT_DRAFT_FIRST, off by default in the config): when a question will be searched, Claude's options
+     * from memory alone are published while the search runs, and the options with web results follow. Off when unset.
+     */
+    draftFirst?: boolean;
 }
 
 /**
@@ -225,6 +244,9 @@ export async function runOptionsJob(row: AgentQueueRow, attempt: number, deps: J
     // Consent as the module shows it at each use: revoking it clears the job's flags while the job runs.
     const allowMemory = () => memoryConsent(deps, row, attempt);
     const allowWeb = () => consentNow(deps, row, attempt).webSearchAllowed;
+    // A call option about the recent errand is possible: only the normal plan sees the contacts and that errand, so
+    // neither stock options nor a final draft may answer the question.
+    const callPossible = () => !!deps.dialer && deps.contacts.length > 0 && recentErrand(row, deps.now()) !== null;
     // The turns with this partner before this question (the question itself goes to the planner on its own). The
     // conversation is kept, and sent, only under memory consent; once the module shows it withdrawn, what was kept is
     // forgotten (memoryConsent), at whichever check sees it first.
@@ -233,18 +255,46 @@ export async function runOptionsJob(row: AgentQueueRow, attempt: number, deps: J
     // Set once the question's rows may be in the Moss web index, so they are forgotten whatever happens next.
     let mayBeIndexed = false;
     try {
+        // 0. The yes or no fast path (src/fastpath.ts): a clear yes or no question gets the stock Yes and No at once,
+        // final, with no memory, search or Claude. The person hears "Yes or no?" and the picked word is said aloud.
+        if (!isMenu && deps.yesNoFast) {
+            const verdict = classifyYesNo(row.questionText);
+            const fast = verdict.yesNo && !callPossible();
+            const why = verdict.yesNo && !fast ? 'call_possible' : verdict.reason;
+            deps.log.info(fast ? 'yes or no fast path: stock options' : 'yes or no fast path not taken', { job: row.jobId, why });
+            if (fast) {
+                const options = stockYesNo();
+                // Written before the publish: a final publish ends the job, and the module refuses events after it.
+                await events.instant('plan', 'ok', 'yes no stock', 0, { counts: { optionCount: options.length, yesNo: true, final: true } });
+                await publish(deps.db, job, 'yes_no', options, true);
+                deps.log.info('options published', { job: row.jobId, options: options.length, mode: 'yes_no', ms: 0 });
+                return;
+            }
+        }
+
         // 1. Memory first.
-        const recall = await recallMemory(deps.retrieval, events, row, signal, allowMemory);
+        // With the newest past request of each allowed form (src/requests.ts), so the same form can be filled again.
+        const recall = await recallMemory(
+            deps.retrieval,
+            events,
+            row,
+            signal,
+            allowMemory,
+            deps.forms,
+        );
         if (signal.aborted) throw new JobAbortedError();
 
-        // 2 and 3. Decide (D8), then search while the memory-first options are read. Menu turns never search.
+        // 2 and 3. Decide (D8), then search while the memory-first options (or the draft) are read. Menu turns never
+        // search. `stopSearch` ends a search whose result can no longer be used (a yes or no draft went final).
         const check = isMenu ? null : deps.retrieval.classify(row.questionText);
+        const stopSearch = new AbortController();
         const searching = check
-            ? searchStep(deps.retrieval, events, row, check, signal, allowWeb)
+            ? searchStep(deps.retrieval, events, row, check, signal, allowWeb, stopSearch.signal)
             : Promise.resolve({ status: 'none' as const, rows: [], kind: null });
         // Settle the search promise's rejection now, so it cannot go unhandled while the early publish runs.
         searching.catch(() => undefined);
         const willSearch = !!check && check.needsWeb && row.webSearchAllowed && allowWeb() && deps.retrieval.search !== null;
+        let earlyPublished = false;
         if (willSearch && recall && allowMemory() && !looksYesNo(row.questionText)) {
             const early = memoryFirstOptions(recall, deps.maxOptions);
             if (early) {
@@ -253,6 +303,7 @@ export async function runOptionsJob(row: AgentQueueRow, attempt: number, deps: J
                     // Checked again after the step started, and before every try: options drawn from memory need
                     // memory consent.
                     await publish(deps.db, job, 'pick', early, false, allowMemory);
+                    earlyPublished = true;
                     await step.ok('memory first', { counts: { optionCount: early.length, final: false } });
                 } catch (error) {
                     if (!(error instanceof PublishRefusedError) && !(error instanceof ConsentWithdrawnError)) throw error;
@@ -261,6 +312,66 @@ export async function runOptionsJob(row: AgentQueueRow, attempt: number, deps: J
                 }
             }
         }
+
+        const plans: PlanContext = { deps, row, events, signal, allowMemory, allowWeb };
+        const planInput = (memory: MemoryContext[], web: WebContext[], search: PlanInput['search'], recent: RecentErrand | null, nowMs: number): PlanInput => {
+            const consent = consentNow(deps, row, attempt);
+            return {
+                question: row.questionText,
+                origin: row.origin,
+                menuItem: row.menuItem,
+                history: consent.memoryAllowed ? history : [],
+                memory,
+                web,
+                forms: deps.forms,
+                contacts: recent && deps.dialer ? deps.contacts : [],
+                recentErrand: recent,
+                search,
+                maxOptions: deps.maxOptions,
+                nowMs,
+                timeZone: deps.timeZone,
+                consent: () => ({ memory: allowMemory(), web: allowWeb() }),
+            };
+        };
+
+        // Draft first (AGENT_DRAFT_FIRST): while the search runs, Claude writes options from memory and the
+        // conversation only, and they are published as a first version (final = false). The module scans the newest
+        // version: a version published while the person hears options waits for the end of that pass (pending_version)
+        // and is switched in with the `more_options` chime, so options never change during a read, and a pick names an
+        // option of the version being read. Only when nothing was published yet (memory-first options are a head
+        // start of their own). No calls in a draft: a call option makes the Dialer prepare a request.
+        let draft: Planned | null = null;
+        if (deps.draftFirst && willSearch && !earlyPublished) {
+            try {
+                const consent = consentNow(deps, row, attempt);
+                const memory = consent.memoryAllowed ? memoryContext(recall) : [];
+                const drafted = await planOptions(plans, planInput(memory, [], 'pending', null, deps.now()), memory, [], null, 'claude draft');
+                if (!drafted.stillAllowed()) throw new ConsentWithdrawnError();
+                if (drafted.plan.answerMode === 'yes_no' && callPossible()) {
+                    // A final yes or no draft would end the job before the normal plan could offer the call, and an
+                    // open one would start the prompt over when the final version comes, so it is not published.
+                    deps.log.info('yes or no draft not used: a call about the recent errand is possible', { job: row.jobId });
+                } else if (drafted.plan.answerMode === 'yes_no') {
+                    // In yes_no mode the person hears only "Yes or no?", so a later version would change nothing they
+                    // hear and would only start the prompt over. The draft is final and the search is stopped.
+                    stopSearch.abort();
+                    await searching.catch(() => undefined);
+                    await publish(deps.db, job, 'yes_no', drafted.options, true, drafted.stillAllowed);
+                    deps.log.info('options published', { job: row.jobId, options: drafted.options.length, mode: 'yes_no', ms: drafted.plan.ms, draft: true });
+                    return;
+                } else {
+                    await publish(deps.db, job, 'pick', drafted.options, false, drafted.stillAllowed);
+                    draft = drafted;
+                    deps.log.info('draft options published; the search goes on', { job: row.jobId, options: drafted.options.length, ms: drafted.plan.ms });
+                }
+            } catch (error) {
+                if (signal.aborted || error instanceof JobAbortedError) throw new JobAbortedError();
+                if (!(error instanceof PlannerError) && !(error instanceof PublishRefusedError) && !(error instanceof ConsentWithdrawnError)) throw error;
+                // The draft is a head start; the final options still come.
+                deps.log.warn('no draft options; the options come after the search', { job: row.jobId, why: error.name });
+            }
+        }
+
         const search = await searching;
         if (signal.aborted) throw new JobAbortedError();
 
@@ -277,75 +388,35 @@ export async function runOptionsJob(row: AgentQueueRow, attempt: number, deps: J
         const memory = consent.memoryAllowed ? memoryContext(recall) : [];
         const web = consent.webSearchAllowed ? retrieved.web : [];
         const searchStatus = consent.webSearchAllowed || search.status === 'not_needed' || search.status === 'none' ? search.status : 'not_allowed';
-        const input: PlanInput = {
-            question: row.questionText,
-            origin: row.origin,
-            menuItem: row.menuItem,
-            history: consent.memoryAllowed ? history : [],
-            memory,
-            web,
-            forms: deps.forms,
-            contacts: recent && deps.dialer ? deps.contacts : [],
-            recentErrand: recent,
-            search: searchStatus,
-            maxOptions: deps.maxOptions,
-            nowMs,
-            timeZone: deps.timeZone,
-            consent: () => ({ memory: allowMemory(), web: allowWeb() }),
-        };
+
+        // A draft is being read and the search brought nothing to add: the draft's options become the final
+        // version as they are, instead of a second plan that could only reword them. Not when a recent errand is on
+        // the row: the draft never saw it or the contacts, so only the normal plan can offer a call about it.
+        if (draft && web.length === 0 && !recent && draft.stillAllowed()) {
+            try {
+                await events.instant('plan', 'ok', 'draft kept', 0, { counts: { optionCount: draft.options.length, final: true } });
+                await publish(deps.db, job, draft.plan.answerMode, draft.options, true, draft.stillAllowed);
+                deps.log.info('options published', { job: row.jobId, options: draft.options.length, mode: draft.plan.answerMode, ms: 0, draft: true });
+                return;
+            } catch (error) {
+                if (!(error instanceof ConsentWithdrawnError)) throw error;
+                deps.log.info('a consent was withdrawn while the options were made; writing them again without it', { job: row.jobId });
+            }
+        }
+
+        const input = planInput(memory, web, searchStatus, recent, nowMs);
         // 5 to 7. Plan, options, publish. The consent a plan relied on (memory, the conversation, web passages) is
         // read again after every wait and before every publish try. When it was withdrawn on the way, the plan is
         // written again without it (the planner drops it from the new request). Consent is never given back to a
         // running job and there are two kinds, so three rounds are the most this takes.
         for (let round = 1; ; round++) {
-            const step = await events.begin('plan', 'claude');
-            let plan: PlanResult;
-            try {
-                plan = await deps.planner.plan(input, signal);
-            } catch (error) {
-                if (signal.aborted) throw new JobAbortedError();
-                await step.error(plannerLabel(error), { counts: error instanceof PlannerError ? { problems: error.problems.length } : undefined });
-                throw error;
-            }
-            let rankedByMemory = false;
-            const stillAllowed = () => !((plan.sentMemory || rankedByMemory) && !allowMemory()) && !(plan.sentWeb && !allowWeb());
-
-            // 6. Options: call options are prepared by the Dialer now, so the read-back and digest exist at the pick.
-            const built = buildOptions(plan, plan.sentMemory ? memory : [], plan.sentWeb ? web : [], (contact) => prepareCall(deps, contact, recent));
-            let options = built.options;
-            if (stillAllowed() && plan.answerMode === 'pick' && allowMemory() && deps.retrieval.memory?.isOpen()) {
-                try {
-                    const ranking = deps.retrieval.memory.rank(row.askedBy, built.candidates);
-                    const ordering = await withDeadline(ranking, mossDeadline(deps.retrieval, 'rank'), 'memory rank', signal);
-                    // Memory decides the order only if its consent still holds now that the ranking is back.
-                    if (allowMemory()) {
-                        options = applyOrder(options, ordering.withMemory.map((option) => option.id));
-                        rankedByMemory = true;
-                    }
-                } catch (error) {
-                    if (signal.aborted || error instanceof JobAbortedError) throw new JobAbortedError();
-                    deps.log.warn('memory ranking failed; keeping the planner order', { job: row.jobId });
-                }
-            }
-            await step.ok('claude', {
-                counts: {
-                    optionCount: options.length,
-                    yesNo: plan.answerMode === 'yes_no',
-                    attempts: plan.attempts,
-                    claudeMs: plan.ms,
-                    inputTokens: plan.inputTokens,
-                    outputTokens: plan.outputTokens,
-                    cacheReadTokens: plan.cacheReadTokens,
-                    fallbackUsed: plan.fallbackUsed,
-                    droppedCalls: built.droppedCalls,
-                },
-            });
+            const planned = await planOptions(plans, input, memory, web, recent, 'claude');
 
             // 7. Publish, unless a consent the options rely on went away during the waits above (or during a retry).
             try {
-                if (!stillAllowed()) throw new ConsentWithdrawnError();
-                await publish(deps.db, job, plan.answerMode, options, true, stillAllowed);
-                deps.log.info('options published', { job: row.jobId, options: options.length, mode: plan.answerMode, ms: plan.ms });
+                if (!planned.stillAllowed()) throw new ConsentWithdrawnError();
+                await publish(deps.db, job, planned.plan.answerMode, planned.options, true, planned.stillAllowed);
+                deps.log.info('options published', { job: row.jobId, options: planned.options.length, mode: planned.plan.answerMode, ms: planned.plan.ms });
                 break;
             } catch (error) {
                 if (!(error instanceof ConsentWithdrawnError)) throw error;
@@ -365,7 +436,85 @@ export async function runOptionsJob(row: AgentQueueRow, attempt: number, deps: J
     }
 }
 
-function prepareCall(deps: JobDeps, contact: CallContact, recent: { title: string; sentAtMs: number } | null) {
+interface PlanContext {
+    deps: JobDeps;
+    row: AgentQueueRow;
+    events: JobEvents;
+    signal: AbortSignal;
+    allowMemory: () => boolean;
+    allowWeb: () => boolean;
+}
+
+type RecentErrand = { title: string; sentAtMs: number };
+
+/** A plan turned into options, ready to publish. */
+interface Planned {
+    plan: PlanResult;
+    options: OptionInput[];
+    /** False once a consent the options rely on (memory, the conversation, web passages, the ranking) is withdrawn. */
+    stillAllowed: () => boolean;
+}
+
+/**
+ * Steps 5 and 6: one plan step (`claude`, or `claude draft` for a draft): the planner call with its own retry, the
+ * options built from the plan, and their order by memory affinity while memory consent holds.
+ */
+async function planOptions(
+    ctx: PlanContext,
+    input: PlanInput,
+    memory: readonly MemoryContext[],
+    web: readonly WebContext[],
+    recent: RecentErrand | null,
+    detail: 'claude' | 'claude draft',
+): Promise<Planned> {
+    const { deps, row, events, signal, allowMemory, allowWeb } = ctx;
+    const step = await events.begin('plan', detail);
+    let plan: PlanResult;
+    try {
+        plan = await deps.planner.plan(input, signal);
+    } catch (error) {
+        if (signal.aborted) throw new JobAbortedError();
+        await step.error(plannerLabel(error), { counts: error instanceof PlannerError ? { problems: error.problems.length } : undefined });
+        throw error;
+    }
+    let rankedByMemory = false;
+    const stillAllowed = () => !((plan.sentMemory || rankedByMemory) && !allowMemory()) && !(plan.sentWeb && !allowWeb());
+
+    // 6. Options: call options are prepared by the Dialer now, so the read-back and digest exist at the pick.
+    const built = buildOptions(plan, plan.sentMemory ? memory : [], plan.sentWeb ? web : [], (contact) => prepareCall(deps, contact, recent));
+    let options = built.options;
+    if (stillAllowed() && plan.answerMode === 'pick' && allowMemory() && deps.retrieval.memory?.isOpen()) {
+        try {
+            const ranking = deps.retrieval.memory.rank(row.askedBy, built.candidates);
+            const ordering = await withDeadline(ranking, mossDeadline(deps.retrieval, 'rank'), 'memory rank', signal);
+            // Memory decides the order only if its consent still holds now that the ranking is back.
+            if (allowMemory()) {
+                options = applyOrder(options, ordering.withMemory.map((option) => option.id));
+                rankedByMemory = true;
+            }
+        } catch (error) {
+            if (signal.aborted || error instanceof JobAbortedError) throw new JobAbortedError();
+            deps.log.warn('memory ranking failed; keeping the planner order', { job: row.jobId });
+        }
+    }
+    await step.ok(detail, {
+        counts: {
+            optionCount: options.length,
+            yesNo: plan.answerMode === 'yes_no',
+            attempts: plan.attempts,
+            claudeMs: plan.ms,
+            inputTokens: plan.inputTokens,
+            outputTokens: plan.outputTokens,
+            cacheReadTokens: plan.cacheReadTokens,
+            fallbackUsed: plan.fallbackUsed,
+            droppedCalls: built.droppedCalls,
+            ...(detail === 'claude draft' ? { draft: true } : {}),
+        },
+    });
+    return { plan, options, stillAllowed };
+}
+
+function prepareCall(deps: JobDeps, contact: CallContact, recent: RecentErrand | null) {
     if (!deps.dialer || !recent) return null;
     const request: CallRequest = { requestId: deps.requestId(), contactId: contact.contactId, errand: { title: recent.title, sentAt: recent.sentAtMs } };
     const prepared = deps.dialer.prepare(request);
@@ -497,6 +646,8 @@ async function previewJob(row: AgentQueueRow, attempt: number, deps: JobDeps, si
             return;
         }
         const readBackJson = JSON.stringify(result.readBack);
+        // Before the attach: once the errand shows previewed, the read-back and the CONFIRM can follow at any time.
+        const memory = deps.memoryWatch?.mark() ?? null;
         await step.ok('preview previewed', {
             counts: { readBack: result.readBack.length, unmatched: result.unmatched.length, missingRequired: result.missingRequired.length, previewMs },
         });
@@ -511,7 +662,7 @@ async function previewJob(row: AgentQueueRow, attempt: number, deps: JobDeps, si
         });
         if (attached.attached) {
             // The submit gate checks the module's confirmed digest against this one.
-            deps.previews.record(row.errandId, { digest: result.previewDigest, formUrl: row.formUrl, fieldsJson: row.fieldsJson, certain: attached.certain });
+            deps.previews.record(row.errandId, { digest: result.previewDigest, formUrl: row.formUrl, fieldsJson: row.fieldsJson, certain: attached.certain, memory });
         }
         return;
     }

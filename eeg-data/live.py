@@ -24,12 +24,24 @@ from eeg import config, messages, store
 from eeg.engine import Engine
 from eeg.hands import HandConfig
 from eeg.server import ALLOWED_ORIGINS, DecoderServer, FrameMaker
+from eeg.viz import VizBridge
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def log(*a):
     print(*a, file=sys.stderr, flush=True)
+
+
+def _jaw_base(engine):
+    jaw = getattr(engine, "jaw", None)
+    return getattr(jaw, "baseline", None)
+
+
+def make_viz(args, fs: float, source: str):
+    if args.no_viz:
+        return None
+    return VizBridge(fs, source=source, origins=ALLOWED_ORIGINS + args.allow_origin, log=log).start()
 
 
 def headless(engine: Engine, out: messages.Output):
@@ -48,6 +60,8 @@ def headless(engine: Engine, out: messages.Output):
             for msg in up.commands:
                 out.send(msg)
             out.live(frames(up, engine.fs))
+            if out.viz:
+                out.viz.update(up.window, getattr(up, "raw", None), up.jaw_level, _jaw_base(engine))
     except KeyboardInterrupt:
         pass
     finally:
@@ -80,6 +94,8 @@ def windowed(engine: Engine, out: messages.Output, title: str):
 
     def on_update(up):
         out.live(frames(up, engine.fs))
+        if out.viz:
+            out.viz.update(up.window, getattr(up, "raw", None), up.jaw_level, _jaw_base(engine))
         for c, b in bars.items():
             b.set(up.smoothed.get(c, 0.0))
         jaw.set(min(up.jaw_level / config.JAW_RATIO, 1.0), f" ({up.jaw_level:.0f}x)")
@@ -112,6 +128,7 @@ def main():
     ap.add_argument("--no-jaw", action="store_true", help="imagery only")
     ap.add_argument("--log", help="also append every message to this .jsonl file")
     ap.add_argument("--no-serve", action="store_true", help="do not open ws://127.0.0.1:8765 for the web app")
+    ap.add_argument("--no-viz", action="store_true", help="do not open the /brain viz bridge on ws://127.0.0.1:8766")
     ap.add_argument("--allow-origin", action="append", default=[],
                     help="another web origin allowed to connect (default: localhost:3000 and the Vercel site)")
     ap.add_argument("--step", type=float, default=0.1, help="seconds between imagery predictions")
@@ -129,7 +146,8 @@ def main():
         from brain_view import DemoEngine
         server = None if args.no_serve else DecoderServer(origins=ALLOWED_ORIGINS + args.allow_origin, log=log).start()
         log("DEMO: fake signals cycling rest / left / rest / right / jaw clench, 5 s each")
-        return headless(DemoEngine(), messages.Output(args.log, server=server))
+        demo = DemoEngine()
+        return headless(demo, messages.Output(args.log, server=server, viz=make_viz(args, demo.fs, "synthetic")))
     try:
         model, meta, folder = store.load(args.models)
     except (FileNotFoundError, ValueError) as e:
@@ -142,7 +160,7 @@ def main():
     engine = Engine(model, meta, hand_cfg, step_s=args.step, port=args.port, board_id=args.board_id,
                     use_jaw=not args.no_jaw, jaw_only=args.jaw_only, log=log)
     server = None if args.no_serve else DecoderServer(origins=ALLOWED_ORIGINS + args.allow_origin, log=log).start()
-    out = messages.Output(args.log, server=server)
+    out = messages.Output(args.log, server=server, viz=make_viz(args, float(meta["fs"]), "live"))
     if args.window:
         windowed(engine, out, f"Headset decoder - model {meta['model_id']}")
     else:

@@ -1,0 +1,573 @@
+/*
+ * The Suggested replies tree. Sizes are canvas units: the camera holds the first round at about 1:1 on a
+ * 1920 x 1080 projector, so 29 px titles and 23 px lines stay at or above 20 px on screen.
+ *
+ * Color is for state only (docs/ui.md "Keep and skip"): lilac is running or done, amber waits for the person,
+ * red failed, and green is the pick, the one moment this screen is built around. Every state also has an icon
+ * and a word.
+ */
+
+/* The canvas and the phone list share these. */
+.flow,
+.stack {
+  --pick: #7be3a6; /* ours: the pick */
+  --pick-soft: rgba(123, 227, 166, 0.14);
+  --pick-glow: rgba(123, 227, 166, 0.22);
+  --edge-idle: rgba(255, 255, 255, 0.16);
+  --edge-done: rgba(255, 255, 255, 0.34);
+  --edge-dim: rgba(255, 255, 255, 0.08);
+  --card-line: rgba(255, 255, 255, 0.16);
+}
+
+.flow {
+  --xy-background-color: var(--bg);
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+}
+
+/* React Flow's attribution stays visible (MIT, its authors ask for it); only its colors follow the page. */
+.flow :global(.react-flow__attribution) {
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--text-meta);
+}
+
+.flow :global(.react-flow__attribution a) {
+  color: var(--fg-muted);
+}
+
+/* The canvas is a display, not an editor: no pointer affordances on nodes. */
+.flow :global(.react-flow__node) {
+  cursor: default;
+}
+
+.handle {
+  width: 1px !important;
+  height: 1px !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------------------------------------- */
+/* Regions: a soft field behind a job's hub and its slots. Depth from spacing, not from color. */
+
+.region {
+  width: 100%;
+  height: 100%;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* ------------------------------------------------------------------------------------------- */
+/* Cards */
+
+.card {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 18px;
+  overflow: hidden;
+  border-radius: 14px;
+  border: 2px solid var(--card-line);
+  background: var(--card);
+  color: var(--fg);
+  font-size: 23px;
+  line-height: 1.25;
+  transition:
+    border-color var(--dur-slow) ease,
+    background-color var(--dur-slow) ease,
+    opacity var(--dur-slow) ease,
+    box-shadow 500ms var(--ease-out),
+    transform 500ms var(--ease-out);
+}
+
+.kind_question {
+  padding: 14px 18px;
+}
+
+.kind_child,
+.kind_more {
+  gap: 0;
+  padding: 7px 16px;
+  border-width: 1px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.035);
+  line-height: 1.15;
+}
+
+.kind_more {
+  border-style: dashed;
+  background: transparent;
+}
+
+.kind_step,
+.kind_option {
+  padding: 12px 18px;
+}
+
+/* Card states. Idle is dashed: the step has no row yet. */
+.card_idle {
+  border-style: dashed;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.card_working {
+  border-color: var(--accent-line);
+}
+
+.card_done {
+  border-color: rgba(255, 255, 255, 0.24);
+}
+
+.card_waiting {
+  border-color: var(--wait);
+  background: linear-gradient(var(--wait-soft), var(--wait-soft)), var(--card);
+}
+
+.card_failed {
+  border-color: var(--error);
+}
+
+.card_stopped,
+.card_refused {
+  border-style: dashed;
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+/* Options */
+.option_reading {
+  border-color: var(--accent);
+  background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--card);
+}
+
+.option_dimmed {
+  opacity: 0.4;
+}
+
+/* The pick: it grows, turns green and lifts, the single motion this screen is built around. */
+.option_picked {
+  border-width: 3px;
+  border-color: var(--pick);
+  background: linear-gradient(var(--pick-soft), var(--pick-soft)), var(--card);
+  transform: scale(1.1);
+  transform-origin: left center;
+  box-shadow:
+    0 0 0 8px rgba(123, 227, 166, 0.08),
+    0 24px 72px var(--pick-glow);
+}
+
+.option_picked .optionText {
+  font-weight: var(--weight-strong);
+}
+
+/* New nodes grow out of their parent once, when their row arrives (never on page load). */
+.entering {
+  /* backwards, not both: once grown, the card's own state (a dimmed option) takes over again. */
+  animation: grow-in 340ms var(--ease-out) backwards;
+  animation-delay: var(--delay, 0ms);
+}
+
+@keyframes grow-in {
+  from {
+    opacity: 0;
+    translate: var(--dx, 0) var(--dy, 0);
+    scale: 0.6;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+    scale: 1;
+  }
+}
+
+/* ------------------------------------------------------------------------------------------- */
+/* Text */
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.eyebrow {
+  color: var(--fg-muted);
+  font-size: 23px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row .eyebrow {
+  flex: 1 1 auto;
+}
+
+.title {
+  font-size: 29px;
+  font-weight: var(--weight-strong);
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The drafting hubs have room for two lines ("Drafting follow-up options"). */
+.titleWrap {
+  white-space: normal;
+}
+
+.meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.toolTag {
+  flex: none;
+  margin-left: auto;
+  color: var(--fg-muted);
+  font-size: 23px;
+}
+
+.tool {
+  margin-top: auto;
+  color: var(--fg-muted);
+  font-size: 23px;
+}
+
+.muted {
+  color: var(--fg-muted);
+}
+
+.questionText {
+  font-size: 29px;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.childTitle {
+  font-size: 25px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.childMeta {
+  color: var(--fg-muted);
+  font-size: 23px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.optionText {
+  font-size: 29px;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.bottom {
+  margin-top: auto;
+}
+
+.source {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pickLine {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--pick);
+}
+
+.tag {
+  flex: none;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  color: var(--fg);
+  font-size: 23px;
+  line-height: 30px;
+}
+
+.stepTitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 29px;
+  font-weight: var(--weight-strong);
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stepMeta {
+  color: var(--fg-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.stepText {
+  font-size: 25px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ------------------------------------------------------------------------------------------- */
+/* Status badge: icon, word, color */
+
+.badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 23px;
+  white-space: nowrap;
+}
+
+.mark {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+}
+
+.clock {
+  color: var(--fg-muted);
+}
+
+.badge_idle .mark {
+  border: 2px dashed rgba(255, 255, 255, 0.36);
+}
+
+.badge_idle .word {
+  color: var(--fg-muted);
+}
+
+.badge_working .word {
+  color: var(--fg);
+}
+
+.badge_done .mark {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.badge_done .word {
+  color: var(--accent);
+}
+
+.badge_picked .mark {
+  background: var(--pick);
+  color: var(--bg);
+}
+
+.badge_picked .word {
+  color: var(--pick);
+  font-weight: var(--weight-strong);
+}
+
+.badge_waiting .mark {
+  background: var(--wait-soft);
+  color: var(--wait);
+}
+
+.badge_waiting .word {
+  color: var(--wait);
+}
+
+.badge_failed .mark {
+  background: var(--error-soft);
+  border: 2px solid var(--error);
+  color: var(--error);
+}
+
+.badge_failed .word {
+  color: var(--error);
+}
+
+.badge_stopped .mark,
+.badge_refused .mark {
+  border: 2px solid var(--fg-muted);
+  color: var(--fg-muted);
+}
+
+.badge_refused .mark {
+  border-color: transparent;
+}
+
+.badge_stopped .word,
+.badge_refused .word {
+  color: var(--fg-muted);
+}
+
+/* ------------------------------------------------------------------------------------------- */
+/* Edges: 3 to 5 px, since 1 px lines vanish on a projector. Idle is a dotted line: nothing has passed. */
+
+.edge {
+  fill: none;
+  stroke-width: 3;
+  stroke-linecap: round;
+  transition:
+    stroke var(--dur-slow) ease,
+    stroke-width var(--dur-slow) ease,
+    opacity var(--dur-slow) ease;
+}
+
+.edge_idle {
+  stroke: var(--edge-idle);
+  stroke-dasharray: 1 10;
+}
+
+.edge_done {
+  stroke: var(--edge-done);
+}
+
+.edge_dim {
+  stroke: var(--edge-dim);
+}
+
+.edge_picked {
+  stroke: var(--pick);
+  stroke-width: 5;
+}
+
+/* Only an edge whose next step is running now moves. */
+.edgeRunning {
+  stroke: var(--accent);
+  stroke-dasharray: 12 12;
+  animation: tree-dash 700ms linear infinite;
+}
+
+@keyframes tree-dash {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+
+/* One dot per real handoff, once. */
+.dot {
+  fill: var(--accent);
+}
+
+.dotPicked {
+  fill: var(--pick);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .edgeRunning {
+    animation: none;
+  }
+
+  .entering {
+    animation: none;
+  }
+
+  .card,
+  .edge {
+    transition: none;
+  }
+}
+
+/* ------------------------------------------------------------------------------------------- */
+/* The stacked view for a phone: the same cards in reading order, at the page's own sizes. */
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.stackGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s3);
+  border-radius: var(--radius-panel);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.stackChildren {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: 0 0 0 var(--s4);
+  margin: 0;
+  list-style: none;
+  border-left: 2px solid var(--line);
+}
+
+.stack .card {
+  height: auto;
+  font-size: var(--text);
+}
+
+.stack .title,
+.stack .questionText,
+.stack .optionText,
+.stack .stepTitle {
+  font-size: 20px;
+  white-space: normal;
+}
+
+.stack .eyebrow,
+.stack .badge,
+.stack .meta,
+.stack .toolTag,
+.stack .tool,
+.stack .childMeta,
+.stack .tag {
+  font-size: var(--text-meta);
+}
+
+.stack .childTitle,
+.stack .stepText {
+  font-size: var(--text);
+  white-space: normal;
+}
+
+.stack .row {
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+
+.stack .mark {
+  width: 20px;
+  height: 20px;
+}
+
+.stack .option_picked {
+  transform: none;
+}

@@ -23,6 +23,11 @@ export interface MemoryPort {
     recall(question: string, partnerId: string): Promise<Recall>;
     writeBack(confirmed: { question: string; reply: string; partnerId: string; shareable?: boolean }): Promise<{ id: string; added: number; updated: number }>;
     rank(partnerId: string, options: readonly CandidateOption[]): Promise<Ordering>;
+    /**
+     * Keeps a past request (src/requests.ts): a private note for every partner, written only after a form was sent
+     * under memory consent. Never shareable, so its text never shows on a screen.
+     */
+    addNote(note: { text: string; shareable: false }): Promise<{ id: string; added: number; updated: number }>;
 }
 
 /** The current question's web passages (moss WebIndex). */

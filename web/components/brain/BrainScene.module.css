@@ -1,0 +1,81 @@
+/* The 3D view fills the stage. Drag turns the brain, so the cursor says so. */
+.canvas {
+  position: absolute;
+  inset: 0;
+  cursor: grab;
+}
+
+.canvas:active {
+  cursor: grabbing;
+}
+
+.labelWrap {
+  pointer-events: none;
+}
+
+/* "C3" over its number, after the Tesla-style pinned label: a muted name over a big value, no box. */
+.label {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  white-space: nowrap;
+  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.9);
+}
+
+.nameC3,
+.nameC4 {
+  font-size: var(--text-title);
+  font-weight: var(--weight-strong);
+  line-height: 1;
+}
+
+.nameC3 {
+  color: var(--c3);
+}
+
+.nameC4 {
+  color: var(--c4);
+}
+
+.value,
+.valueMuted {
+  font-size: 48px;
+  font-weight: var(--weight-strong);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.value {
+  color: var(--fg);
+}
+
+.valueMuted {
+  font-size: var(--text);
+  font-weight: var(--weight);
+  color: var(--fg-muted);
+}
+
+.front {
+  color: var(--fg-muted);
+  font-size: var(--text-meta);
+  white-space: nowrap;
+}
+
+.failed {
+  position: absolute;
+  inset: auto var(--s6) 50% var(--s6);
+  color: var(--fg-muted);
+  text-align: center;
+  font-size: var(--text-title);
+}
+
+@media (max-width: 1500px) {
+  .value {
+    font-size: 32px;
+  }
+
+  .nameC3,
+  .nameC4 {
+    font-size: var(--text);
+  }
+}

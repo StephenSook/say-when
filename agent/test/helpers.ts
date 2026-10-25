@@ -9,8 +9,9 @@ import { CallRunner } from '../src/calls.js';
 import { MemoryDb } from '../src/db/memory-db.js';
 import { ErrandRunner } from '../src/errands.js';
 import { ConversationLog, PreviewBook, type JobDeps } from '../src/jobs.js';
+import { MemoryWatch } from '../src/requests.js';
 import { recordingLogger, type RecordingLogger } from '../src/log.js';
-import { Orchestrator } from '../src/orchestrator.js';
+import { Orchestrator, type OrchestratorOptions } from '../src/orchestrator.js';
 import { ClaudePlanner, type MessagesApi } from '../src/planner/claude.js';
 import type { PlanReply } from '../src/planner/schema.js';
 import type { CallHandleLike, DialerPort, ErrandPort, MemoryPort, SearchPort, WebIndexPort } from '../src/ports.js';
@@ -174,8 +175,20 @@ export class FakeSearch implements SearchPort {
     error: Error | null = null;
     hang = false;
     partial = false;
+    /** While set, each search waits for it (a slow search the test releases), or fails at once if aborted. */
+    gate: Promise<void> | null = null;
 
     constructor(private readonly trace?: Trace) {}
+
+    /** Holds every search until the returned function is called. */
+    hold(): () => void {
+        let release = () => undefined as void;
+        this.gate = new Promise<void>((resolve) => (release = resolve));
+        return () => {
+            this.gate = null;
+            release();
+        };
+    }
 
     web(question: string, options: { signal: AbortSignal }): Promise<SearchResult> {
         this.calls.push({ kind: 'web', query: question });
@@ -195,6 +208,18 @@ export class FakeSearch implements SearchPort {
                 const fail = () => reject(Object.assign(new Error('aborted'), { name: 'ApifyHttpError', kind: 'aborted' }));
                 if (signal.aborted) fail();
                 signal.addEventListener('abort', fail, { once: true });
+            });
+        }
+        if (this.gate) {
+            const gate = this.gate;
+            await new Promise<void>((resolve, reject) => {
+                const fail = () => reject(Object.assign(new Error('aborted'), { name: 'ApifyHttpError', kind: 'aborted' }));
+                if (signal.aborted) return fail();
+                signal.addEventListener('abort', fail, { once: true });
+                void gate.then(() => {
+                    signal.removeEventListener('abort', fail);
+                    resolve();
+                });
             });
         }
         if (this.error) throw this.error;
@@ -234,6 +259,13 @@ export class FakeMemory implements MemoryPort {
     recallDelayMs = 0;
     /** Wait this long before a write into memory lands. */
     writeBackDelayMs = 0;
+    /** What a past-request query (src/requests.ts) finds. None by default. */
+    pastRequestHits: MemoryHit[] = [];
+    /** A past-request query that never answers (the question's own recall still does). */
+    pastRequestHang = false;
+    /** Notes added with addNote: the past requests kept after a send. */
+    readonly notes: { text: string; shareable: false }[] = [];
+    noteError: Error | null = null;
 
     constructor(private readonly trace?: Trace) {}
 
@@ -244,10 +276,18 @@ export class FakeMemory implements MemoryPort {
     async recall(question: string, partnerId: string): Promise<Recall> {
         this.recalls.push({ question, partnerId });
         this.trace?.add('memory.recall');
+        if (this.pastRequestHang && question.startsWith('Past request (')) await new Promise<never>(() => undefined);
         if (this.recallHang) await new Promise<never>(() => undefined);
         if (this.recallDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, this.recallDelayMs));
         if (this.recallError) throw this.recallError;
+        if (question.startsWith('Past request (')) return { hits: structuredClone(this.pastRequestHits), instant: [], mossMs: 1, wallMs: 1 };
         return structuredClone(this.recallResult);
+    }
+
+    async addNote(note: { text: string; shareable: false }) {
+        if (this.noteError) throw this.noteError;
+        this.notes.push({ ...note });
+        return { id: `mem:pref:note${this.notes.length}`, added: 1, updated: 0 };
     }
 
     async writeBack(confirmed: { question: string; reply: string; partnerId: string; shareable?: boolean }) {
@@ -333,6 +373,8 @@ export function errandResult(overrides: Partial<ErrandResult> = {}): ErrandResul
 export class FakeErrands implements ErrandPort {
     readonly previews: PreviewRequest[] = [];
     readonly submits: SubmitRequest[] = [];
+    /** Runs inside submit, before it answers (for example to revoke a consent while the form is sent). */
+    onSubmit: (() => void) | null = null;
     previewResult: ErrandResult | Error = errandResult();
     submitResult: ErrandResult | Error = errandResult({ status: 'submitted', mode: 'submit', confirmationText: 'Request received.', submittedAt: '2026-10-24T19:00:05Z' });
 
@@ -344,6 +386,7 @@ export class FakeErrands implements ErrandPort {
 
     async submit(request: SubmitRequest): Promise<ErrandResult> {
         this.submits.push(structuredClone(request));
+        this.onSubmit?.();
         if (this.submitResult instanceof Error) throw this.submitResult;
         return structuredClone(this.submitResult);
     }
@@ -479,6 +522,14 @@ export interface HarnessOptions {
     /** The call dial deadline after the CONFIRM, and the allowed clock difference (CallRunner). */
     confirmToDialMs?: number;
     clockSkewMs?: number;
+    /** The yes or no fast path (JobDeps.yesNoFast). Off by default here, so the older tests keep the planner path. */
+    yesNoFast?: boolean;
+    /** Draft first (JobDeps.draftFirst). Off by default here, like the fast path. */
+    draftFirst?: boolean;
+    /** The judge try sandbox's admission check (src/sandbox.ts); none by default. */
+    admit?: OrchestratorOptions['admit'];
+    /** Run as the judge try sandbox (AGENT_TRY): the errand runner keeps no past request. Off by default. */
+    sandbox?: boolean;
 }
 
 export function harness(options: HarnessOptions = {}): Harness {
@@ -495,6 +546,7 @@ export function harness(options: HarnessOptions = {}): Harness {
     const previews = new PreviewBook();
     const clock = options.clock ?? (() => performance.now());
     let requests = 0;
+    const memoryWatch = new MemoryWatch(db);
     const deps: JobDeps = {
         db,
         planner,
@@ -517,10 +569,13 @@ export function harness(options: HarnessOptions = {}): Harness {
         timeZone: 'America/Los_Angeles',
         maxOptions: 4,
         memoryShareable: options.memoryShareable ?? false,
+        memoryWatch,
         now: options.now ?? Date.now,
         clock,
         requestId: () => `call-test-${++requests}`,
         leaseHeartbeatMs: options.leaseHeartbeatMs,
+        yesNoFast: options.yesNoFast,
+        draftFirst: options.draftFirst,
     };
     // Short retry waits so the tests of claims that never reached the module run fast.
     const callRunner = new CallRunner({
@@ -533,8 +588,20 @@ export function harness(options: HarnessOptions = {}): Harness {
         ...(options.confirmToDialMs !== undefined ? { confirmToDialMs: options.confirmToDialMs } : {}),
         ...(options.clockSkewMs !== undefined ? { clockSkewMs: options.clockSkewMs } : {}),
     });
-    const errandRunner = new ErrandRunner({ db, errands: deps.errands, previews, log, clock, retryMs: 5 });
-    const orchestrator = new Orchestrator(deps, { errands: errandRunner, calls: callRunner }, { maxJobs: 3, abortGraceMs: options.abortGraceMs ?? 5_000 });
+    const errandRunner = new ErrandRunner({
+        db,
+        errands: deps.errands,
+        previews,
+        log,
+        clock,
+        retryMs: 5,
+        pastRequests: { memory: deps.retrieval.memory, forms: deps.forms, timeZone: deps.timeZone, now: deps.now, sandbox: options.sandbox ?? false, watch: memoryWatch },
+    });
+    const orchestrator = new Orchestrator(
+        deps,
+        { errands: errandRunner, calls: callRunner },
+        { maxJobs: 3, abortGraceMs: options.abortGraceMs ?? 5_000, ...(options.admit ? { admit: options.admit } : {}) },
+    );
     return { db, api, planner, search, memory, web, errands, dialer, log, trace, deps, orchestrator, errandRunner, callRunner };
 }
 

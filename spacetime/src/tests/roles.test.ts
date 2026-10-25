@@ -78,13 +78,14 @@ function refusals(db: Test): Array<[string, string, () => unknown, string]> {
     ['add_call_line', SPEAKER, () => as(db, SPEAKER, (c) => m.addCallLine(c, { callId: 1n, attempt: 1, lineKey: 'l', role: 'assistant', text: 'x' })), 'not allowed'],
     ['gesture', PARTNER, () => as(db, PARTNER, (c) => m.gesture(c, { gestureId: 'g', command: 'YES', heardStepSeq: 0n, heardOptionId: 0n, heardDigest: '', confidence: 1, source: 'jaw', onsetAgeMs: 0 })), 'not allowed'],
     ['report_word_timings', PARTNER, () => as(db, PARTNER, (c) => m.reportWordTimings(c, { sessionId: 1n, stepSeq: 1n, optionId: 1n, startsMs: [0], endsMs: [10] })), 'not allowed'],
+    ['set_sandbox', STATION, () => as(db, STATION, (c) => m.setSandbox(c, { json: '{"on":true}' })), 'owner only'],
   ];
 }
 
 test('every client reducer refuses a caller with the wrong role', () => {
   const db = newDb();
   const cases = refusals(db);
-  expect(cases).toHaveLength(32);
+  expect(cases).toHaveLength(33);
   for (const [name, , call, message] of cases) {
     expect(failure(call), name).toBe(message);
   }
