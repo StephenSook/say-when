@@ -9,7 +9,7 @@ import { appendFileSync, readFileSync } from 'node:fs';
 import { checkAgentScript, END_CALL_TOOL, firstDifference, heardOptOut, loadAgentScript, renderTemplate, type AgentScript } from './call-script.js';
 import { emit, redact, type OnEvent } from './events.js';
 import { buildRequest, send, type FetchLike, type HttpResponse } from './http.js';
-import { isEmergencyNumber, spokenNumber, toUsE164 } from './phone.js';
+import { isEmergencyNumber, toUsE164 } from './phone.js';
 import { checkLibraryVoices } from './voices.js';
 
 export class CallConfigError extends Error {
@@ -553,9 +553,9 @@ export interface DialerConfig {
     agentId: string;
     /** The Cartesia phone number id (not the number) to call from. */
     fromNumberId: string;
-    /** A consenting teammate's US number, read out at the end of every call. */
+    /** A consenting teammate's US number. The call no longer reads it out; the dialer still refuses to call it. */
     callbackNumber: string;
-    /** Who the call is for, as spoken. */
+    /** Who sent the errand, as the message names them ("<person> sent you today's plan"). The script names no one. */
     personName: string;
     /** The errand titles a call may report. Defaults to DEFAULT_ERRAND_TITLES. */
     errandTitles?: readonly string[];
@@ -955,12 +955,8 @@ export class Dialer {
         if (blocked || !contact) return this.refuse(blocked?.code ?? 'not_consented');
         // The values come from the agent, so they are checked again here; the digest below covers the message they make.
         const message = errandMessage(this.personName, contact.name, title, clockTime(sentAt, contact.timeZone), request.errand.values);
-        const variables: Record<string, string> = {
-            recipient_name: contact.name,
-            person_name: this.personName,
-            callback_number: spokenNumber(this.callback),
-            message: message.text,
-        };
+        // The welcome ends with the message, so the message brings its own closing period.
+        const variables: Record<string, string> = { recipient_name: contact.name, message: `${message.text}.` };
         const toNumber = toUsE164(contact.phone) as string;
         const spoken = [renderTemplate(this.script.welcome, variables), renderTemplate(this.script.instructions, variables)];
         const digest = createHash('sha256')

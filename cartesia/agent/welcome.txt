@@ -1,1 +1,1 @@
-Hi {{recipient_name}}. This is an automated assistant with an AI-generated voice, calling for {{person_name}} through the Eleven app. This call is recorded and transcribed. I'm calling to let you know that {{message}}. Did you get it?
+Hi {{recipient_name}}, this is an AI assistant from the Eleven app, and this call is recorded. {{message}}
