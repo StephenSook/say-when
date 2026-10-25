@@ -76,7 +76,7 @@ describe('what each cue says', () => {
   });
 
   test('the {act} variants per mode and the 34 clips cached at start', () => {
-    assert.equal(phraseText('tooSoon', 'headset'), 'Too soon. Wait a moment, then clench twice.');
+    assert.equal(phraseText('tooSoon', 'headset'), 'Too soon. Wait a moment, then clench once.');
     assert.equal(phraseText('sayConfirm', 'keyboard'), 'That needs a confirm. To send it, press C.');
     assert.equal(phraseText('tooSoon', 'switch'), 'Too soon. Wait a moment, then press twice.');
     for (const mode of ['headset', 'keyboard', 'switch'] as const) {

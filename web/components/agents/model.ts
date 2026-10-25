@@ -4,7 +4,7 @@
  * No React here, so every rule sits in one place.
  *
  * Errands and calls are options (PLAN D11). YES picks one, the read-back plays in the earpiece, and
- * only a fresh CONFIRM (a double jaw clench, or the key or switch press of a keyboard or switch session) matched to
+ * only a fresh CONFIRM (a single jaw clench, or the key or switch press of a keyboard or switch session) matched to
  * the read-back digest sends it. Silence, NO, STOP, the input coming off and the idle auto-pause all mean nothing is
  * sent (docs/spacetime.md 4.2 to 4.4). Every sentence that names what the person did takes the session's input
  * (lib/commands.ts), so a key press never reads as a jaw clench.
@@ -213,7 +213,7 @@ export function chooseFocus(errand: Errand | null, call: CallRequest | null, pin
 /**
  * The form errand's six steps (docs/mockups/agents.html):
  * 1 picked with YES, 2 form filled in a browser, 3 values read back off the page,
- * 4 read back in the earpiece, 5 CONFIRM, a double jaw clench, 6 sent with the form's confirmation.
+ * 4 read back in the earpiece, 5 CONFIRM, a single jaw clench, 6 sent with the form's confirmation.
  */
 export interface ErrandPlan {
   picked: RunStatus;
@@ -349,7 +349,7 @@ export function callPlan(call: CallRequest): CallPlan {
  * Reasons in plain words
  * ---------------------------------------------------------------------------------------------- */
 
-/** "STOP, a single jaw clench, hangs up.", "STOP, key S, hangs up.", or "STOP hangs up." when the input is unknown. */
+/** "STOP, a double jaw clench, hangs up.", "STOP, key S, hangs up.", or "STOP hangs up." when the input is unknown. */
 export function stopHangsUp(input: InputKind): string {
   const phrase = signalPhrase('STOP', input);
   return phrase ? `STOP, ${phrase}, hangs up.` : 'STOP hangs up.';

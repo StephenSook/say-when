@@ -314,13 +314,13 @@ describe('module v2 on the board (docs/spacetime.md 14)', () => {
     // The fixture's session label is "smoke", which names no input, so the STOP is named without a signal (W1).
     assert.equal(rows.input, 'unknown');
     assert.equal(stopReason(beforeDial!, rows.commands, rows.input), 'The person used STOP.');
-    assert.equal(stopReason(beforeDial!, rows.commands, 'headset'), 'The person used STOP, a single jaw clench.');
+    assert.equal(stopReason(beforeDial!, rows.commands, 'headset'), 'The person used STOP, a double jaw clench.');
     assert.equal(expired?.reasonCode, 'confirm_expired');
     assert.equal(expired?.confirmCommandId, 'smoke-confirm-9');
     assert.equal(stopReason(expired!, rows.commands, rows.input), 'Too much time passed after the confirm. No call was made.');
     assert.equal(stopReason({ ...expired!, reason: null }, rows.commands, rows.input), 'Too much time passed after the confirm.');
     assert.equal(callEndReason(hungUp!, rows.input, rows.commands), 'The person used STOP.');
-    assert.equal(callEndReason(hungUp!, 'headset', rows.commands), 'The person used STOP, a single jaw clench.');
+    assert.equal(callEndReason(hungUp!, 'headset', rows.commands), 'The person used STOP, a double jaw clench.');
     assert.equal(callHeadline(hungUp!, rows.safety.state, rows.input, rows.commands).text, 'The call ended. The person used STOP.');
     assert.equal(callEndReason(hungUp!, rows.input), 'The call was hung up.', 'without the command rows, the result');
 
@@ -332,7 +332,7 @@ describe('module v2 on the board (docs/spacetime.md 14)', () => {
       }),
     );
     assert.equal(shared.calls[0]?.endReason, null, 'a bare end reason code is not words');
-    assert.equal(callHeadline(shared.calls[0]!, shared.safety.state, 'headset', shared.commands).text, 'The call ended. The person used STOP, a single jaw clench.');
+    assert.equal(callHeadline(shared.calls[0]!, shared.safety.state, 'headset', shared.commands).text, 'The call ended. The person used STOP, a double jaw clench.');
     const words = boardRows(midScan({ calls: [call({ textShared: true, endReason: 'No answer after 25 s' })] }));
     assert.equal(words.calls[0]?.endReason, 'No answer after 25 s', 'an end reason in words stays');
   });

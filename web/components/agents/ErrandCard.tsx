@@ -8,7 +8,7 @@
  * 2 Form filled            the Actor filled the form in a browser; nothing is sent
  * 3 Values read back       the values the Actor read back off the page
  * 4 Read back              the read-back plays in the earpiece; its digest is in the tooltip only
- * 5 CONFIRM                the confirm window and its countdown; only CONFIRM sends it (a double jaw clench
+ * 5 CONFIRM                the confirm window and its countdown; only CONFIRM sends it (a single jaw clench
  *                          with the headset, the key or the switch press otherwise)
  * 6 Sent                   with the form's confirmation text
  *

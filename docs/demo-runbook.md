@@ -4,15 +4,16 @@ One page for the judging morning. Judging is 10:30 AM to 12:30 PM PDT at our tab
 
 Everything below runs against the demo database `say-when-demo`, the one https://eleven-calhacks.vercel.app reads. Commands run from the repo root on Stephen's Mac, which holds the Keychain keys and the owner's `spacetime` login.
 
-## Words we use (PLAN D16)
+## Words we use (PLAN D17)
 
 | Command | Headset signal | Keyboard stand-in |
 |---|---|---|
 | YES | imagine squeezing the right fist | key Y |
 | NO | imagine squeezing the left fist | key N |
-| CONFIRM | double jaw clench | key C |
-| STOP | single jaw clench | key S |
+| CONFIRM | single jaw clench | key C |
+| STOP | double jaw clench | key S |
 
+- Since D17 (Oct 24) a single clench is CONFIRM and a double is STOP; a held clench is also STOP. A CONFIRM only counts inside the confirm window after a full read-back, so a stray clench anywhere else does nothing. The earpiece says "To send it, clench once."
 - The jaw clench is a muscle signal. The imagined squeeze counts as a brain command only if the wearer passed `docs/brain-mode-test.md` today; otherwise say it is the experiment.
 - In a keyboard session say "key Y", never "brain" or "thought". The board already says "Keyboard input" for a `keyboard-` session.
 - Nothing reads thoughts. Nothing leaves the room without a read-back and a fresh CONFIRM.
@@ -84,7 +85,7 @@ Screen 1 (`/brain?bridge=1`) on the EEG laptop, Screen 2 (`/agents`) on our lapt
 | 0:00 | Stephen | "Eleven is for someone who cannot speak or use their hands. The person hears up to four answers in an earpiece and picks one." |
 | 0:20 | Partner | Asks "Are you tired?" The earpiece says "Yes or no?" YES (key Y or right fist). The room voice says "Yes." A plain yes or no question skips the search and Claude, so it starts in under a second. |
 | 0:40 | Partner | Asks an open question that needs a lookup, for example "Which cafe near campus has the best hot chocolate?" Screen 2 and `/live` show memory (Moss), the web search (Apify) and Claude drafting up to four options; each is read into the earpiece in its own tone. YES on the one wanted. The room voice says it. |
-| 1:30 | Partner | Asks "Can we send the care team a request for some lunch?" One option is the errand. YES. Our form-errand Actor fills the demo form and reads the values back off the page; the read-back plays in the earpiece and ends "To send it, ..." CONFIRM after the window chime (key C or double jaw clench). The station says Sent. |
+| 1:30 | Partner | Asks "Can we send the care team a request for some lunch?" One option is the errand. YES. Our form-errand Actor fills the demo form and reads the values back off the page; the read-back plays in the earpiece and ends "To send it, ..." CONFIRM after the window chime (key C or a single jaw clench). The station says Sent. |
 | 2:10 | Partner | Asks "Should we send the same lunch request as last time?" The errand option comes back filled from memory ("same as last time"). YES, read-back, CONFIRM, Sent. Nothing is sent from memory without its own read-back and CONFIRM. |
 | 2:40 | Partner | Only if `--calls` was accepted: a follow-up option offers to call the consented contact about the sent request. YES, read-back, CONFIRM; the phone rings and the voice says it is an automated assistant with an AI-generated voice. STOP hangs up. |
 | 2:55 | Stephen | Points at the safety line: STOP, a lost signal, silence or a timeout all mean nothing is sent. |

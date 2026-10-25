@@ -151,7 +151,7 @@ describe('the Suggested replies tree over the sample replay', () => {
     assert.equal(node(filling, 'r2:e2'), undefined);
     const waiting = treeAt(33);
     assert.equal(node(waiting, 'r2:e2')?.word, 'Waiting');
-    assert.equal(node(waiting, 'r2:e2')?.kind === 'step' && (node(waiting, 'r2:e2') as { meta: string }).meta, 'Waiting for CONFIRM, a double jaw clench.');
+    assert.equal(node(waiting, 'r2:e2')?.kind === 'step' && (node(waiting, 'r2:e2') as { meta: string }).meta, 'Waiting for CONFIRM, a single jaw clench.');
     assert.equal(node(waiting, 'r2:e3'), undefined);
     const sent = treeAt(38);
     assert.equal(node(sent, 'r2:e2')?.word, 'Confirmed');

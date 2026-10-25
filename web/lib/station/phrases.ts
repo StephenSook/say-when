@@ -2,8 +2,8 @@
  * What the earpiece says (docs/station.md Appendix A), as data. Stock phrases use the assistant voice at the person's
  * pace and are cached once at start; menu items use the reply voice with no tone, exactly as the module writes them.
  *
- * `{act}` is how the person confirms in the session's input mode: "clench twice" with the headset (the double jaw
- * clench), "press C" in the keyboard test, "press twice" on a USB switch. The words never claim more than that.
+ * `{act}` is how the person confirms in the session's input mode: "clench once" with the headset (the single jaw
+ * clench, PLAN D17), "press C" in the keyboard test, "press twice" on a USB switch. The words never claim more than that.
  */
 import type { InputMode } from '../role/storage';
 
@@ -57,7 +57,7 @@ export function isMenuItemText(text: string): boolean {
 
 /** How the person confirms in each input mode. */
 export const ACT_WORDS: Readonly<Record<InputMode, string>> = {
-  headset: 'clench twice',
+  headset: 'clench once',
   keyboard: 'press C',
   switch: 'press twice',
 };

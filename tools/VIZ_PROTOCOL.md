@@ -187,10 +187,10 @@ A 24 s loop, starting when the baseline is set (seconds from the start of the lo
 | 13.4 | `viz.marker` `NO`, `imagery` | |
 | 14 to 18 | rest; C4 contact `poor` from 15 to 17 | |
 | 18.0 and 18.4 | double jaw clench, two EMG spikes of 80 to 150 uV RMS | `emgGate` true for 1 or 2 frames per spike; in those frames `b20_26` and `b26_30` jump by +150 to +300 on both sides and `b16_20` by about +25 to +45 (so `beta` reads about +100 to +150) |
-| 18.8 | `viz.marker` `CONFIRM`, `jaw`, confidence `null` | |
+| 18.8 | `viz.marker` `STOP`, `jaw`, confidence `null` (a double clench is STOP, PLAN D17) | |
 | 18.8 to 21.8 | rest | |
 | 21.8 to 22.1 | single jaw clench | `emgGate` true for 2 or 3 frames, with the same band jump |
-| 22.3 | `viz.marker` `STOP`, `jaw`, confidence `null` | |
+| 22.3 | `viz.marker` `CONFIRM`, `jaw`, confidence `null` (a single clench is CONFIRM, PLAN D17) | |
 | 22.3 to 24 | rest, then the loop repeats | |
 
 Scripted change per band at full imagery, on the side opposite the imagined hand (C3 for the right fist, C4 for the left). The same side as the hand moves by a tenth of it. Each cycle scales the whole column by a random 0.9 to 1.1. The jaw clench column applies to both sides at once, whatever the imagery is doing.

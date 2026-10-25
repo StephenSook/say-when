@@ -52,7 +52,7 @@ export function statusFromErrand(status: ErrandStatus): RunStatus {
   }
 }
 
-/** A call's overall state. After the read-back it waits for its own fresh CONFIRM (a double jaw clench). */
+/** A call's overall state. After the read-back it waits for its own fresh CONFIRM (a single jaw clench). */
 export function statusFromCall(status: CallStatus): RunStatus {
   switch (status) {
     case 'prepared':

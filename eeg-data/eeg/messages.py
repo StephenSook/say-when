@@ -13,9 +13,10 @@ import uuid
 
 from eeg import config
 
-# PLAN D16: a single clench is STOP (a held one counts as a single), a double is CONFIRM.
-JAW_COMMAND = {"double": "CONFIRM", "single": "STOP", "long": "STOP"}
-# Jaw-only fallback (docs/brain-mode-test.md): a single clench is YES and there is no STOP gesture.
+# PLAN D17 (supersedes D16's jaw map): a single clench is CONFIRM, a double is STOP, and a held one is STOP.
+JAW_COMMAND = {"single": "CONFIRM", "double": "STOP", "long": "STOP"}
+# Jaw-only fallback (docs/brain-mode-test.md), unchanged by D17: a single clench is YES, a double is CONFIRM, and
+# there is no STOP gesture (a teammate stops from the station keys).
 JAW_ONLY_COMMAND = {"double": "CONFIRM", "single": "YES"}
 
 
@@ -37,7 +38,7 @@ def from_hand(ev: dict, now: float = None) -> dict:
 
 
 def from_jaw(ev: dict, jaw_only: bool = False, now: float = None):
-    """double -> CONFIRM, single or long -> STOP; in the jaw-only fallback single -> YES and no STOP."""
+    """single -> CONFIRM, double or long -> STOP; in the jaw-only fallback single -> YES, double -> CONFIRM, no STOP."""
     cmd = (JAW_ONLY_COMMAND if jaw_only else JAW_COMMAND).get(ev["kind"])
     conf = min(1.0, ev["strength"] / (2 * config.JAW_RATIO))
     return gesture(cmd, ev["onset"], conf, "jaw", now) if cmd else None

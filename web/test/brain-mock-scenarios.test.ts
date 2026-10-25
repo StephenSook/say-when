@@ -44,8 +44,8 @@ const EXPECTED = [
   '01-rest',
   '02-right-fist-yes',
   '03-left-fist-no',
-  '04-double-clench-confirm',
-  '05-single-clench-stop',
+  '04-double-clench-stop',
+  '05-single-clench-confirm',
   '06-headset-off',
   '07-baseline-flow',
   '08-brain-test-failed',
@@ -302,7 +302,8 @@ const CHECKS: Record<string, (r: Run) => void> = {
     assert.match(guessText(no), /^Guess NO 0\.\d\d$/);
   },
 
-  '04-double-clench-confirm': (r) => {
+  // PLAN D17: a double clench is STOP and a single clench is CONFIRM.
+  '04-double-clench-stop': (r) => {
     checkGate(r, [4, 4.1, 4.4, 4.5]);
     for (const at of [3.9, 4.2, 4.3, 4.6]) {
       // The frames just before and after each clench: some muscle in the upper bands, under the gate. The glow
@@ -312,20 +313,22 @@ const CHECKS: Record<string, (r: Run) => void> = {
       assert.ok(s.targets.c3 < 0.2 && s.targets.c4 < 0.2);
     }
     for (const s of r.snaps.filter((x) => !x.mi?.emgGate)) assert.equal(s.view.state, 'measuring', `at ${s.at}`);
-    const confirm = onlyMarker(r, 'CONFIRM', 'jaw');
-    assert.equal(confirm.confidence, null);
-    assert.ok(isJawCommand(confirm.command), 'goes on the jaw lane, never on the brain');
-    assert.equal(pulseSide(confirm), null, 'no ring pulse for a jaw command');
-    assert.equal(eventPillText(confirm), 'CONFIRM');
-    assert.equal(guessText(confirm), 'Jaw CONFIRM');
+    const stop = onlyMarker(r, 'STOP', 'jaw');
+    assert.equal(stop.confidence, null);
+    assert.ok(isJawCommand(stop.command), 'goes on the jaw lane, never on the brain');
+    assert.equal(pulseSide(stop), null, 'no ring pulse for a jaw command');
+    assert.equal(eventPillText(stop), 'STOP');
+    assert.equal(guessText(stop), 'Jaw STOP');
   },
 
-  '05-single-clench-stop': (r) => {
+  '05-single-clench-confirm': (r) => {
     checkGate(r, [4, 4.1, 4.2]);
-    const stop = onlyMarker(r, 'STOP', 'jaw');
-    assert.equal(pulseSide(stop), null);
-    assert.equal(eventPillText(stop), 'STOP');
-    assert.ok(snapAt(r, 4.8).markers.includes(stop));
+    const confirm = onlyMarker(r, 'CONFIRM', 'jaw');
+    assert.equal(confirm.confidence, null);
+    assert.equal(pulseSide(confirm), null);
+    assert.equal(eventPillText(confirm), 'CONFIRM');
+    assert.equal(guessText(confirm), 'Jaw CONFIRM');
+    assert.ok(snapAt(r, 4.8).markers.includes(confirm));
   },
 
   '06-headset-off': (r) => {
@@ -513,8 +516,8 @@ const CHECKS: Record<string, (r: Run) => void> = {
       [
         ['YES', 'imagery'],
         ['NO', 'imagery'],
-        ['CONFIRM', 'jaw'],
-        ['STOP', 'jaw'],
+        ['STOP', 'jaw'], // the double clench at 33 s (PLAN D17)
+        ['CONFIRM', 'jaw'], // the single clench at 45 s
       ],
     );
     assert.deepEqual(

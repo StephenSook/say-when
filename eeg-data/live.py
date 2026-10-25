@@ -11,8 +11,8 @@ and the /eeg page of the web app (--no-serve turns the server off):
   {"type": "health", "decoderHealthy"}   every 250 ms
   {"type": "eeg", ...}                   about 10 per second, server only: per-electrode change, model bars, jaw
 
-Right fist imagined = YES, left = NO, double jaw clench = CONFIRM, single jaw clench = STOP (PLAN D16),
-no packets for 0.5 s = HEADSET_OFF. Imagery is ignored during a clench and for 1 s after it.
+Right fist imagined = YES, left = NO, single jaw clench = CONFIRM, double (or held) jaw clench = STOP
+(PLAN D17), no packets for 0.5 s = HEADSET_OFF. Imagery is ignored during a clench and for 1 s after it.
 """
 import argparse
 import os

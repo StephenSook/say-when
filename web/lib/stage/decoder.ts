@@ -19,7 +19,7 @@ export interface DecoderLine {
   id: string;
   /** "YES", "CONFIRM", or "Headset off" ("Input off") for the system event. */
   word: string;
-  /** What the person did in this input: "imagined right fist", "key Y", "double jaw clench". null when not known. */
+  /** What the person did in this input: "imagined right fist", "key Y", "single jaw clench". null when not known. */
   signal: string | null;
   /** Set only for an imagined squeeze in a headset session. */
   hand: HandMark | null;

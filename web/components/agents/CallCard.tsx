@@ -5,9 +5,9 @@
  * steps on the left and the transcript on the right.
  *
  * 1 Prepared and read back the call script plays in the earpiece; its digest is in the tooltip only
- * 2 CONFIRM                the confirm window; only CONFIRM places the call (a double jaw clench with the headset)
+ * 2 CONFIRM                the confirm window; only CONFIRM places the call (a single jaw clench with the headset)
  * 3 Ringing                Dialing, then Ringing with a ring timer (our own events: Cartesia has no ringing)
- * 4 Connected              the live duration; STOP hangs up (a single jaw clench with the headset)
+ * 4 Connected              the live duration; STOP hangs up (a double jaw clench with the headset)
  * 5 Ended                  with the reason in plain words
  *
  * The contact shows by name only. Never a phone number.

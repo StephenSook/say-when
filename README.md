@@ -18,7 +18,7 @@ Live dashboards: [eleven-calhacks.vercel.app](https://eleven-calhacks.vercel.app
 4. **Plan.** Claude drafts and ranks up to four options.
 5. **Speak.** Cartesia Sonic reads each option into the earpiece.
 6. **Choose.** The headset decoder turns signals into four commands: YES, NO, CONFIRM and STOP.
-7. **Act.** When the moment calls for it, the options include an errand or a call: our Apify form-errand Actor fills a form, or a Cartesia voice agent places a consented phone call. Both only after a spoken read-back and a double jaw clench.
+7. **Act.** When the moment calls for it, the options include an errand or a call: our Apify form-errand Actor fills a form, or a Cartesia voice agent places a consented phone call. Both only after a spoken read-back and a single jaw clench.
 
 Every step writes to SpacetimeDB, so the dashboard on any laptop updates live over WebSocket subscriptions. Every switch command also flows into Tiger Data (TimescaleDB), whose continuous aggregates turn it into reliability numbers: false activations per idle minute and time to pick. Tiger stores timing only, no words.
 
@@ -28,16 +28,16 @@ Every step writes to SpacetimeDB, so the dashboard on any laptop updates live ov
 |---|---|---|
 | YES | Imagine squeezing your right fist | Picks the option just heard, or answers yes. While nothing is happening, it opens the person's own menu ("I need something", "Send a request", "Call", "Say something else"). |
 | NO | Imagine squeezing your left fist | Skips the option, or answers no. |
-| CONFIRM | Double jaw clench | The only way anything leaves the room: it sends the form or places the call that was just read back. |
-| STOP | Single jaw clench | Cancels, means "none of these", hangs up a call, and pauses. |
+| CONFIRM | Single jaw clench | The only way anything leaves the room: it sends the form or places the call that was just read back. It only counts inside the confirm window after the full read-back. |
+| STOP | Double jaw clench (a held clench also counts) | Cancels, means "none of these", hangs up a call, and pauses. |
 
 The brain makes the choices and the jaw commits or stops. Taking the headset off (HEADSET-OFF) and two minutes with no command (auto-pause) also cancel anything pending.
 
-The hand commands are imagined movements read over the motor cortex, so they only count after passing the test in [docs/brain-mode-test.md](docs/brain-mode-test.md), written before anyone measured. If they fail, YES becomes a single short jaw clench and NO becomes silence. The jaw clench is a muscle signal, not a brain signal. Nothing here reads thoughts.
+The hand commands are imagined movements read over the motor cortex, so they only count after passing the test in [docs/brain-mode-test.md](docs/brain-mode-test.md), written before anyone measured. If they fail, YES becomes a single short jaw clench, CONFIRM goes back to a double clench, and NO becomes silence. The jaw clench is a muscle signal, not a brain signal. Nothing here reads thoughts.
 
 ## Safety rules
 
-- The model never clicks submit and never dials. An errand or call option only prepares and reads back; CONFIRM (a double jaw clench) releases it.
+- The model never clicks submit and never dials. An errand or call option only prepares and reads back; CONFIRM (a single jaw clench) releases it.
 - Fail closed. Silence, a timeout, NO, STOP, or a lost signal all mean "do not act".
 - A confirm must be fresh: it starts after the read-back ends, lands inside the window, matches the digest of what was read back, and is used once.
 - Calls go only to people who consented. The voice says it is an automated assistant with an AI-generated voice and who it calls for, then what the sent request asked for (only fields the form marks speakable, each checked again before it is said) and when it was sent, and gives a callback number at the end before it hangs up.

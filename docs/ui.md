@@ -310,7 +310,7 @@ Focus: the agent that is working gets the big card. The other agent is one line 
  +------------------------------+
  |                              |   [v] Preview made                  10:42:05
  |      preview screenshot      |   [v] Read back to the person       10:42:09
- |      (click to enlarge)      |   [*] Waiting for a double clench
+ |      (click to enlarge)      |   [*] Waiting for a single clench
  |                              |       ==============--------   6 s left
  +------------------------------+   [ ] Sent
  Read back   "<read_back_text>"
@@ -329,12 +329,12 @@ Focus: the agent that is working gets the big card. The other agent is one line 
 
 - Parts: card with the preview screenshot (a click opens the dialog), step list, rows for the transcript. The digest is our proof, not the person's job: it sits in the read-back step's tooltip, never in its words (Oct 24 polish).
 - Rows: `errand` (`form`, `status`, `preview_digest`, `read_back_text`, `confirmation_text`, `screenshot_url`), `call_request` (`contact`, `script_digest`, `status`), and the command event that released or stopped each one.
-- Errand steps: Preview made (`screenshot_url` set), Read back (`read_back_text` set), Waiting for CONFIRM, a double jaw clench (row awaits confirmation), Sent (`confirmation_text` set). A NO, a timeout, PAUSE or HEADSET-OFF fails the waiting step with "Not sent: <reason>".
+- Errand steps: Preview made (`screenshot_url` set), Read back (`read_back_text` set), Waiting for CONFIRM, a single jaw clench (row awaits confirmation), Sent (`confirmation_text` set). A NO, a timeout, PAUSE or HEADSET-OFF fails the waiting step with "Not sent: <reason>".
 - Call steps: Prepared (`script_digest` set), Ringing, Connected, Ended, from `status`.
 - The countdown bar shows only if the row says when the confirm window closes. That field is not in the draft contract.
 - Show the contact's name only. Never show a phone number on a projected screen. Digest: first 8 characters, the full value in a tooltip.
 - Live: marks update as fields fill in. The screenshot fades in when it loads (tube's archive thumbnails fade in over 250 ms). Transcript lines enter at the bottom (240 ms). The label at top right is always the current state in words.
-- Empty: "No errand or call yet. Errands and calls are offered as options, or from the person's menu. Nothing is sent without a double jaw clench."
+- Empty: "No errand or call yet. Errands and calls are offered as options, or from the person's menu. Nothing is sent without a single jaw clench."
 - Loading: the status line.
 - Error: the failed step in `--error`, then "Nothing was sent." for an errand, or "The call ended: <reason>." for a call.
 

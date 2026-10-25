@@ -96,8 +96,8 @@ CLENCH_EDGE_S = 0.04
 MARKERS = (
     (6.4, "YES", "imagery"),
     (13.4, "NO", "imagery"),
-    (18.8, "CONFIRM", "jaw"),
-    (22.3, "STOP", "jaw"),
+    (18.8, "STOP", "jaw"),  # the double clench (PLAN D17)
+    (22.3, "CONFIRM", "jaw"),  # the single clench
 )
 CONTACT_BLIP = (15.0, 17.0)  # C4 reads "poor" in this window
 # Scripted change in band power on the side opposite the imagined hand, at full imagery,

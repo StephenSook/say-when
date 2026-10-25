@@ -440,7 +440,7 @@ function line(text: string, hint: string | null = null, tone: StatusTone = 'plai
 }
 
 /**
- * The confirm hints. Only a headset session names the double jaw clench; a key or a switch press is named as itself, and
+ * The confirm hints. Only a headset session names the single jaw clench; a key or a switch press is named as itself, and
  * an unknown input names no signal.
  */
 function confirmHints(input: InputKind, what: 'request' | 'call'): { waiting: string; confirmed: string } {

@@ -6,11 +6,13 @@ Turns the 8-channel headset into Eleven's four commands. It is not connected to 
 |---|---|---|
 | Imagine squeezing your right fist | YES | Imagery classifier over C3/C4 and neighbours (brain signal) |
 | Imagine squeezing your left fist | NO | same |
-| Double jaw clench | CONFIRM | Jaw-muscle (EMG) bursts, 30-55 Hz |
-| Single jaw clench | STOP | same (PLAN D16; a held clench also counts) |
+| Single jaw clench | CONFIRM | Jaw-muscle (EMG) bursts, 30-55 Hz (PLAN D17) |
+| Double jaw clench | STOP | same (a held clench, about 0.8 s, also counts) |
 | No packets for 0.5 s | HEADSET_OFF | watchdog |
 
-Imagery is ignored during a jaw clench and for 1 s after it, so a clench is never read as a fist. With `--jaw-only` (the fallback in [docs/brain-mode-test.md](../docs/brain-mode-test.md)), a single clench is YES, a double is CONFIRM, silence is NO and there is no STOP gesture.
+Imagery is ignored during a jaw clench and for 1 s after it, so a clench is never read as a fist. With `--jaw-only` (the fallback in [docs/brain-mode-test.md](../docs/brain-mode-test.md)), a single clench is YES, a double is CONFIRM, silence is NO and there is no STOP gesture (this fallback map did not change with D17).
+
+A single clench is only reported once 0.7 s pass with no second clench, so a CONFIRM lands about 0.7 s after the clench ends. The CONFIRM only counts inside the confirm window after a full read-back; a stray one anywhere else does nothing. Raising `JAW_RATIO` in `eeg/config.py` to about 30 makes a stray clench (swallowing, shifting) less likely to count.
 
 ## Setup (Windows, Python 3.11 or 3.12)
 
@@ -60,7 +62,7 @@ A model is marked usable only if its cross-validated trial accuracy is at least 
 
 Current model (wearer S01, 8 sessions, 337 trials, Oct 22 and 24): on 67 held-out trials 50 right: left 21 of 29, right 19 of 23, rest 10 of 15 (chance 1 in 3), with 7 left/right swaps. These are offline numbers on recorded trials, not the brain-mode test, which needs the headset taken off and put back on, fresh cued trials and a control block.
 
-Jaw check on the recorded clench session: all 20 clench trials were caught, and no CONFIRM or STOP fired during any of the 60 imagery trials. Single clenches also showed up between trials (swallowing, shifting); they only matter in `--jaw-only` mode.
+Jaw check on the recorded clench session: all 20 clench trials were caught, and no CONFIRM or STOP fired during any of the 60 imagery trials. Single clenches also showed up between trials (swallowing, shifting). Since D17 a single clench is CONFIRM, which the module ignores outside the confirm window; this is why `JAW_RATIO` should go to about 30.
 
 ## Brain view
 

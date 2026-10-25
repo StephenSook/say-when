@@ -148,8 +148,8 @@ describe('decoder panel words', () => {
       view.earlier.map((line) => [line.word, line.signal, line.hand]),
       [
         ['NO', 'imagined left fist', 'no'],
-        ['CONFIRM', 'double jaw clench', null],
-        ['STOP', 'single jaw clench', null],
+        ['CONFIRM', 'single jaw clench', null],
+        ['STOP', 'double jaw clench', null],
       ],
     );
     assert.equal(view.earlier[0]?.ago, '7 s ago');

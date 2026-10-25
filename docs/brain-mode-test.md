@@ -8,10 +8,10 @@ Written and committed before any measurement, so the bar cannot move after we se
 |---|---|
 | Imagine squeezing your right fist | YES: pick this one. While nothing is happening, it opens the person's own menu. |
 | Imagine squeezing your left fist | NO: skip, or answer no. |
-| Double jaw clench | CONFIRM: the only way anything leaves the room (a form or a call). |
-| Single jaw clench | STOP: cancel, none of these, hang up, pause. |
+| Single jaw clench | CONFIRM: the only way anything leaves the room (a form or a call). |
+| Double jaw clench | STOP: cancel, none of these, hang up, pause. |
 
-The brain makes the choices and the jaw commits or stops. The jaw clench is a muscle signal (EMG), not a brain signal, and we say so. Nothing leaves the room without a fresh double clench after the spoken read-back.
+The brain makes the choices and the jaw commits or stops. The jaw clench is a muscle signal (EMG), not a brain signal, and we say so. Nothing leaves the room without a fresh single clench after the spoken read-back. (PLAN D17 swapped the jaw map on Oct 24; until then a double was CONFIRM and a single was STOP. The pass bar below did not change.)
 
 ## The rule
 
@@ -32,7 +32,7 @@ If any condition fails, the hands are not used today, and the fallback below run
 
 - YES: a single jaw clench.
 - NO: silence. The option times out and the next one plays.
-- CONFIRM stays a double clench.
+- CONFIRM: a double clench. A single clench is YES in this mode, so the fallback keeps the old double-clench CONFIRM; in the main map (PLAN D17) a double is STOP.
 - STOP: the decoder cannot tell a held clench (PLAN D16), and in this mode a single clench is YES, so there is no STOP gesture unless the decoder adds a triple clench. Nothing leaves the room without a CONFIRM, and a teammate can STOP from the station keys.
 
 ## What a pass means

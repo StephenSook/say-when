@@ -180,8 +180,8 @@ describe('the D11 command map', () => {
     assert.deepEqual(PERSON_COMMANDS.map((name) => commandChipLabel(name, 'headset')), [
       'YES, imagined right fist',
       'NO, imagined left fist',
-      'CONFIRM, double jaw clench',
-      'STOP, single jaw clench',
+      'CONFIRM, single jaw clench',
+      'STOP, double jaw clench',
     ]);
     assert.equal(commandWord('HEADSET_OFF', 'headset'), 'Headset off');
     assert.equal(commandWord('CONFIRM', 'headset'), 'CONFIRM');

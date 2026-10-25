@@ -43,8 +43,8 @@ export type PipelineStatus = 'started' | 'ok' | 'error';
  * PLAN.md D11 command names. The person gives four of them:
  * - YES (imagine squeezing the right fist): pick this option, or answer yes. While idle, it opens the person's menu.
  * - NO (imagine squeezing the left fist): skip this option, or answer no.
- * - CONFIRM (double jaw clench): the only way anything leaves the room, after the read-back.
- * - STOP (single jaw clench): cancel, none of these, hang up, pause.
+ * - CONFIRM (single jaw clench, PLAN D17): the only way anything leaves the room, after the read-back.
+ * - STOP (double jaw clench, PLAN D17): cancel, none of these, hang up, pause.
  * HEADSET_OFF is a system event, not a command: the headset lost contact. Like the 2-minute idle
  * auto-pause, it cancels anything pending.
  */
@@ -305,7 +305,7 @@ export type ErrandStatus =
   | 'previewed'
   /** The read-back is playing in the earpiece. */
   | 'reading_back'
-  /** The read-back finished; the confirm window is open, waiting for CONFIRM (a double jaw clench). */
+  /** The read-back finished; the confirm window is open, waiting for CONFIRM (a single jaw clench). */
   | 'awaiting_confirm'
   /** A CONFIRM matched to the read-back digest arrived; the agent has not claimed it yet. */
   | 'confirmed'

@@ -8,7 +8,7 @@
  * - One plain sentence on top, rolled up from the agent at work (docs/ui.md pattern 8).
  * - The agent at work gets the big card. The other agent is one dimmed line at the bottom.
  * - Errands and calls are options (PLAN D11): YES picks one, the read-back plays, and only a fresh
- *   CONFIRM matched to the read-back digest sends it (a double jaw clench with the headset; the key
+ *   CONFIRM matched to the read-back digest sends it (a single jaw clench with the headset; the key
  *   or the switch press in a keyboard or switch session). STOP hangs up a call.
  *
  * States: it renders inside the shell's <main> behind ConnectionGate, so loading and "Not connected"

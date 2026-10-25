@@ -116,7 +116,7 @@ describe('read-back helpers', () => {
 
   test('the confirm sentence on the end follows the input mode', () => {
     assert.deepEqual(readbackSegments('Text.', 'keyboard'), ['Text.', 'To send it, press C. To cancel, do nothing.']);
-    assert.deepEqual(readbackSegments('Text.', 'headset'), ['Text.', 'To send it, clench twice. To cancel, do nothing.']);
+    assert.deepEqual(readbackSegments('Text.', 'headset'), ['Text.', 'To send it, clench once. To cancel, do nothing.']);
     assert.deepEqual(readbackSegments('Text.', 'switch'), ['Text.', 'To send it, press twice. To cancel, do nothing.']);
   });
 

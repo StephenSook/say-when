@@ -16,10 +16,10 @@
  *           0.7 s veto the reply is released and said out loud
  *  21.4 s   Claude offers follow-up options; YES picks the errand option
  *  25.4 s   the errand: the form is filled, the values are read back off the page, the read-back plays
- *           in the earpiece, CONFIRM (a double jaw clench), and the form is sent
+ *           in the earpiece, CONFIRM (a single jaw clench), and the form is sent
  *  36.7 s   another follow-up; YES picks the call option; the script is read back, CONFIRM, dialing,
  *           ringing, connected, transcript lines
- *  61.5 s   STOP (a single jaw clench) hangs up the call
+ *  61.5 s   STOP (a double jaw clench) hangs up the call
  *  63.6 s   STOP while idle pauses; YES resumes
  *  67.2 s   the headset loses contact (HEADSET_OFF, a system event); YES resumes
  *  71.0 s   the loop starts again with a new question number
@@ -535,7 +535,7 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
   ];
   const errandReadBackText =
     'Care team request, from Demo user. Meal or drink: dinner at the cafe on Bay St with my partner, 7 pm tonight. ' +
-    'Double clench to send.';
+    'Clench once to send.';
   const errandAt = errandPickAt + 100;
   step(errandAt, 'errand drafted', (rows) => {
     rows.errands.push({
@@ -615,7 +615,7 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
       scriptDigest: sampleHex(`call-${loop}`),
       readBackText:
         'Call Demo caregiver. Tell them Demo user and their partner are having dinner at the cafe on Bay St at 7 tonight, ' +
-        'and ask if they can meet there. Double clench to call.',
+        'and ask if they can meet there. Clench once to call.',
       status: 'prepared',
       result: null,
       endReason: null,
@@ -674,7 +674,7 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
     });
   });
 
-  // STOP, a single jaw clench, hangs up. During a call STOP does not pause (docs/spacetime.md 4.2): the
+  // STOP, a double jaw clench, hangs up. During a call STOP does not pause (docs/spacetime.md 4.2): the
   // module asks the call agent to hang up (`cancel_requested`), and the call ends once the line drops.
   const hangUpAt = connectedAt + 10_300;
   command(hangUpAt, 'STOP', { confidence: 0.97 }, (rows, id) => {

@@ -75,13 +75,16 @@ def test_jaw_single_double_long_and_quiet():
 
 
 def test_jaw_messages_follow_the_command_map():
-    ev = {"kind": "double", "onset": 10.0, "t": 10.6, "strength": 50.0}
+    # PLAN D17: a single clench is CONFIRM, a double or a held one is STOP.
+    ev = {"kind": "single", "onset": 10.0, "t": 10.6, "strength": 50.0}
     m = messages.from_jaw(ev, now=10.7)
     assert m["type"] == "gesture" and m["command"] == "CONFIRM" and m["source"] == "jaw" and m["onsetAgeMs"] == 700
+    assert messages.from_jaw(dict(ev, kind="double"))["command"] == "STOP"
     assert messages.from_jaw(dict(ev, kind="long"))["command"] == "STOP"
-    assert messages.from_jaw(dict(ev, kind="single"))["command"] == "STOP"
+    # The jaw-only fallback keeps its own map: single is YES, double is CONFIRM, and there is no STOP gesture.
     assert messages.from_jaw(dict(ev, kind="long"), jaw_only=True) is None
     assert messages.from_jaw(dict(ev, kind="single"), jaw_only=True)["command"] == "YES"
+    assert messages.from_jaw(dict(ev, kind="double"), jaw_only=True)["command"] == "CONFIRM"
     assert messages.from_hand({"hand": "right", "onset": 1.0, "confidence": .8}, now=2.0)["command"] == "YES"
     assert messages.from_hand({"hand": "left", "onset": 1.0, "confidence": .8}, now=2.0)["command"] == "NO"
     assert messages.health(True) == {"type": "health", "decoderHealthy": True}
@@ -115,7 +118,7 @@ def test_engine_end_to_end_with_a_fake_headset(tmp_path):
     while state["i"] < raw.shape[1]:
         cmds += [m["command"] for m in eng.poll().commands]
     assert {"YES", "NO"} <= set(cmds)          # synthetic data is easy; real EEG is not
-    assert cmds[-1] == "CONFIRM"
+    assert cmds[-1] == "STOP"                   # the appended double clench (PLAN D17)
     assert all(c in config.COMMANDS for c in cmds)
 
 

@@ -319,7 +319,7 @@ Every command from any input goes through one sender (**design**):
 | `ignored:refractory`, `ignored:veto`, `ignored:already_passed`, `ignored:already_paused`, `ignored:idle`, `ignored:paused`, `ignored:busy` | nothing |
 | `ignored:not_ready`, `ignored:yes_is_not_confirm`, `ignored:too_late` | nothing here; the module's cue speaks (`not_ready`, `say_confirm`, `too_late`) |
 
-`{act}` is "clench twice" in headset mode, "press C" in keyboard mode, "press twice" in switch mode.
+`{act}` is "clench once" in headset mode (a single clench is CONFIRM, PLAN D17), "press C" in keyboard mode, "press twice" in switch mode.
 
 What each command does in each state is the module's decision table (`docs/spacetime.md` 4.2 and section 13 rows 10, 13, 18; **checked** in `gesture.ts`). The station does not second-guess it.
 
@@ -900,7 +900,7 @@ Three tracks run in parallel after a short shared start. All files are in `web/`
 
 ## Appendix A: what the earpiece says
 
-All stock phrases use the assistant voice at the person's pace and are cached at start (**design**). `{act}` is "clench twice" (headset), "press C" (keyboard) or "press twice" (switch).
+All stock phrases use the assistant voice at the person's pace and are cached at start (**design**). `{act}` is "clench once" (headset, PLAN D17), "press C" (keyboard) or "press twice" (switch).
 
 | Key | Words |
 |---|---|
