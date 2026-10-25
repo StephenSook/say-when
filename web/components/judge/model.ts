@@ -162,9 +162,9 @@ export const NOT_MEASURED: readonly Claim[] = [
     evidence: 'the room voice ignored a reply arriving as an update to the session row (it never spoke live)',
   },
   {
-    text: 'No phone call has run yet.',
+    text: 'One live phone call has run so far (Oct 24, about 8:30 PM, on the demo database).',
     cite: { file: 'web/README.md', section: 'Limits', date: OCT_24 },
-    evidence: 'no call has run on `say-when-dev` yet',
+    evidence: 'A live outbound call ran on `say-when-demo` on Oct 24 at about 8:30 PM',
   },
   {
     text: 'No latency figures yet: command to pick, reply in the room, earpiece start, speech to text.',

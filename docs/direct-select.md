@@ -1,6 +1,6 @@
-# Direct select (D18): four gestures pick four options
+# Direct select (D18, D23): three gestures pick three options
 
-Status: being built on branch `direct-select` (worktree `../say-when-direct`), Sat Oct 24 2026, from Shashank's design (Discord 8:19 PM and 8:23 PM). The scan mode on `main` and the `say-when-demo` database stay untouched as the fallback.
+Status: live on `main` and the `say-when-direct` database since Sat Oct 24 2026, about 11:20 PM (PLAN D23), from Shashank's design (Discord 8:19 PM and 8:23 PM) with the jaw rules of D21. The scan mode and the `say-when-demo` database stay as the fallback (decoder `--mode scan`, the previous site build in Vercel).
 
 ## 1. What the person does
 
@@ -9,11 +9,11 @@ Status: being built on branch `direct-select` (worktree `../say-when-direct`), S
 | Imagined LEFT fist | `PICK_1` | choose option 1 |
 | Imagined RIGHT fist | `PICK_2` | choose option 2 |
 | Single jaw clench | `PICK_3` | choose option 3 |
-| Double jaw clench | `PICK_4` | choose option 4 |
-| Long jaw clench (held 0.8 s or more) | `STOP` | cancel whatever is pending, hang up a call, pause |
+| Double jaw clench | none | nothing (D21): still detected, so two quick clenches are never two picks |
+| Held jaw clench (0.8 s or more) | `STOP` | cancel whatever is pending, hang up a call, pause |
 | Headset off | `HEADSET_OFF` | same as today: cancel and pause |
 
-There is no scanning cursor. The earpiece reads the (up to) four options once, numbered and short ("One: yes. Two: no. Three: search the web. Four: something else."), then waits. The person picks any time after the list starts. Silence picks nothing. A STOP or a new question clears the list.
+There is no scanning cursor. The earpiece reads the (up to) three options once, numbered and short ("One: yes. Two: no. Three: search the web."), then waits. The person picks any time after the list starts. Silence picks nothing. A STOP or a new question clears the list.
 
 ## 2. When a pick needs a confirm (Shashank, 8:23 PM)
 

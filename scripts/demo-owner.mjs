@@ -24,7 +24,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-export const DATABASES = ['say-when-dev', 'say-when-demo'];
+export const DATABASES = ['say-when-dev', 'say-when-demo', 'say-when-direct'];
 
 /** The consent rows every demo needs (docs/spacetime.md 9.4): scope and subject. A call row is added per contact. */
 export const DEMO_CONSENTS = [
@@ -162,7 +162,7 @@ export function run(
 ) {
     const args = parseArgs(argv);
     if (!DATABASES.includes(args.db)) {
-        out(`Refusing database "${args.db}": use --db say-when-dev or --db say-when-demo.`);
+        out(`Refusing database "${args.db}": use --db say-when-dev, say-when-demo or say-when-direct.`);
         return 2;
     }
     const sql = (query) => parseSqlTable(spacetime(['sql', '--no-config', '--server', 'maincloud', args.db, query]));

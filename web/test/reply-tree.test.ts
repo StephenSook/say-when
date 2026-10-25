@@ -109,28 +109,23 @@ describe('the Suggested replies tree over the sample replay', () => {
     assert.equal((node(tree, 'web:hub') as { detail: string }).detail, '6 results from 2 searches, 1.8 s');
   });
 
-  test('up to four options, each with where it came from, its pick number, and the one in the earpiece marked', () => {
+  test('three options, each with where it came from, its pick number, and the one in the earpiece marked', () => {
     const tree = treeAt(6.3);
     const opts = options(tree);
-    assert.deepEqual(opts.map((o) => o.heading), ['Option 1 of 4', 'Option 2 of 4', 'Option 3 of 4', 'Option 4 of 4']);
-    assert.deepEqual(opts.map((o) => o.badge), ['1', '2', '3', '4'], 'the number the person picks it by (D18)');
-    assert.deepEqual(opts.map((o) => o.label), ['Cafeteria', 'Thai place', 'Cafe on Bay', 'Too tired'], 'the earpiece labels');
-    assert.deepEqual(opts.map((o) => o.source), [
-      'From the web: example.net',
-      'From the web: Google Maps',
-      "From the person's notes and the web",
-      'Drafted',
-    ]);
-    assert.deepEqual(opts.map((o) => o.state), ['idle', 'reading', 'idle', 'idle'], 'option 2 is being read at 6.3 s');
+    assert.deepEqual(opts.map((o) => o.heading), ['Option 1 of 3', 'Option 2 of 3', 'Option 3 of 3']);
+    assert.deepEqual(opts.map((o) => o.badge), ['1', '2', '3'], 'the number the person picks it by (D18)');
+    assert.deepEqual(opts.map((o) => o.label), ['Cafeteria', 'Thai place', 'Cafe on Bay'], 'the earpiece labels');
+    assert.deepEqual(opts.map((o) => o.source), ['From the web: example.net', 'From the web: Google Maps', "From the person's notes and the web"]);
+    assert.deepEqual(opts.map((o) => o.state), ['idle', 'reading', 'idle'], 'option 2 is being read at 6.3 s');
     assert.equal(opts[1]!.word, 'In the earpiece now');
     const waiting = options(treeAt(10));
-    assert.deepEqual(waiting.map((o) => o.state), ['idle', 'idle', 'idle', 'idle'], 'the wait for a pick marks no single option');
+    assert.deepEqual(waiting.map((o) => o.state), ['idle', 'idle', 'idle'], 'the wait for a pick marks no single option');
   });
 
   test('a select row picks exactly that option: it turns Picked, the rest dim, and the camera frames it', () => {
     const pickedNow = treeAt(12);
     const during = options(pickedNow);
-    assert.deepEqual(during.map((o) => o.state), ['dimmed', 'dimmed', 'picked', 'dimmed']);
+    assert.deepEqual(during.map((o) => o.state), ['dimmed', 'dimmed', 'picked']);
     assert.equal(during[2]!.pickLine, 'Picked with 3, a single jaw clench.', 'said at once: no veto in direct select');
     assert.equal(pickedNow.pickedId, during[2]!.id);
     assert.equal(pickedNow.camera.intent, 'pick');
@@ -144,7 +139,7 @@ describe('the Suggested replies tree over the sample replay', () => {
     assert.equal(node(spoken, 'r1:said')?.word, 'Spoken');
     assert.ok(spoken.edges.some((e) => e.tone === 'picked' && e.target === after[2]!.id), 'the path into the pick is drawn as picked');
     assert.equal(spoken.edges.filter((e) => e.tone === 'picked' && e.target.endsWith(':o3')).length, 1);
-    assert.equal(after.filter((o) => o.state === 'dimmed').length, 3);
+    assert.equal(after.filter((o) => o.state === 'dimmed').length, 2);
   });
 
   test('errand steps grow only from errand rows: read back, the confirm window, then sent; the confirm moves the camera', () => {
@@ -383,7 +378,7 @@ describe('the camera on a projector', () => {
     const vp = cameraViewport(options, w, h);
     assert.equal(vp.zoom, READABLE_ZOOM);
     assert.ok(READABLE_ZOOM * 29 >= 20, 'titles and option words stay at 20 px');
-    assert.ok(onScreen(options.tight, vp, w, h), 'the drafting hub and all four options are in view');
+    assert.ok(onScreen(options.tight, vp, w, h), 'the drafting hub and every option slot are in view');
     const centered = (options.tight.x + options.tight.width / 2) * vp.zoom + vp.x;
     assert.ok(centered > w / 2, 'the view slid left to show more of the lookup');
   });

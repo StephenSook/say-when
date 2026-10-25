@@ -85,9 +85,9 @@ describe('screen models over the sample replay', () => {
   test('the partner phone follows the question in plain words', () => {
     assert.equal(partnerAt(at(1)).status.text, PARTNER_TEXT.listening);
     // Direct select (D18): the list is read once, numbered, then the wait for a pick.
-    assert.equal(partnerAt(at(7)).status.text, 'They are choosing, option 3 of 4.');
+    assert.equal(partnerAt(at(7)).status.text, 'They are choosing, option 3 of 3.');
     assert.equal(partnerAt(at(7)).hint, PARTNER_TEXT.listeningToOptions);
-    assert.equal(partnerAt(at(10)).status.text, 'They are choosing from 4 options.');
+    assert.equal(partnerAt(at(10)).status.text, 'They are choosing from 3 options.');
     assert.equal(partnerAt(at(15)).status.text, PARTNER_TEXT.answered);
     assert.equal(partnerAt(at(15)).answer?.text, 'The cafe on Bay St, it has a ramp.');
     assert.match(partnerAt(at(29)).status.text, /confirm/i);
@@ -97,7 +97,7 @@ describe('screen models over the sample replay', () => {
   });
 
   test('the partner phone never shows the words of an option the person did not pick', () => {
-    const notPicked = ['The hospital cafeteria is fine.', "The Thai place on Lombard, it's quiet.", "Not tonight, I'm too tired.", 'Send the care team a dinner request.', 'Call Demo caregiver to meet us there.', 'Nothing else.'];
+    const notPicked = ['The hospital cafeteria is fine.', "The Thai place on Lombard, it's quiet.", 'Send the care team a dinner request.', 'Call Demo caregiver to meet us there.', 'Nothing else.'];
     for (let t = 0; t < LOOP_MS; t += 250) {
       const json = JSON.stringify(partnerAt(replayRowsAt(START, START + t)));
       for (const words of notPicked) assert.ok(!json.includes(words), `"${words}" at ${t} ms`);
@@ -112,7 +112,7 @@ describe('screen models over the sample replay', () => {
     assert.deepEqual(reading.pass, { pass: 1, max: 1 });
     const wait = conversationAt(at(10));
     assert.equal(wait.cursor?.optionId, null);
-    assert.equal(wait.cursor?.waitingFor, '1 to 3', 'four options, but no gesture gives 4 (D21)');
+    assert.equal(wait.cursor?.waitingFor, '1 to 3', 'three options, one per pick gesture (D21)');
     assert.equal(wait.cursor?.phase, 'window');
     const picked = conversationAt(at(12));
     assert.equal(picked.vetoing, false, 'no veto in direct select');

@@ -3,7 +3,7 @@
 /**
  * Screen 2, Suggested replies (/replies, key 5): the replies Eleven drafts for one question, drawn as a tree that
  * grows from the rows. The question at the root, the three jobs one agent sidecar runs (saved notes with Moss, web
- * facts with Apify, the drafting), up to four options with where each came from, and the person's pick, which turns
+ * facts with Apify, the drafting), up to three options with where each came from, and the person's pick, which turns
  * green while the camera frames it. Errands and calls grow their read-back, confirm window and result beside it.
  *
  * Every pixel that moves traces to a row: lib/tree/model.ts derives the tree, lib/tree/layout.ts fixes every
