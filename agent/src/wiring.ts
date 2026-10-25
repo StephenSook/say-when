@@ -34,10 +34,12 @@ export function searchPort(config: ApifyConfig, timeoutMs: number, fetchFn?: Fet
     return {
         // No retries inside the client: each send of the question is the sidecar's own decision, made right after it
         // read the web search consent (src/retrieval.ts searchStep). A retry after a backoff would send it again
-        // without that check. (Place search never retries.)
+        // without that check. (Place search never retries starting a run.)
         web: (question, { signal }) => searchWeb(question, { config, signal, timeoutMs, maxResults: 3, retries: 0, ...http }),
+        // Three places: direct select offers at most three replies, and a run asked for fewer places ends sooner (a
+        // run for 6 hit its 20 s limit on Oct 25). A run that reaches its limit still returns what it found (partial).
         places: (query, { signal, near }) =>
-            searchPlaces(query, { config, signal, ...(near ? { near } : {}), maxPlaces: 6, timeoutSecs: Math.max(10, Math.floor(timeoutMs / 1000) - 5), ...http }),
+            searchPlaces(query, { config, signal, ...(near ? { near } : {}), maxPlaces: 3, timeoutSecs: Math.max(10, Math.floor(timeoutMs / 1000) - 5), ...http }),
     };
 }
 
