@@ -395,38 +395,74 @@ export interface CallRequest {
  * looked at. A value over its limit, or one that would take the message over its limit, is left out, never cut: a cut
  * phrase can say the opposite ("no sugar" cut to "no").
  */
-export const SUMMARY_LIMITS = { valueChars: 180, messageChars: 240, values: 10 } as const;
+/**
+ * `maxDigits` bounds the digits in all the values together, so no phone number (7 digits at least) can be spelled out
+ * across values or around filler words: "1", "11:30" and "12" each pass, and the plan's "1" and "11:30" fit together.
+ */
+export const SUMMARY_LIMITS = { valueChars: 180, messageChars: 240, values: 10, maxDigits: 6, numberTokenRun: 3 } as const;
 
 /** Letters (any language), digits, spaces and , . ' & ( ) - : / only. */
 const SPOKEN_VALUE = /^[\p{L}0-9 ,.'&()\-:/]+$/u;
 /** Edge punctuation trimmed so values join cleanly: "Today." reads "Today". */
 const EDGE_MARKS = /^[ ,.:\-/!?]+|[ ,.:\-/!?]+$/g;
-/** Digits said as words. */
-const DIGIT_WORDS: ReadonlySet<string> = new Set(['zero', 'oh', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine']);
+/** Digits said as words. Each counts as a digit toward SUMMARY_LIMITS.maxDigits. */
+const DIGIT_WORDS: ReadonlySet<string> = new Set(['zero', 'oh', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'double', 'triple']);
+/**
+ * Every word that can be heard as a digit: DIGIT_WORDS and the words that sound like them ("for", "to", "too", "ate",
+ * "won", "fore", "o"). Too common to count toward the total, so they count only inside a run of number tokens.
+ */
+const NUMBER_WORDS: ReadonlySet<string> = new Set([...DIGIT_WORDS, 'o', 'won', 'to', 'too', 'for', 'fore', 'ate']);
 
 /**
- * The most digits in one unbroken run of number tokens, counting "five" as one digit and "0123" as four, so a phone
- * number said in words ("four one five ...") or in a mix ("four one five 555 0123") counts like one written in digits.
+ * The words and digit groups of a text, lower case. A time or decimal ("11:30", "2.5") is one digit group, so "ride
+ * for 11:30" is two number tokens, not three.
  */
-function longestDigitRun(text: string): number {
-    let best = 0;
-    let run = 0;
-    for (const token of text.toLowerCase().split(/[^\p{L}0-9]+/u)) {
-        if (token === '') continue;
-        run = /^[0-9]+$/.test(token) ? run + token.length : DIGIT_WORDS.has(token) ? run + 1 : 0;
-        best = Math.max(best, run);
-    }
-    return best;
+function numberTokens(text: string): string[] {
+    return text
+        .toLowerCase()
+        .replace(/([0-9])[:.](?=[0-9])/g, '$1')
+        .split(/[^\p{L}0-9]+/u)
+        .filter((token) => token !== '');
 }
-/** A link or an email in any form the character check lets through: a scheme, "www", a domain name, "dot com". */
-const LINK_LIKE = /:\/\/|\bwww\b|\bhttps?\b|[\p{L}0-9]\.[\p{L}]{2,}|\bdot (?:com|net|org|edu|gov|io|co|us|ai|app)\b|\bat [\p{L}0-9]+ dot\b/iu;
+
+/**
+ * True when the text could carry a phone number, a link, an email or a template, in any form the character check lets
+ * through: more than SUMMARY_LIMITS.maxDigits digits and digit words in all ("five one, uh, six four, uh, six nine, uh,
+ * one" counts eight); SUMMARY_LIMITS.numberTokenRun or more number tokens in a
+ * row (digit groups and number words together, "five one six", "5 one 6", "to two four"); 7 or more digits in one run
+ * of number tokens; a scheme, "www", a domain name or "dot com" in any spacing; "@"; "{{" or "}}". Run on each value and
+ * again on all the values joined, so pieces that pass alone cannot join into one.
+ */
+function unsafeText(text: string): boolean {
+    const all = numberTokens(text);
+    const digitWords = all.filter((token) => DIGIT_WORDS.has(token)).length;
+    if ((text.match(/[0-9]/g)?.length ?? 0) + digitWords > SUMMARY_LIMITS.maxDigits) return true;
+    let tokens = 0;
+    let digits = 0;
+    for (const token of all) {
+        const isDigits = /^[0-9]+$/.test(token);
+        if (isDigits || NUMBER_WORDS.has(token)) {
+            tokens += 1;
+            digits += isDigits ? token.length : 1;
+        } else {
+            tokens = 0;
+            digits = 0;
+        }
+        if (tokens >= SUMMARY_LIMITS.numberTokenRun || digits >= 7) return true;
+    }
+    return LINK_LIKE.test(text) || text.includes('{{') || text.includes('}}') || text.includes('@');
+}
+
+/** A link in any form the character check lets through: a scheme, "www", a domain name, "dot com" in any spacing. */
+const LINK_LIKE =
+    /:\/\/|\bwww\b|\bhttps?\b|[\p{L}0-9]\.[\p{L}]{2,}|[\p{L}0-9]\s*\.\s*(?:com|net|org|edu|gov|io|co|us|ai|app)\b|\bdot\W+(?:com|net|org|edu|gov|io|co|us|ai|app)\b|\bat\W+[\p{L}0-9]+\W+dot\b/iu;
 
 /**
  * A field value as a call may say it, or null when it must not be said. The value ends up inside the agent's prompt
  * ({{message}} in the instructions), so it is treated as untrusted: one line with normal spaces (NFC, curly
  * apostrophes and dashes made plain), edge punctuation trimmed, at most SUMMARY_LIMITS.valueChars characters, only
- * letters, digits, spaces and basic punctuation, and never anything that looks like a phone number (7 or more digits),
- * an email, a link or a template ({{ or }}). Empty and non-text values are null.
+ * letters, digits, spaces and basic punctuation with at least one letter or digit, and nothing unsafeText flags (a
+ * phone number in digits, words or a mix, a link, an email, a template). Empty and non-text values are null.
  */
 export function spokenValue(value: unknown): string | null {
     if (typeof value !== 'string') return null;
@@ -438,21 +474,23 @@ export function spokenValue(value: unknown): string | null {
         .replace(EDGE_MARKS, '');
     if (clean === '' || clean.length > SUMMARY_LIMITS.valueChars) return null;
     if (!SPOKEN_VALUE.test(clean) || !/[\p{L}0-9]/u.test(clean)) return null;
-    // A phone number: 7 or more digits anywhere, or a run of 7 or more said in words or a mix of words and digits.
-    if ((clean.match(/[0-9]/g)?.length ?? 0) >= 7 || longestDigitRun(clean) >= 7) return null;
-    if (LINK_LIKE.test(clean) || clean.includes('{{') || clean.includes('}}') || clean.includes('@')) return null;
-    return clean;
+    return unsafeText(clean) ? null : clean;
 }
 
-/** True when `value` already appears, as whole words, inside one of the values kept so far. */
+/**
+ * True when `value` has a digit and already appears, as whole words, inside a value kept so far: the plan's "11:30"
+ * again as When. A value with no digit is never left out this way, so "Today" still follows "not today".
+ */
 function alreadySaid(kept: readonly string[], value: string): boolean {
+    if (!/[0-9]/.test(value)) return false;
     const words = ` ${value.toLowerCase().replace(/[^\p{L}0-9]+/gu, ' ').trim()} `;
     return kept.some((k) => ` ${k.toLowerCase().replace(/[^\p{L}0-9]+/gu, ' ').trim()} `.includes(words));
 }
 
 /**
  * What the call says about the errand: the values that pass spokenValue, in order, leaving out one already said inside
- * an earlier value (the plan's "11:30" again as When) and one that would take the whole message past
+ * an earlier value (alreadySaid), one that would make all the values joined fail unsafeText (two short digit runs that
+ * join into one, more than SUMMARY_LIMITS.maxDigits digits in all), and one that would take the whole message past
  * SUMMARY_LIMITS.messageChars. For PLAN_TITLE: "<person> sent you today's plan: <values, as sentences>", and the
  * read-back "Call <recipient> to pass on today's plan: <values>." For any other title: "<person> sent a <title>:
  * <values>. It was sent at <time>", and the read-back "Call <recipient> to say: <message>." With no value left, the
@@ -463,16 +501,20 @@ function errandMessage(personName: string, recipientName: string, title: string,
     if (!Array.isArray(values)) return plain;
     const plan = titleKey(title) === titleKey(PLAN_TITLE);
     const article = /^[aeiou]/i.test(title) ? 'an' : 'a';
-    const say = (kept: readonly string[]) =>
-        plan ? `${personName} sent you today's plan: ${kept.join('. ')}` : `${personName} sent ${article} ${title}: ${kept.join(', ')}. It was sent at ${sentClock}`;
+    const separator = plan ? '. ' : ', ';
+    const say = (summary: string) => (plan ? `${personName} sent you today's plan: ${summary}` : `${personName} sent ${article} ${title}: ${summary}. It was sent at ${sentClock}`);
     const kept: string[] = [];
     for (const value of values.slice(0, SUMMARY_LIMITS.values)) {
         const clean = spokenValue(value);
-        if (clean !== null && !alreadySaid(kept, clean) && say([...kept, clean]).length <= SUMMARY_LIMITS.messageChars) kept.push(clean);
+        if (clean === null || alreadySaid(kept, clean)) continue;
+        // The values are untrusted together too: the joined text is checked again exactly as it will be said.
+        const summary = [...kept, clean].join(separator);
+        if (!unsafeText(summary) && say(summary).length <= SUMMARY_LIMITS.messageChars) kept.push(clean);
     }
     if (kept.length === 0) return plain;
-    const text = say(kept);
-    return { text, readBack: plan ? `Call ${recipientName} to pass on today's plan: ${kept.join('. ')}.` : `Call ${recipientName} to say: ${text}.` };
+    const summary = kept.join(separator);
+    const text = say(summary);
+    return { text, readBack: plan ? `Call ${recipientName} to pass on today's plan: ${summary}.` : `Call ${recipientName} to say: ${text}.` };
 }
 
 /** What the station needs for the read-back. The number stays inside the Dialer. */

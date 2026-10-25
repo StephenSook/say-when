@@ -485,6 +485,31 @@ describe('what the call says about the sent request', () => {
         assert.equal(prepared.call.readBack, `Call Leon to say: ${SENT_MESSAGE}.`);
     });
 
+    // Security review, round 1: each value passed alone, but the joined text carried a phone number or a link.
+    it('checks the values again as one joined text, and leaves out a value that would make it unsafe', () => {
+        const said = (values: unknown[], title = 'Care team request', requestId = 'call_1') => {
+            const h = harness();
+            const prepared = h.dialer.prepare(request(h.clock, { requestId, errand: { title, sentAt: h.clock.t - 60_000, values } }));
+            assert.ok(prepared.ok);
+            return prepared.call.readBack;
+        };
+        // Six digits in all is the most the values may carry together: a seventh would start a phone number.
+        for (const piece of ['gate 415 555', 'door 0123']) assert.notEqual(spokenValue(piece), null, piece);
+        assert.equal(said(['Ride', 'gate 415 555', 'door 0123', 'Today']), 'Call Leon to say: Shashank sent a Care team request: Ride, gate 415 555, Today. It was sent at 10:59 AM.');
+        // Number tokens that run on across the join.
+        assert.equal(said(['meet at five', 'one six', 'Today']), 'Call Leon to say: Shashank sent a Care team request: meet at five, Today. It was sent at 10:59 AM.');
+        // A link split across two values, with either join.
+        assert.equal(said(['go to evil', 'com now'], PLAN_TITLE), "Call Leon to pass on today's plan: go to evil.");
+        assert.equal(said(['evil dot', 'com', 'Today']), 'Call Leon to say: Shashank sent a Care team request: evil dot, Today. It was sent at 10:59 AM.');
+    });
+
+    it('leaves out only values with a digit as already said, so a word is never dropped for appearing earlier', () => {
+        const h = harness();
+        const prepared = h.dialer.prepare(withValues(h.clock, ['Company', 'not today, maybe tomorrow', 'Today']));
+        assert.ok(prepared.ok);
+        assert.equal(prepared.call.readBack, 'Call Leon to say: Shashank sent a Care team request: Company, not today, maybe tomorrow, Today. It was sent at 10:59 AM.');
+    });
+
     it('keeps the whole message within the cap by leaving out a value that does not fit, never cutting one', () => {
         const h = harness();
         // 99 and 101 characters: each fits on its own, both together do not.
@@ -517,7 +542,7 @@ describe('what the call says about the sent request', () => {
 /** The demo script's plan (beat 6), as the person confirmed it, and as the call says it (its last period trimmed). */
 const PLAN = 'Aquarium at 1. Lunch at the Plant Cafe at noon, step-free entrance. Please book a wheelchair-accessible ride for 11:30.';
 const PLAN_SPOKEN = PLAN.replace(/\.$/, '');
-const RIDE = 'Wheelchair-accessible ride, pickup 11:30';
+const RIDE = 'Wheelchair-accessible van, pickup at the front entrance';
 
 describe("what the call says about today's plan", () => {
     const plan = (clock: { t: number }, values: unknown, requestId = 'call_1') =>
@@ -553,6 +578,9 @@ describe("what the call says about today's plan", () => {
         assert.ok(missing.ok && missing.call.readBack === alone.call.readBack);
         const none = h.dialer.prepare(plan(h.clock, ['call 415 555 0123'], 'call_c'));
         assert.ok(none.ok && none.call.readBack === "Call Leon to say your Today's plan was sent.");
+        // The plan's "1" and "11:30" are 5 digits; another time would take all the values past 6, so it is left out.
+        const moreDigits = h.dialer.prepare(plan(h.clock, [PLAN, 'pickup at 12:45'], 'call_d'));
+        assert.ok(moreDigits.ok && moreDigits.call.readBack === alone.call.readBack);
     });
 
     it("is on the default list of titles a call may report, with the care team request", () => {
@@ -572,7 +600,26 @@ describe('spokenValue: a field value as a call may say it', () => {
         assert.equal(spokenValue('cafe\u0301 au lait'), 'caf\u00e9 au lait');
         assert.equal(spokenValue('5:30 PM, room B (east) / Fri & Sat'), '5:30 PM, room B (east) / Fri & Sat');
         assert.equal(spokenValue('x'.repeat(SUMMARY_LIMITS.valueChars)), 'x'.repeat(SUMMARY_LIMITS.valueChars));
-        assert.equal(spokenValue('one or two cups of tea at 5:30, room 12'), 'one or two cups of tea at 5:30, room 12');
+        assert.equal(spokenValue('one or two cups of tea at 5:30'), 'one or two cups of tea at 5:30');
+        assert.equal(spokenValue('Please book a wheelchair-accessible ride for 11:30.'), 'Please book a wheelchair-accessible ride for 11:30');
+        assert.equal(spokenValue('room 12'), 'room 12');
+    });
+
+    // Security review, round 1: a phone number said in words, around filler words, in a mix of words and digits, or
+    // with words that sound like digits.
+    it('drops a phone number said in number words, homophones, or a mix of words and digits, filler or not', () => {
+        for (const value of [
+            'five one six four six nine',
+            '5 one 6 four 6 9 1',
+            'five one, uh, six four, uh, six nine, uh, one',
+            'ring for two to four',
+            'ate ate ate',
+            'double five one',
+            'call oh oh seven',
+            'room 12, 10/24',
+        ]) {
+            assert.equal(spokenValue(value), null, value);
+        }
     });
 
     it('drops anything that looks like a phone number, an email, a link or a template', () => {
@@ -589,6 +636,8 @@ describe('spokenValue: a field value as a call may say it', () => {
             'see www example',
             'evil.example.org',
             'visit tinyurl.com now',
+            'visit tinyurl . com now',
+            'evil dot  com',
             'ftp://files',
             '{{callback_number}}',
             '{ x }',
