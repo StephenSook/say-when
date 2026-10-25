@@ -222,7 +222,7 @@ function watch(): void {
     }
 
     const reply = (text: string, tone: string): OptionInput => ({
-      kind: 'reply', text, tone, laugh: false, provenance: 'smoke', sources: [], memoryRefs: [], actionJson: '',
+      kind: 'reply', text, tone, laugh: false, provenance: 'smoke', sources: [], memoryRefs: [], actionJson: '', label: '',
     });
     const yesNo = job.questionText.includes('[yes_no]');
     const errand = job.questionText.includes('[errand]');

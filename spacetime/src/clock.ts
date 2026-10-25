@@ -4,14 +4,15 @@
 //
 // Also here: the menu, pause and resume (the dead-man interlock acts through `pause`), and the idle timer.
 import { SenderError } from 'spacetimedb/server';
-import { estimateClipMs, getConfig } from './config';
-import { createErrandFromPick, createCallFromPick, voidPending } from './consent';
+import { estimateClipMs, getConfig, isDirect } from './config';
+import { createErrandFromPick, createCallFromPick, createSearchFromPick, setSearchFollowUp, voidPending } from './consent';
 import type { Ctx, ReadDb } from './ctx';
-import { cancelJobs, createJob } from './jobs';
+import { cancelJobs, createJob, OPTION_JOB_KINDS } from './jobs';
 import { hasConsent } from './consent';
-import { idleDue } from './liveness';
+import { contactIsGood, idleDue } from './liveness';
 import type {
   AnswerOption,
+  JobKind,
   MenuItem,
   PauseReason,
   Question,
@@ -19,6 +20,7 @@ import type {
   ScanOutcome,
   ScanState,
   ScanTimer,
+  SearchRequest,
   Session,
 } from './schema';
 import { appendLedger, emitCue, msBetween, onceAt, plusMs, u32, writePipeline, type Actor } from './util';
@@ -80,6 +82,7 @@ export function initialScanState(ctx: Ctx, sessionId: bigint, maxPasses: number)
     pausedAt: undefined,
     resumeCursor: 0,
     updatedAt: ctx.timestamp,
+    listStartSeq: 0n,
   };
 }
 
@@ -184,7 +187,7 @@ export function startScan(ctx: Ctx, s: ScanState, given: Question): ScanState {
     actor: 'Module',
   });
   appendLedger(ctx, s.sessionId, 'scan_start', 'Module', { questionId: q.id, stepSeq: s.stepSeq, outcome: q.answerMode.tag === 'YesNo' ? 'yes_no' : 'pick' });
-  return enterReading(ctx, started, firstCursor(started), { freshOption: true });
+  return enterReading(ctx, started, firstCursor(started), { freshOption: true, listStart: true });
 }
 
 function firstCursor(s: ScanState): number {
@@ -206,14 +209,17 @@ export function readEventKey(sessionId: bigint, stepSeq: bigint): string {
  * Every read is its own speak step (module v2): one `pipeline_event` with the option id, rank, pass, step and dwell,
  * numbers only, that the station's word timings attach to.
  */
-export function enterReading(ctx: Ctx, s: ScanState, cursor: number, opts: { freshOption?: boolean } = {}): ScanState {
+export function enterReading(ctx: Ctx, s: ScanState, cursor: number, opts: { freshOption?: boolean; listStart?: boolean } = {}): ScanState {
   const cfg = getConfig(ctx.db);
   clearScanTimers(ctx, s.sessionId);
   const movingOn = !opts.freshOption && (s.phase.tag === 'Reading' || s.phase.tag === 'Window');
   const stepSeq = s.stepSeq + 1n;
   const yesNo = s.answerMode.tag === 'YesNo';
   const o = yesNo ? undefined : optionAt(ctx.db, s.questionId, s.version, cursor);
-  const dwell = yesNo ? cfg.yesNoCueMs : (o?.clipMs ?? estimateClipMs(o?.text ?? '')) + cfg.audioPadMs;
+  const direct = cfg.inputMode.tag === 'Direct';
+  // D18: the earpiece reads the number and the short label ("One: Good"), so a late clip is estimated from that.
+  const estimateFrom = o && direct ? spokenLabel(o) : (o?.text ?? '');
+  const dwell = yesNo ? cfg.yesNoCueMs : (o?.clipMs ?? estimateClipMs(estimateFrom)) + cfg.audioPadMs;
   writePipeline(ctx, {
     eventKey: readEventKey(s.sessionId, stepSeq),
     sessionId: s.sessionId,
@@ -230,6 +236,8 @@ export function enterReading(ctx: Ctx, s: ScanState, cursor: number, opts: { fre
       estimated: !yesNo && o?.clipMs === undefined,
     }),
     actor: 'Module',
+    // D18: the label and kind the earpiece read, private (the board sees it only while sharing is on).
+    payloadJson: o ? JSON.stringify({ optionId: Number(o.id), rank: o.rank, kind: o.kind.tag.toLowerCase(), label: o.label, text: o.text }) : undefined,
   });
   const next = saveScan(ctx, {
     ...s,
@@ -242,10 +250,60 @@ export function enterReading(ctx: Ctx, s: ScanState, cursor: number, opts: { fre
     stepEndsAt: plusMs(ctx.timestamp, dwell),
     optionStartSeq: stepSeq,
     optionStartedAt: ctx.timestamp,
+    listStartSeq: opts.listStart ? stepSeq : s.listStartSeq,
   });
   armScanTimer(ctx, next, 'StepEnd');
   appendLedger(ctx, s.sessionId, 'step', 'Module', { questionId: s.questionId, stepSeq, cursor, outcome: 'reading', ms: dwell });
   return next;
+}
+
+const NUMBER_WORDS = ['', 'One', 'Two', 'Three', 'Four'];
+
+/** D18: what the earpiece says for an option in Direct mode: its number and its label (or its text). */
+export function spokenLabel(o: AnswerOption): string {
+  return `${NUMBER_WORDS[o.rank] ?? String(o.rank)}: ${o.label !== '' ? o.label : o.text}`;
+}
+
+// ---------- Direct select (D18): read the list once, then wait for a pick ----------
+
+/**
+ * A StepEnd tick in Direct mode. Each option is read once in rank order with no window between them; after the
+ * last one a waiting newer version is read instead, or the clock waits for a pick (`Window`, `idle_pause_ms` long).
+ * A wait that runs out ends the scan No pick: silence picks nothing.
+ */
+export function directStepEnd(ctx: Ctx, s: ScanState): ScanState {
+  if (s.phase.tag === 'Reading') {
+    if (s.cursor < s.optionCount) return enterReading(ctx, s, s.cursor + 1);
+    const q = ctx.db.question.id.find(s.questionId);
+    if (q && q.pendingVersion > 0) return switchPending(ctx, s, q);
+    return enterWait(ctx, s);
+  }
+  if (s.phase.tag === 'Window') {
+    return finishScan(ctx, s, ctx.db.question.id.find(s.questionId) ?? undefined, 'NoPick', { actor: 'Scheduler', cue: 'no_pick' });
+  }
+  return s;
+}
+
+/** The wait after the list (Direct mode): phase Window until `idle_pause_ms` from now. */
+export function enterWait(ctx: Ctx, s: ScanState): ScanState {
+  const cfg = getConfig(ctx.db);
+  clearScanTimers(ctx, s.sessionId);
+  const next = saveScan(ctx, {
+    ...s,
+    phase: { tag: 'Window' },
+    stepSeq: s.stepSeq + 1n,
+    stepStartedAt: ctx.timestamp,
+    stepEndsAt: plusMs(ctx.timestamp, cfg.idlePauseMs),
+  });
+  armScanTimer(ctx, next, 'StepEnd');
+  return next;
+}
+
+/** A waiting newer version becomes current and is prepared (its clips, then its list from option 1). */
+function switchPending(ctx: Ctx, s: ScanState, q: Question): ScanState {
+  const switched = saveQuestion(ctx, { ...q, version: q.pendingVersion, answerMode: q.pendingAnswerMode, pendingVersion: 0 });
+  emitCue(ctx, s.sessionId, 'more_options', { questionId: q.id });
+  return enterPreparing(ctx, s, switched);
 }
 
 /** The silent response window after an option. */
@@ -396,7 +454,7 @@ export function finishScan(ctx: Ctx, s: ScanState, given: Question | undefined, 
       endedAt: released ? q.endedAt : ctx.timestamp,
     });
     // Further options for an ended question are of no use; its preview or remember jobs are left alone.
-    cancelJobs(ctx, q.id, `question_${outcome.toLowerCase()}`, { kind: 'Options' });
+    cancelJobs(ctx, q.id, `question_${outcome.toLowerCase()}`, { kinds: OPTION_JOB_KINDS });
     if (outcome === 'Picked' && o) {
       writePipeline(ctx, {
         eventKey: `q${q.id}:select`,
@@ -408,7 +466,7 @@ export function finishScan(ctx: Ctx, s: ScanState, given: Question | undefined, 
         ms: 0,
         countsJson: JSON.stringify({ optionId: Number(o.id), rank: o.rank, pass: s.pass }),
         actor: 'Module',
-        payloadJson: JSON.stringify({ optionId: Number(o.id), rank: o.rank, text: o.text }),
+        payloadJson: JSON.stringify({ optionId: Number(o.id), rank: o.rank, text: o.text, kind: o.kind.tag.toLowerCase(), label: o.label }),
       });
     }
     writePipeline(ctx, {
@@ -468,7 +526,7 @@ export function closeQuestion(
     outcome: { tag: end.outcome },
     endedAt: ctx.timestamp,
   });
-  cancelJobs(ctx, q.id, end.reason, { kind: 'Options' });
+  cancelJobs(ctx, q.id, end.reason, { kinds: OPTION_JOB_KINDS });
   if (s && s.questionId === q.id && s.phase.tag === 'Paused') {
     saveScan(ctx, { ...s, outcome: { tag: end.outcome } });
   }
@@ -538,7 +596,142 @@ export function pickOption(ctx: Ctx, s: ScanState, session: Session, q: Question
     case 'Menu':
       pickMenuItem(ctx, s, session, q, o, gestureId);
       return 'menu_item';
+    // Published only in Direct mode, and the input mode never changes during a session; handled the same way.
+    case 'Search':
+      finishScan(ctx, s, q, 'Picked', { actor: 'Station', option: o, gestureId });
+      createSearchFromPick(ctx, cfg, session, q, o, gestureId);
+      return 'pick_search';
+    case 'Category':
+      pickCategory(ctx, s, session, q, o, gestureId);
+      return 'pick_category';
   }
+}
+
+/**
+ * D18: a pick on the live list in Direct mode. A reply is said in the room at once (no veto; the person picked it
+ * by number), but only with good contact now. A Category starts its search at once: it exists only on a categories
+ * turn, which only a confirmed Search opens. Errands, calls and searches end the scan Picked and start their
+ * read-back. Returns the accepted action word, or `{ ignore }` with the reason.
+ */
+export function pickDirect(ctx: Ctx, s: ScanState, session: Session, q: Question, o: AnswerOption, gestureId: string): { action: string } | { ignore: string } {
+  if (o.kind.tag === 'Reply' && !contactIsGood(ctx.db, s.sessionId, ctx.timestamp)) return { ignore: 'no_contact' };
+  if (o.kind.tag === 'Category') {
+    if (!isCategoriesTurn(q)) return { ignore: 'not_allowed' };
+    if (!hasConsent(ctx.db, 'WebSearch', '')) return { ignore: 'no_consent' };
+  }
+  const cfg = getConfig(ctx.db);
+  appendLedger(ctx, s.sessionId, 'pick', 'Station', { questionId: q.id, optionId: o.id, gestureId, stepSeq: s.stepSeq, cursor: o.rank, outcome: o.kind.tag.toLowerCase() });
+  emitCue(ctx, s.sessionId, 'picked', { questionId: q.id, optionId: o.id, rank: o.rank });
+  switch (o.kind.tag) {
+    case 'Reply':
+      appendLedger(ctx, s.sessionId, 'reply_released', 'Station', { questionId: q.id, optionId: o.id, gestureId, stepSeq: s.stepSeq, cursor: o.rank });
+      finishScan(ctx, s, q, 'Picked', { actor: 'Station', option: o, cue: 'reply_released', gestureId });
+      return { action: 'pick_reply' };
+    case 'Errand':
+      finishScan(ctx, s, q, 'Picked', { actor: 'Station', option: o, gestureId });
+      createErrandFromPick(ctx, cfg, session, q, o, gestureId);
+      return { action: 'pick_errand' };
+    case 'Call':
+      finishScan(ctx, s, q, 'Picked', { actor: 'Station', option: o, gestureId });
+      createCallFromPick(ctx, cfg, session, q, o, gestureId);
+      return { action: 'pick_call' };
+    case 'Search':
+      finishScan(ctx, s, q, 'Picked', { actor: 'Station', option: o, gestureId });
+      createSearchFromPick(ctx, cfg, session, q, o, gestureId);
+      return { action: 'pick_search' };
+    case 'Category':
+      pickCategory(ctx, s, session, q, o, gestureId);
+      return { action: 'pick_category' };
+    case 'Menu':
+      pickMenuItem(ctx, s, session, q, o, gestureId);
+      return { action: 'menu_item' };
+  }
+}
+
+// ---------- D18 follow-up turns: categories after a confirmed search, places after a category ----------
+
+/** A categories turn: opened by a confirmed Search. Only its options may be Category options. */
+export function isCategoriesTurn(q: Question): boolean {
+  return q.parentQuestionId !== 0n && q.via === 'search';
+}
+
+/**
+ * A follow-up question for the agent, on the person's original question (`parentQuestionId`, its text copied so
+ * the agent and the board read the same words). It takes the next question number, like a menu follow-up.
+ */
+function createFollowUp(
+  ctx: Ctx,
+  sessionId: bigint,
+  f: { from: Question; via: 'search' | 'category'; category: string; requestId: string; job: Extract<JobKind['tag'], 'Categories' | 'Search'> },
+): Question {
+  const root = f.from.parentQuestionId !== 0n ? (ctx.db.question.id.find(f.from.parentQuestionId) ?? f.from) : f.from;
+  const session = ctx.db.session.id.find(sessionId)!; // re-read: the caller's copy may be older
+  const number = session.questionCount + 1;
+  ctx.db.session.id.update({ ...session, questionCount: number });
+  const q = ctx.db.question.insert({
+    id: 0n,
+    sessionId,
+    requestId: f.requestId,
+    origin: root.origin,
+    via: f.via,
+    menuItem: root.menuItem,
+    askedBy: ctx.sender,
+    text: root.text,
+    number,
+    answerMode: { tag: 'Pick' },
+    version: 0,
+    pendingVersion: 0,
+    pendingAnswerMode: { tag: 'Pick' },
+    status: { tag: 'Drafting' },
+    outcome: undefined,
+    pickedOptionId: undefined,
+    replyText: undefined,
+    replyTone: undefined,
+    listenMs: 0,
+    askedAt: ctx.timestamp,
+    readyAt: undefined,
+    releasedAt: undefined,
+    spokenAt: undefined,
+    endedAt: undefined,
+    parentQuestionId: root.id,
+    category: f.category,
+  });
+  createJob(ctx, f.job, {
+    sessionId,
+    questionId: q.id,
+    webSearchAllowed: f.job === 'Search' && hasConsent(ctx.db, 'WebSearch', ''),
+    memoryAllowed: hasConsent(ctx.db, 'Memory', ''),
+  });
+  appendLedger(ctx, sessionId, 'question', 'Station', { questionId: q.id, outcome: f.via === 'search' ? 'categories' : 'category_search', reason: `parent:${root.id}` });
+  return q;
+}
+
+/** A Category pick: the categories turn ends Picked and a search turn asks the agent for places in that category. */
+function pickCategory(ctx: Ctx, s: ScanState, session: Session, q: Question, o: AnswerOption, gestureId: string): void {
+  const follow = createFollowUp(ctx, session.id, {
+    from: q,
+    via: 'category',
+    category: o.label !== '' ? o.label : o.text,
+    requestId: `category:${gestureId}`,
+    job: 'Search',
+  });
+  appendLedger(ctx, session.id, 'question', 'Station', { questionId: follow.id, optionId: o.id, gestureId, outcome: 'category' });
+  // Ends the categories turn; startNextIfQueued then prepares the search turn, the newest waiting question.
+  finishScan(ctx, s, q, 'Picked', { actor: 'Station', option: o, gestureId });
+}
+
+/**
+ * A search was confirmed: the categories turn opens (the agent answers it with up to four Category options, no web
+ * call), and is prepared at once unless another scan is under way (then it waits its turn).
+ */
+export function openCategories(ctx: Ctx, sessionId: bigint, search: SearchRequest): Question | undefined {
+  const parent = ctx.db.question.id.find(search.questionId);
+  if (!parent) return undefined;
+  const follow = createFollowUp(ctx, sessionId, { from: parent, via: 'search', category: '', requestId: `search:${search.id}`, job: 'Categories' });
+  setSearchFollowUp(ctx, search.id, follow.id);
+  const s = ctx.db.scanState.sessionId.find(sessionId);
+  if (s && !isScanActive(s) && s.phase.tag !== 'Paused') startNextIfQueued(ctx, s);
+  return follow;
 }
 
 // ---------- The person's own menu (D11, PLAN Q9) ----------
@@ -577,6 +770,8 @@ export function openMenu(ctx: Ctx, s: ScanState, session: Session, gestureId: st
     releasedAt: undefined,
     spokenAt: undefined,
     endedAt: undefined,
+    parentQuestionId: 0n,
+    category: '',
   });
   MENU_ITEMS.forEach((m, i) => {
     ctx.db.answerOption.insert({
@@ -595,6 +790,7 @@ export function openMenu(ctx: Ctx, s: ScanState, session: Session, gestureId: st
       actionJson: '',
       clipMs: undefined,
       createdAt: ctx.timestamp,
+      label: '',
     });
   });
   emitCue(ctx, session.id, 'menu_open', { questionId: q.id });
@@ -632,6 +828,8 @@ function pickMenuItem(ctx: Ctx, s: ScanState, session: Session, menuQ: Question,
     releasedAt: undefined,
     spokenAt: undefined,
     endedAt: undefined,
+    parentQuestionId: 0n,
+    category: '',
   });
   createJob(ctx, 'Options', {
     sessionId: session.id,
@@ -757,7 +955,10 @@ export function resume(ctx: Ctx, s: ScanState, by: Actor, gestureId?: string): S
   const cleared: ScanState = { ...s, phase: { tag: 'Idle' }, pauseReason: undefined, pausedAt: undefined };
   const q = ctx.db.question.id.find(s.questionId);
   let next: ScanState;
-  if (q && q.status.tag === 'Scanning') {
+  if (q && q.status.tag === 'Scanning' && isDirect(ctx.db)) {
+    // D18: the list is read again from option 1 (a newer version first, if one is waiting), as a new list.
+    next = q.pendingVersion > 0 ? switchPending(ctx, cleared, q) : enterReading(ctx, cleared, 1, { freshOption: true, listStart: true });
+  } else if (q && q.status.tag === 'Scanning') {
     const cursor = s.answerMode.tag === 'YesNo' ? 0 : Math.max(1, s.resumeCursor);
     next = enterReading(ctx, cleared, cursor, { freshOption: true });
   } else if (q && (q.status.tag === 'Drafting' || q.status.tag === 'Ready')) {

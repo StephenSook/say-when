@@ -85,11 +85,15 @@ export function micros(ts: Timestamp | undefined): bigint {
   return ts.microsSinceUnixEpoch;
 }
 
-/** A fresh database after `init`, published by OWNER. */
-export function emptyDb(): Test {
+/**
+ * A fresh database after `init`, published by OWNER. A new database answers by direct select (D18); the suites
+ * written for the scanning cursor ask for `scan`, so they run exactly as before.
+ */
+export function emptyDb(mode: 'scan' | 'direct' = 'scan'): Test {
   const test = createModuleTestHarness(spacetimedb, m);
   test.clock.set(new Timestamp(NOW_MICROS));
   as(test, OWNER, (ctx) => m.init(ctx, {}));
+  if (mode === 'scan') as(test, OWNER, (ctx) => m.setInputMode(ctx, { mode: 'scan' }));
   return test;
 }
 
@@ -108,8 +112,8 @@ export function beat(test: Test, healthy = true): void {
 }
 
 /** Four paired devices, an active session, one healthy heartbeat. The partner is a caregiver. */
-export function newDb(): Test {
-  const test = emptyDb();
+export function newDb(mode: 'scan' | 'direct' = 'scan'): Test {
+  const test = emptyDb(mode);
   pair(test, STATION, 'station');
   pair(test, PARTNER, 'partner', true);
   pair(test, SPEAKER, 'speaker');
@@ -156,7 +160,7 @@ export function claim(test: Test, questionId: bigint, kind: 'Options' | 'ErrandP
 }
 
 export function reply(text: string, extra: Partial<OptionInput> = {}): OptionInput {
-  return { kind: 'reply', text, tone: 'warm', laugh: false, provenance: 'memory', sources: [], memoryRefs: [], actionJson: '', ...extra };
+  return { kind: 'reply', text, tone: 'warm', laugh: false, provenance: 'memory', sources: [], memoryRefs: [], actionJson: '', label: '', ...extra };
 }
 
 export const FORM_KEY = 'care_team_request';
@@ -171,6 +175,7 @@ export function errandOption(text = 'Send the care team a lunch request', formKe
     sources: [],
     memoryRefs: [],
     actionJson: JSON.stringify({ formKey, formUrl: 'demo', formTitle: 'Care team request', fields: [{ label: 'Request', value: 'Lunch, please' }] }),
+    label: 'Send request',
   };
 }
 
@@ -193,6 +198,7 @@ export function callOption(test: Test, requestId = 'call-1', contactId = 'leon')
       digest: CALL_DIGEST,
       expiresAt: Number(now(test).toMillis()) + 120_000,
     }),
+    label: 'Call Leon',
   };
 }
 
@@ -267,7 +273,9 @@ export interface GestureOpts {
 }
 
 /** Relays one command as the station, by default heard at the current step on the current option. */
-export function gesture(test: Test, command: 'YES' | 'NO' | 'CONFIRM' | 'STOP' | 'HEADSET_OFF', opts: GestureOpts = {}): GestureLog {
+export type CommandWord = 'YES' | 'NO' | 'CONFIRM' | 'STOP' | 'HEADSET_OFF' | 'PICK_1' | 'PICK_2' | 'PICK_3' | 'PICK_4';
+
+export function gesture(test: Test, command: CommandWord, opts: GestureOpts = {}): GestureLog {
   const s = scan(test);
   const gestureId = opts.gestureId ?? `g-${nextGesture++}`;
   as(test, STATION, (ctx) =>

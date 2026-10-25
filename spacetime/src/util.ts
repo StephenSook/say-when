@@ -3,7 +3,7 @@
 import { ScheduleAt, Timestamp } from 'spacetimedb';
 import { SenderError } from 'spacetimedb/server';
 import type { Ctx } from './ctx';
-import type { Command, ConsentScope, PipelineEvent, Role } from './schema';
+import type { Command, ConsentScope, InputMode, PipelineEvent, Role } from './schema';
 
 // ---------- Time ----------
 
@@ -219,8 +219,16 @@ export function parseCommand(value: string): Command {
       return { tag: 'Stop' };
     case 'HEADSET_OFF':
       return { tag: 'HeadsetOff' };
+    case 'PICK_1':
+      return { tag: 'Pick1' };
+    case 'PICK_2':
+      return { tag: 'Pick2' };
+    case 'PICK_3':
+      return { tag: 'Pick3' };
+    case 'PICK_4':
+      return { tag: 'Pick4' };
     default:
-      throw new SenderError('command must be YES, NO, CONFIRM, STOP or HEADSET_OFF');
+      throw new SenderError('command must be YES, NO, CONFIRM, STOP, HEADSET_OFF or PICK_1 to PICK_4');
   }
 }
 
@@ -230,7 +238,47 @@ const COMMAND_WIRE: Record<Command['tag'], string> = {
   Confirm: 'CONFIRM',
   Stop: 'STOP',
   HeadsetOff: 'HEADSET_OFF',
+  Pick1: 'PICK_1',
+  Pick2: 'PICK_2',
+  Pick3: 'PICK_3',
+  Pick4: 'PICK_4',
 };
+
+/** The rank a PICK command names (1 to 4), or 0 for any other command (D18). */
+export function pickRank(command: Command): number {
+  switch (command.tag) {
+    case 'Pick1':
+      return 1;
+    case 'Pick2':
+      return 2;
+    case 'Pick3':
+      return 3;
+    case 'Pick4':
+      return 4;
+    default:
+      return 0;
+  }
+}
+
+/** `set_input_mode`'s argument: `direct` or `scan`. */
+export function parseInputMode(value: string): InputMode {
+  if (value === 'direct') return { tag: 'Direct' };
+  if (value === 'scan') return { tag: 'Scan' };
+  throw new SenderError('mode must be direct or scan');
+}
+
+/**
+ * A 16-hex-character FNV-1a 64-bit digest, for the module's own read-backs (a search request's). Each request
+ * hashes its own id with its text, so a digest heard for one request never matches another.
+ */
+export function digest16(text: string): string {
+  let h = 0xcbf29ce484222325n;
+  for (let i = 0; i < text.length; i++) {
+    h ^= BigInt(text.charCodeAt(i));
+    h = (h * 0x100000001b3n) & 0xffffffffffffffffn;
+  }
+  return h.toString(16).padStart(16, '0');
+}
 
 export function commandWire(command: Command): string {
   return COMMAND_WIRE[command.tag];

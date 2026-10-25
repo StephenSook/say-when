@@ -15,8 +15,11 @@ import { schema, t, table, type Infer } from 'spacetimedb/server';
 export const Role = t.enum('Role', ['Station', 'Partner', 'Speaker', 'Agent']);
 export type Role = Infer<typeof Role>;
 
-/** Wire strings are the D11 words: YES, NO, CONFIRM, STOP, HEADSET_OFF. */
-export const Command = t.enum('Command', ['Yes', 'No', 'Confirm', 'Stop', 'HeadsetOff']);
+/**
+ * Wire strings are the D11 words: YES, NO, CONFIRM, STOP, HEADSET_OFF; and for direct select (D18,
+ * docs/direct-select.md) PICK_1 to PICK_4, one unit variant per rank (`Pick1` is PICK_1).
+ */
+export const Command = t.enum('Command', ['Yes', 'No', 'Confirm', 'Stop', 'HeadsetOff', 'Pick1', 'Pick2', 'Pick3', 'Pick4']);
 export type Command = Infer<typeof Command>;
 
 export const Phase = t.enum('Phase', ['Idle', 'Preparing', 'Reading', 'Window', 'Veto', 'Paused']);
@@ -55,10 +58,15 @@ export const QuestionStatus = t.enum('QuestionStatus', [
 ]);
 export type QuestionStatus = Infer<typeof QuestionStatus>;
 
-export const OptionKind = t.enum('OptionKind', ['Reply', 'Errand', 'Call', 'Menu']);
+/** `Search` offers a web search (read-back and confirm first); `Category` is one search topic after that confirm (D18). */
+export const OptionKind = t.enum('OptionKind', ['Reply', 'Errand', 'Call', 'Menu', 'Search', 'Category']);
 export type OptionKind = Infer<typeof OptionKind>;
 
-export const JobKind = t.enum('JobKind', ['Options', 'ErrandPreview', 'Remember']);
+/**
+ * `Categories`: after a confirmed Search, up to four Category options for the parent question (no web call).
+ * `Search`: after a Category pick, run the search for that category and answer with Reply options (D18).
+ */
+export const JobKind = t.enum('JobKind', ['Options', 'ErrandPreview', 'Remember', 'Categories', 'Search']);
 export type JobKind = Infer<typeof JobKind>;
 
 export const JobStatus = t.enum('JobStatus', ['Pending', 'Claimed', 'Done', 'Failed', 'Cancelled']);
@@ -104,6 +112,17 @@ export type ErrandTimerKind = Infer<typeof ErrandTimerKind>;
 export const CallTimerKind = t.enum('CallTimerKind', ['Readback', 'ConfirmWindow', 'Lease']);
 export type CallTimerKind = Infer<typeof CallTimerKind>;
 
+/** How the person answers (D18): `Scan` is the cursor with YES, NO and CONFIRM; `Direct` is four gestures for four options. */
+export const InputMode = t.enum('InputMode', ['Scan', 'Direct']);
+export type InputMode = Infer<typeof InputMode>;
+
+/** A web search the person picked, waiting for its read-back and confirm (D18). Confirmed, Stopped and Refused are final. */
+export const SearchStatus = t.enum('SearchStatus', ['Prepared', 'AwaitingConfirm', 'Confirmed', 'Stopped', 'Refused']);
+export type SearchStatus = Infer<typeof SearchStatus>;
+
+export const SearchTimerKind = t.enum('SearchTimerKind', ['Readback', 'ConfirmWindow']);
+export type SearchTimerKind = Infer<typeof SearchTimerKind>;
+
 // ---------- Shared object types ----------
 
 /** The existing Option row contract: `{ source, url?, place_id?, fetched_at }`. */
@@ -125,6 +144,8 @@ export const OptionInput = t.object('OptionInput', {
   sources: t.array(SourceRef),
   memoryRefs: t.array(t.string()),
   actionJson: t.string(),
+  /** D18: the 1 to 3 word earpiece label ("Good"); empty means read `text`. At most 40 characters. */
+  label: t.string(),
 });
 export type OptionInput = Infer<typeof OptionInput>;
 
@@ -179,6 +200,8 @@ export const config = table(
     jobLeaseMs: t.u32(),
     jobMaxAttempts: t.u8(),
     pairingTtlMs: t.u32(),
+    /** D18. `Direct` by default on a new database; `set_input_mode` changes it while no session is active. */
+    inputMode: InputMode,
   }),
 );
 export type Config = Infer<typeof config.rowType>;
@@ -273,6 +296,13 @@ export const question = table(
     releasedAt: t.option(t.timestamp()),
     spokenAt: t.option(t.timestamp()),
     endedAt: t.option(t.timestamp()),
+    /**
+     * D18 follow-ups: the person's original question for a categories turn (after a confirmed Search, `via`
+     * `search`) or a search turn (after a Category pick, `via` `category`); 0 for any other question.
+     */
+    parentQuestionId: t.u64(),
+    /** D18: the picked category's label for a search turn; empty otherwise. */
+    category: t.string(),
   }),
 );
 export type Question = Infer<typeof question.rowType>;
@@ -300,6 +330,8 @@ export const answerOption = table(
     actionJson: t.string(),
     clipMs: t.option(t.u32()),
     createdAt: t.timestamp(),
+    /** D18: the short earpiece label ("Good"); empty means read `text`. */
+    label: t.string(),
   }),
 );
 export type AnswerOption = Infer<typeof answerOption.rowType>;
@@ -334,6 +366,11 @@ export const scanState = table(
     pausedAt: t.option(t.timestamp()),
     resumeCursor: t.u8(),
     updatedAt: t.timestamp(),
+    /**
+     * D18: `step_seq` when the current list's first option began reading. In Direct mode a pick counts only if the
+     * station heard a step from this list on (`list_start_seq <= heard_step_seq <= step_seq`).
+     */
+    listStartSeq: t.u64(),
   }),
 );
 export type ScanState = Infer<typeof scanState.rowType>;
@@ -537,6 +574,57 @@ export const callTimer = table(
   }),
 );
 export type CallTimer = Infer<typeof callTimer.rowType>;
+
+/**
+ * D18: a web search the person picked. The module writes the read-back ("Search the web for ideas? One: yes. Two:
+ * cancel.") and its digest; the station reads it back and reports it done; PICK_1 inside the window, with that
+ * digest, confirms it once, and the confirm opens the categories turn (`follow_up_question_id`). No content beyond
+ * the module's own fixed sentence.
+ */
+export const searchRequest = table(
+  {
+    indexes: [
+      { accessor: 'searchByStatus', algorithm: 'btree', columns: ['status'] },
+      { accessor: 'searchBySession', algorithm: 'btree', columns: ['sessionId'] },
+    ],
+  },
+  t.row('SearchRequest', {
+    id: t.u64().primaryKey().autoInc(),
+    sessionId: t.u64(),
+    questionId: t.u64(),
+    optionId: t.u64(),
+    status: SearchStatus,
+    readBackText: t.string(),
+    digest: t.string(),
+    reasonCode: t.string(),
+    reason: t.string(),
+    windowSeq: t.u32(),
+    readbackDoneAt: t.option(t.timestamp()),
+    confirmOpensAt: t.option(t.timestamp()),
+    confirmClosesAt: t.option(t.timestamp()),
+    confirmedAt: t.option(t.timestamp()),
+    confirmGestureId: t.string(),
+    stopGestureId: t.string(),
+    followUpQuestionId: t.u64(),
+    createdAt: t.timestamp(),
+    updatedAt: t.timestamp(),
+    endedAt: t.option(t.timestamp()),
+  }),
+);
+export type SearchRequest = Infer<typeof searchRequest.rowType>;
+
+/** Schedule table bound to `search_timeout`. `seq` is the request's `windowSeq`. */
+export const searchTimer = table(
+  {},
+  t.row('SearchTimer', {
+    scheduledId: t.u64().primaryKey().autoInc(),
+    scheduledAt: t.scheduleAt(),
+    searchId: t.u64().index('btree'),
+    kind: SearchTimerKind,
+    seq: t.u32(),
+  }),
+);
+export type SearchTimer = Infer<typeof searchTimer.rowType>;
 
 // ---------- Agent work, pipeline, devices, cues and the other schedules (2.9) ----------
 
@@ -790,6 +878,8 @@ const spacetimedb = schema(
     wordTiming,
     sandboxSettings,
     sandboxMeter,
+    searchRequest,
+    searchTimer,
   },
   {
     // Optional, so a teammate can publish a dev database with no secrets. Values arrive from shell variables

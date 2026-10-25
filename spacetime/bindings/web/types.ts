@@ -67,6 +67,9 @@ export const AgentQueueItem = __t.object("AgentQueueItem", {
   recentErrandTitle: __t.string(),
   recentErrandSentAt: __t.option(__t.timestamp()),
   createdAt: __t.timestamp(),
+  parentQuestionId: __t.u64(),
+  parentQuestionText: __t.string(),
+  category: __t.string(),
 });
 export type AgentQueueItem = __Infer<typeof AgentQueueItem>;
 
@@ -99,6 +102,7 @@ export const AnswerOption = __t.object("AnswerOption", {
   actionJson: __t.string(),
   clipMs: __t.option(__t.u32()),
   createdAt: __t.timestamp(),
+  label: __t.string(),
 });
 export type AnswerOption = __Infer<typeof AnswerOption>;
 
@@ -204,6 +208,7 @@ export const BoardOption = __t.object("BoardOption", {
     return __t.array(SourceRef);
   },
   clipMs: __t.option(__t.u32()),
+  shortLabel: __t.string(),
 });
 export type BoardOption = __Infer<typeof BoardOption>;
 
@@ -246,8 +251,38 @@ export const BoardQuestion = __t.object("BoardQuestion", {
   releasedAt: __t.option(__t.timestamp()),
   spokenAt: __t.option(__t.timestamp()),
   askedAt: __t.timestamp(),
+  parentQuestionId: __t.u64(),
+  category: __t.string(),
 });
 export type BoardQuestion = __Infer<typeof BoardQuestion>;
+
+export const BoardSearch = __t.object("BoardSearch", {
+  searchId: __t.u64(),
+  sessionId: __t.u64(),
+  questionId: __t.u64(),
+  optionId: __t.u64(),
+  get status() {
+    return SearchStatus;
+  },
+  digest: __t.string(),
+  readBackText: __t.string(),
+  reasonCode: __t.string(),
+  reason: __t.string(),
+  confirmGestureId: __t.string(),
+  stopGestureId: __t.string(),
+  followUpQuestionId: __t.u64(),
+  createdAt: __t.timestamp(),
+  readbackDoneAt: __t.option(__t.timestamp()),
+  confirmOpensAt: __t.option(__t.timestamp()),
+  confirmClosesAt: __t.option(__t.timestamp()),
+  confirmedAt: __t.option(__t.timestamp()),
+  endedAt: __t.option(__t.timestamp()),
+  updatedAt: __t.timestamp(),
+});
+export type BoardSearch = __Infer<typeof BoardSearch>;
+
+export const BoardSearches = __t.object("BoardSearches", {});
+export type BoardSearches = __Infer<typeof BoardSearches>;
 
 export const BoardSessionLedger = __t.object("BoardSessionLedger", {});
 export type BoardSessionLedger = __Infer<typeof BoardSessionLedger>;
@@ -363,6 +398,10 @@ export const Command = __t.enum("Command", {
   Confirm: __t.unit(),
   Stop: __t.unit(),
   HeadsetOff: __t.unit(),
+  Pick1: __t.unit(),
+  Pick2: __t.unit(),
+  Pick3: __t.unit(),
+  Pick4: __t.unit(),
 });
 export type Command = __Infer<typeof Command>;
 
@@ -396,6 +435,9 @@ export const Config = __t.object("Config", {
   jobLeaseMs: __t.u32(),
   jobMaxAttempts: __t.u8(),
   pairingTtlMs: __t.u32(),
+  get inputMode() {
+    return InputMode;
+  },
 });
 export type Config = __Infer<typeof Config>;
 
@@ -592,11 +634,20 @@ export const IdleTimer = __t.object("IdleTimer", {
 });
 export type IdleTimer = __Infer<typeof IdleTimer>;
 
+// The tagged union or sum type for the algebraic type `InputMode`.
+export const InputMode = __t.enum("InputMode", {
+  Scan: __t.unit(),
+  Direct: __t.unit(),
+});
+export type InputMode = __Infer<typeof InputMode>;
+
 // The tagged union or sum type for the algebraic type `JobKind`.
 export const JobKind = __t.enum("JobKind", {
   Options: __t.unit(),
   ErrandPreview: __t.unit(),
   Remember: __t.unit(),
+  Categories: __t.unit(),
+  Search: __t.unit(),
 });
 export type JobKind = __Infer<typeof JobKind>;
 
@@ -678,6 +729,7 @@ export const OptionInput = __t.object("OptionInput", {
   },
   memoryRefs: __t.array(__t.string()),
   actionJson: __t.string(),
+  label: __t.string(),
 });
 export type OptionInput = __Infer<typeof OptionInput>;
 
@@ -687,6 +739,8 @@ export const OptionKind = __t.enum("OptionKind", {
   Errand: __t.unit(),
   Call: __t.unit(),
   Menu: __t.unit(),
+  Search: __t.unit(),
+  Category: __t.unit(),
 });
 export type OptionKind = __Infer<typeof OptionKind>;
 
@@ -820,6 +874,8 @@ export const Question = __t.object("Question", {
   releasedAt: __t.option(__t.timestamp()),
   spokenAt: __t.option(__t.timestamp()),
   endedAt: __t.option(__t.timestamp()),
+  parentQuestionId: __t.u64(),
+  category: __t.string(),
 });
 export type Question = __Infer<typeof Question>;
 
@@ -922,6 +978,7 @@ export const ScanState = __t.object("ScanState", {
   pausedAt: __t.option(__t.timestamp()),
   resumeCursor: __t.u8(),
   updatedAt: __t.timestamp(),
+  listStartSeq: __t.u64(),
 });
 export type ScanState = __Infer<typeof ScanState>;
 
@@ -943,6 +1000,60 @@ export const ScanTimerKind = __t.enum("ScanTimerKind", {
   ClipDeadline: __t.unit(),
 });
 export type ScanTimerKind = __Infer<typeof ScanTimerKind>;
+
+export const SearchRequest = __t.object("SearchRequest", {
+  id: __t.u64(),
+  sessionId: __t.u64(),
+  questionId: __t.u64(),
+  optionId: __t.u64(),
+  get status() {
+    return SearchStatus;
+  },
+  readBackText: __t.string(),
+  digest: __t.string(),
+  reasonCode: __t.string(),
+  reason: __t.string(),
+  windowSeq: __t.u32(),
+  readbackDoneAt: __t.option(__t.timestamp()),
+  confirmOpensAt: __t.option(__t.timestamp()),
+  confirmClosesAt: __t.option(__t.timestamp()),
+  confirmedAt: __t.option(__t.timestamp()),
+  confirmGestureId: __t.string(),
+  stopGestureId: __t.string(),
+  followUpQuestionId: __t.u64(),
+  createdAt: __t.timestamp(),
+  updatedAt: __t.timestamp(),
+  endedAt: __t.option(__t.timestamp()),
+});
+export type SearchRequest = __Infer<typeof SearchRequest>;
+
+// The tagged union or sum type for the algebraic type `SearchStatus`.
+export const SearchStatus = __t.enum("SearchStatus", {
+  Prepared: __t.unit(),
+  AwaitingConfirm: __t.unit(),
+  Confirmed: __t.unit(),
+  Stopped: __t.unit(),
+  Refused: __t.unit(),
+});
+export type SearchStatus = __Infer<typeof SearchStatus>;
+
+export const SearchTimer = __t.object("SearchTimer", {
+  scheduledId: __t.u64(),
+  scheduledAt: __t.scheduleAt(),
+  searchId: __t.u64(),
+  get kind() {
+    return SearchTimerKind;
+  },
+  seq: __t.u32(),
+});
+export type SearchTimer = __Infer<typeof SearchTimer>;
+
+// The tagged union or sum type for the algebraic type `SearchTimerKind`.
+export const SearchTimerKind = __t.enum("SearchTimerKind", {
+  Readback: __t.unit(),
+  ConfirmWindow: __t.unit(),
+});
+export type SearchTimerKind = __Infer<typeof SearchTimerKind>;
 
 export const Session = __t.object("Session", {
   id: __t.u64(),
@@ -996,6 +1107,20 @@ export const SessionReply = __t.object("SessionReply", {
 });
 export type SessionReply = __Infer<typeof SessionReply>;
 
+export const SessionSearch = __t.object("SessionSearch", {
+  searchId: __t.u64(),
+  get status() {
+    return SearchStatus;
+  },
+  readBackText: __t.string(),
+  digest: __t.string(),
+  confirmOpensAt: __t.option(__t.timestamp()),
+  confirmClosesAt: __t.option(__t.timestamp()),
+  reasonCode: __t.string(),
+  reason: __t.string(),
+});
+export type SessionSearch = __Infer<typeof SessionSearch>;
+
 export const SessionView = __t.object("SessionView", {
   sessionId: __t.u64(),
   role: __t.string(),
@@ -1017,6 +1142,9 @@ export const SessionView = __t.object("SessionView", {
   lastGestureOutcome: __t.string(),
   get reply() {
     return __t.option(SessionReply);
+  },
+  get search() {
+    return __t.option(SessionSearch);
   },
 });
 export type SessionView = __Infer<typeof SessionView>;
@@ -1058,6 +1186,7 @@ export const StationOption = __t.object("StationOption", {
   laugh: __t.bool(),
   clipMs: __t.option(__t.u32()),
   current: __t.bool(),
+  label: __t.string(),
 });
 export type StationOption = __Infer<typeof StationOption>;
 
