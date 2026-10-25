@@ -95,6 +95,12 @@ export interface AudioUnlockOptions {
   tick?: boolean;
   /** What a change in audio devices does: suspend and ask for a tap (default), or only report it. */
   onDeviceChange?: 'suspend' | 'report';
+  /**
+   * Once a tap has started the audio, resume the context by itself when the browser suspends it (Safari's
+   * interruption, another app taking the output). The browser allows it after that first tap; when it refuses, the
+   * state stays suspended and the page asks for the tap. Default false (the earpiece waits for a tap).
+   */
+  autoResume?: boolean;
   now?: () => number;
 }
 
@@ -109,6 +115,11 @@ export interface AudioUnlock {
   audioContext(): AudioContext | null;
   /** True while the context runs and no device change is waiting for a tap. */
   running(): boolean;
+  /**
+   * After a first tap, asks a suspended context to run again without one (no tick). Does nothing before the first
+   * tap, after close, or while a device change waits for a tap. The state follows when the browser agrees.
+   */
+  wake(): void;
   /** Plays a chime now, if audio runs. Returns false otherwise. */
   chime(name: ChimeName): boolean;
   close(): void;
@@ -239,6 +250,30 @@ export function createAudioUnlock(options: AudioUnlockOptions = {}): AudioUnlock
     for (const listener of [...listeners]) listener();
   };
 
+  /** When wake() last asked the context to resume, so a context the browser keeps suspending is not asked in a loop. */
+  let wokeAt = Number.NEGATIVE_INFINITY;
+
+  const wake = () => {
+    if (!ctx || snapshot.startedAt === null) return;
+    if (snapshot.state === 'device_changed' || snapshot.state === 'starting' || snapshot.state === 'locked') return;
+    if (ctx.state === 'running' || ctx.state === 'closed') return;
+    if (now() - wokeAt < 1_000) return;
+    wokeAt = now();
+    const asked = ctx;
+    try {
+      asked.resume().then(
+        () => {
+          if (ctx === asked) onStateChange();
+        },
+        () => {
+          // The browser wants a tap: the state already says so.
+        },
+      );
+    } catch {
+      // Same: a tap is needed.
+    }
+  };
+
   const onStateChange = () => {
     if (!ctx) return;
     // A device change waits for the tap whatever the context does meanwhile; only start() clears it.
@@ -246,7 +281,9 @@ export function createAudioUnlock(options: AudioUnlockOptions = {}): AudioUnlock
       set({ latencyMs: contextLatencyMs(ctx) });
       return;
     }
-    set({ state: fromContextState(ctx.state), latencyMs: contextLatencyMs(ctx) });
+    const next = fromContextState(ctx.state);
+    set({ state: next, latencyMs: contextLatencyMs(ctx) });
+    if (next === 'suspended' && options.autoResume) wake();
   };
 
   const onDevices = () => {
@@ -329,6 +366,7 @@ export function createAudioUnlock(options: AudioUnlockOptions = {}): AudioUnlock
     context: () => ctx,
     audioContext: () => ctx as unknown as AudioContext | null,
     running: () => snapshot.state === 'running' && ctx !== null && ctx.state === 'running',
+    wake,
     chime(name) {
       if (!ctx || snapshot.state !== 'running' || ctx.state !== 'running') return false;
       try {
