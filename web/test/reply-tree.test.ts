@@ -109,54 +109,60 @@ describe('the Suggested replies tree over the sample replay', () => {
     assert.equal((node(tree, 'web:hub') as { detail: string }).detail, '6 results from 2 searches, 1.8 s');
   });
 
-  test('up to four options, each with where it came from, and the one in the earpiece marked', () => {
-    const tree = treeAt(12);
+  test('up to four options, each with where it came from, its pick number, and the one in the earpiece marked', () => {
+    const tree = treeAt(6.3);
     const opts = options(tree);
     assert.deepEqual(opts.map((o) => o.heading), ['Option 1 of 4', 'Option 2 of 4', 'Option 3 of 4', 'Option 4 of 4']);
+    assert.deepEqual(opts.map((o) => o.badge), ['1', '2', '3', '4'], 'the number the person picks it by (D18)');
+    assert.deepEqual(opts.map((o) => o.label), ['Cafeteria', 'Thai place', 'Cafe on Bay', 'Too tired'], 'the earpiece labels');
     assert.deepEqual(opts.map((o) => o.source), [
       'From the web: example.net',
       'From the web: Google Maps',
       "From the person's notes and the web",
       'Drafted',
     ]);
-    assert.deepEqual(opts.map((o) => o.state), ['idle', 'reading', 'idle', 'idle'], 'option 2 is being read at 12 s');
+    assert.deepEqual(opts.map((o) => o.state), ['idle', 'reading', 'idle', 'idle'], 'option 2 is being read at 6.3 s');
     assert.equal(opts[1]!.word, 'In the earpiece now');
+    const waiting = options(treeAt(10));
+    assert.deepEqual(waiting.map((o) => o.state), ['idle', 'idle', 'idle', 'idle'], 'the wait for a pick marks no single option');
   });
 
   test('a select row picks exactly that option: it turns Picked, the rest dim, and the camera frames it', () => {
-    const veto = treeAt(17.9);
-    const during = options(veto);
+    const pickedNow = treeAt(12);
+    const during = options(pickedNow);
     assert.deepEqual(during.map((o) => o.state), ['dimmed', 'dimmed', 'picked', 'dimmed']);
-    assert.equal(during[2]!.pickLine, 'Picked by headset (YES). NO or STOP can still cancel it.', 'during the veto');
-    assert.equal(veto.pickedId, during[2]!.id);
-    assert.equal(veto.camera.intent, 'pick');
-    assert.deepEqual(veto.camera.nodeIds, [during[2]!.id]);
+    assert.equal(during[2]!.pickLine, 'Picked with 3, a single jaw clench.', 'said at once: no veto in direct select');
+    assert.equal(pickedNow.pickedId, during[2]!.id);
+    assert.equal(pickedNow.camera.intent, 'pick');
+    // Said at once (no veto): the camera frames the pick and its "Said out loud" step together.
+    assert.deepEqual(pickedNow.camera.nodeIds, [during[2]!.id, node(pickedNow, 'r1:said')!.id]);
 
-    const spoken = treeAt(22);
+    const spoken = treeAt(15);
     const after = options(spoken);
     assert.equal(after.filter((o) => o.state === 'picked').length, 1);
-    assert.equal(after[2]!.pickLine, 'Picked by headset (YES). Spoken in the room.');
+    assert.equal(after[2]!.pickLine, 'Picked with 3, a single jaw clench. Spoken in the room.');
     assert.equal(node(spoken, 'r1:said')?.word, 'Spoken');
     assert.ok(spoken.edges.some((e) => e.tone === 'picked' && e.target === after[2]!.id), 'the path into the pick is drawn as picked');
     assert.equal(spoken.edges.filter((e) => e.tone === 'picked' && e.target.endsWith(':o3')).length, 1);
     assert.equal(after.filter((o) => o.state === 'dimmed').length, 3);
   });
 
-  test('errand steps grow only from errand rows: read back, the confirm window, then sent; CONFIRM moves the camera', () => {
-    const picked = treeAt(25.37);
+  test('errand steps grow only from errand rows: read back, the confirm window, then sent; the confirm moves the camera', () => {
+    const picked = treeAt(20.8);
     assert.equal(options(picked, 2).find((o) => o.state === 'picked')?.tag, 'Errand');
+    assert.equal(options(picked, 2).find((o) => o.state === 'picked')?.pickLine, 'Picked with 1, an imagined left fist.');
     assert.equal(node(picked, 'r2:e1'), undefined, 'no errand row yet, so no errand step');
-    const filling = treeAt(27);
+    const filling = treeAt(21.5);
     assert.equal(node(filling, 'r2:e1')?.word, 'Working');
     assert.equal(node(filling, 'r2:e2'), undefined);
-    const waiting = treeAt(33);
+    const waiting = treeAt(29);
     assert.equal(node(waiting, 'r2:e2')?.word, 'Waiting');
-    assert.equal(node(waiting, 'r2:e2')?.kind === 'step' && (node(waiting, 'r2:e2') as { meta: string }).meta, 'Waiting for CONFIRM, a single jaw clench.');
+    assert.equal(node(waiting, 'r2:e2')?.kind === 'step' && (node(waiting, 'r2:e2') as { meta: string }).meta, 'Waiting for 1 to send, 2 to cancel.');
     assert.equal(node(waiting, 'r2:e3'), undefined);
-    const sent = treeAt(38);
+    const sent = treeAt(33);
     assert.equal(node(sent, 'r2:e2')?.word, 'Confirmed');
     assert.equal(node(sent, 'r2:e3')?.word, 'Sent');
-    const confirming = treeAt(35);
+    const confirming = treeAt(30.5);
     assert.equal(confirming.camera.intent, 'confirm');
     assert.deepEqual(confirming.camera.nodeIds, [node(confirming, 'r2:e2')!.id, node(confirming, 'r2:e3')!.id]);
   });
@@ -180,7 +186,8 @@ describe('the Suggested replies tree over the sample replay', () => {
     const two = treeAt(71.5);
     assert.notEqual(one.questionId, two.questionId);
     assert.equal(two.camera.intent, 'overview');
-    assert.equal(treeAt(6).camera.key, treeAt(12).camera.key, 'reading options one after another does not move the camera');
+    assert.equal(treeAt(6).camera.key, treeAt(8).camera.key, 'reading options one after another does not move the camera');
+    assert.equal(treeAt(6).camera.key, treeAt(10).camera.key, 'nor does the wait for a pick');
   });
 
   test('no broken value and no memory text that was not shared, every 100 ms of a loop', () => {
@@ -213,7 +220,10 @@ describe('the Suggested replies tree on the live board', () => {
     const opts = options(tree);
     assert.deepEqual(opts.map((o) => o.text), [null, null, null, null]);
     assert.ok(opts.every((o) => o.source === 'Sources not shared on this screen'));
-    assert.deepEqual(opts.map((o) => o.state), ['idle', 'reading', 'idle', 'idle'], 'the scan window is open on option 2');
+    assert.deepEqual(opts.map((o) => o.state), ['idle', 'idle', 'idle', 'idle'], 'the Window is the wait for a pick: no single option is marked');
+    assert.deepEqual(opts.map((o) => o.label), [null, null, null, null], '"Option N" is no label');
+    const reading = options(deriveReplyTree(boardRows(midScan({ scanStates: [scan({ phase: { tag: 'Reading' }, cursor: 2 })] }))));
+    assert.deepEqual(reading.map((o) => o.state), ['idle', 'reading', 'idle', 'idle'], 'the cursor marks the option being read');
     // The smoke plan step is labelled "smoke options", not claude: the screen does not name Claude.
     assert.equal((node(tree, 'r1:draft') as { tool: string | null }).tool, 'Agent');
     assert.doesNotMatch(JSON.stringify(tree), BROKEN);
@@ -232,13 +242,15 @@ describe('the Suggested replies tree on the live board', () => {
     assert.equal(keyboard.input, 'keyboard');
     const pick = options(deriveReplyTree(keyboard)).find((o) => o.state === 'picked');
     assert.equal(pick?.rank, 2);
-    assert.equal(pick?.pickLine, 'Picked by key Y (keyboard test).');
+    assert.equal(pick?.pickLine, 'Picked with key 2 (keyboard test).');
     assert.doesNotMatch(JSON.stringify(deriveReplyTree(keyboard)), /headset/i);
 
     const headset = options(deriveReplyTree(picked('headset-demo'))).find((o) => o.state === 'picked');
-    assert.equal(headset?.pickLine, 'Picked by headset (YES).');
-    assert.equal(pickPhrase('switch'), 'Picked by a short switch press (YES)');
-    assert.equal(pickPhrase('unknown'), 'Picked with YES');
+    assert.equal(headset?.pickLine, 'Picked with 2, an imagined right fist.');
+    assert.equal(pickPhrase('switch', 1), 'Picked with 1, a short switch press');
+    assert.equal(pickPhrase('switch', 3), 'Picked with 3', '3 is not on the switch: no signal named');
+    assert.equal(pickPhrase('unknown', 2), 'Picked with 2');
+    assert.equal(pickPhrase('headset', 4), 'Picked with 4, a double jaw clench');
   });
 
   test('an errand option picked: steps appear only once its errand row exists, with the true input for CONFIRM', () => {
@@ -256,7 +268,7 @@ describe('the Suggested replies tree on the live board', () => {
     const waiting = deriveReplyTree(boardRows(midScan({ ...pickedErrand, errands: [errand({ optionId: 103n })] })));
     const steps = waiting.nodes.filter((n) => n.kind === 'step');
     assert.deepEqual(steps.map((n) => n.word), ['Done', 'Waiting']);
-    assert.equal(steps[1]?.kind === 'step' && steps[1].meta, 'Waiting for CONFIRM, key C.');
+    assert.equal(steps[1]?.kind === 'step' && steps[1].meta, 'Waiting for 1 to send, 2 to cancel.');
     assert.equal(steps[1]?.kind === 'step' && steps[1].until !== null, true, 'the confirm window counts down to its close');
   });
 
@@ -422,7 +434,7 @@ describe('the camera never cuts a card at the screen edge', () => {
   });
 
   test('the pick frame at 1920: the green option and "Said out loud" whole, close in, no card cut', () => {
-    const tree = treeAt(20);
+    const tree = treeAt(15);
     assert.equal(tree.camera.intent, 'pick');
     assert.ok(node(tree, 'r1:said'), 'the "Said out loud" step is there');
     const vp = cameraFraming(tree.camera, tree.nodes, 1920, 899);

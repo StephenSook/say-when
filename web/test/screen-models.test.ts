@@ -84,15 +84,16 @@ describe('screen models over the sample replay', () => {
 
   test('the partner phone follows the question in plain words', () => {
     assert.equal(partnerAt(at(1)).status.text, PARTNER_TEXT.listening);
-    assert.equal(partnerAt(at(15)).status.text, 'They are choosing, option 3 of 4.');
-    assert.equal(partnerAt(at(15)).hint, PARTNER_TEXT.listeningToOptions);
-    assert.equal(partnerAt(at(18)).status.text, PARTNER_TEXT.picked, 'inside the veto');
-    assert.equal(partnerAt(at(20)).status.text, PARTNER_TEXT.answered);
-    assert.equal(partnerAt(at(20)).answer?.text, 'The cafe on Bay St, it has a ramp.');
-    assert.match(partnerAt(at(33)).status.text, /confirm/i);
-    assert.match(partnerAt(at(46)).status.text, /confirm the call/i);
-    assert.equal(partnerAt(at(64.5)).status.text, PARTNER_TEXT.paused);
-    assert.equal(partnerAt(at(68)).status.text, PARTNER_TEXT.headsetOff);
+    // Direct select (D18): the list is read once, numbered, then the wait for a pick.
+    assert.equal(partnerAt(at(7)).status.text, 'They are choosing, option 3 of 4.');
+    assert.equal(partnerAt(at(7)).hint, PARTNER_TEXT.listeningToOptions);
+    assert.equal(partnerAt(at(10)).status.text, 'They are choosing from 4 options.');
+    assert.equal(partnerAt(at(15)).status.text, PARTNER_TEXT.answered);
+    assert.equal(partnerAt(at(15)).answer?.text, 'The cafe on Bay St, it has a ramp.');
+    assert.match(partnerAt(at(29)).status.text, /confirm/i);
+    assert.match(partnerAt(at(43.5)).status.text, /confirm the call/i);
+    assert.equal(partnerAt(at(61.5)).status.text, PARTNER_TEXT.paused);
+    assert.equal(partnerAt(at(65)).status.text, PARTNER_TEXT.headsetOff);
   });
 
   test('the partner phone never shows the words of an option the person did not pick', () => {
@@ -103,35 +104,41 @@ describe('screen models over the sample replay', () => {
     }
   });
 
-  test('Live conversation reads with real word timings, keeps the way out on screen, and shows the veto', () => {
-    const reading = conversationAt(at(15));
+  test('Live conversation reads the numbered list with real word timings, waits for a pick, and says the pick at once', () => {
+    const reading = conversationAt(at(7));
     assert.equal(reading.cursor?.phase, 'reading');
-    assert.ok(reading.cursor?.words && reading.cursor.words.length === 9, 'the clip word timings arrive with the start of the read');
+    assert.ok(reading.cursor?.words && reading.cursor.words.length === 4, 'the clip word timings ("Three: Cafe on Bay.") arrive with the start of the read');
     assert.equal(reading.legend, PICK_LEGEND);
-    assert.deepEqual(reading.pass, { pass: 1, max: 2 });
-    const veto = conversationAt(at(18));
-    assert.equal(veto.vetoing, true);
-    assert.equal(veto.picked?.text, 'The cafe on Bay St, it has a ramp.');
-    const waiting = conversationAt(at(33));
+    assert.deepEqual(reading.pass, { pass: 1, max: 1 });
+    const wait = conversationAt(at(10));
+    assert.equal(wait.cursor?.optionId, null);
+    assert.equal(wait.cursor?.waitingFor, '1 to 4');
+    assert.equal(wait.cursor?.phase, 'window');
+    const picked = conversationAt(at(12));
+    assert.equal(picked.vetoing, false, 'no veto in direct select');
+    assert.equal(picked.picked?.text, 'The cafe on Bay St, it has a ramp.');
+    const waiting = conversationAt(at(29));
     assert.equal(waiting.agent?.kind, 'errand');
     assert.equal(waiting.agent?.status, 'waiting');
-    assert.equal(conversationAt(at(64.5)).paused, 'paused');
-    assert.equal(conversationAt(at(68)).paused, 'headset_off');
+    assert.equal(waiting.agent?.sentence, 'Waiting for 1 to send, 2 to cancel. Nothing is sent yet.');
+    assert.equal(conversationAt(at(61.5)).paused, 'paused');
+    assert.equal(conversationAt(at(65)).paused, 'headset_off');
   });
 
-  test('Agents: CONFIRM waits, the send is shown, and STOP during the call shows the hang-up', () => {
-    const waiting = at(33).errands[0]!;
+  test('Agents: the confirm waits, the send is shown, and STOP during the call shows the hang-up', () => {
+    const waiting = at(29).errands[0]!;
     assert.equal(errandHeadline(waiting, 'ok', 'headset').text, 'Waiting for the person to confirm. Nothing has been sent.');
     assert.equal(errandBadge(waiting, 'ok').status, 'waiting');
-    assert.equal(errandHeadline(at(37).errands[0]!, 'ok', 'headset').status, 'done');
-    const hangingUp = at(61.8).calls[0]!;
+    assert.equal(errandHeadline(at(33).errands[0]!, 'ok', 'headset').status, 'done');
+    assert.equal(errandHeadline(at(33).errands[0]!, 'ok', 'headset').text, 'Sent after the person confirmed with 1 (an imagined left fist).');
+    const hangingUp = at(58.8).calls[0]!;
     assert.equal(hangingUp.status, 'connected');
     assert.equal(hangingUp.cancelRequested, true);
     assert.equal(callHeadline(hangingUp, 'ok', 'headset').text, 'Hanging up on Demo caregiver. The person used STOP.');
     assert.equal(callBadge(hangingUp, 'ok').word, 'Hanging up');
-    assert.equal(conversationAt(at(61.8)).agent?.sentence, 'Hanging up on Demo caregiver.', 'Conversation says it too');
-    assert.equal(partnerAt(at(61.8)).status.text, 'Hanging up.', 'and the phone, without the name');
-    const ended = at(63).calls[0]!;
+    assert.equal(conversationAt(at(58.8)).agent?.sentence, 'Hanging up on Demo caregiver.', 'Conversation says it too');
+    assert.equal(partnerAt(at(58.8)).status.text, 'Hanging up.', 'and the phone, without the name');
+    const ended = at(60).calls[0]!;
     assert.equal(ended.status, 'ended');
     assert.equal(callHeadline(ended, 'ok', 'headset').text, 'The call ended. The person hung up with STOP.');
   });

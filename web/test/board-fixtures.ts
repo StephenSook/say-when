@@ -58,6 +58,7 @@ export function config(partial: Partial<Config> = {}): Config {
     jobLeaseMs: 45000,
     jobMaxAttempts: 3,
     pairingTtlMs: 300000,
+    inputMode: { tag: 'Direct' },
     ...partial,
   };
 }
@@ -73,6 +74,7 @@ export function option(rank: number, partial: Partial<BoardOption> = {}): BoardO
     provenance: 'smoke',
     sources: [],
     clipMs: undefined,
+    shortLabel: `Option ${rank}`,
     ...partial,
   };
 }
@@ -96,6 +98,8 @@ export function question(partial: Partial<BoardQuestion> = {}): BoardQuestion {
     releasedAt: undefined,
     spokenAt: undefined,
     askedAt: ts(0),
+    parentQuestionId: 0n,
+    category: '',
     ...partial,
   };
 }
@@ -151,6 +155,7 @@ export function scan(partial: Partial<ScanRow> = {}): ScanRow {
     pausedAt: undefined,
     resumeCursor: 0,
     updatedAt: ts(6_000),
+    listStartSeq: 4n,
     ...partial,
   };
 }

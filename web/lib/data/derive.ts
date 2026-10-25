@@ -84,11 +84,12 @@ export function timeToFirstOption(questionEvents: readonly PipelineEvent[]): num
 /** The option in the earpiece: the one under the cursor while it is read or its window is open. */
 export function optionUnderCursor(scan: ScanState | null, options: readonly AnswerOption[]): AnswerOption | null {
   if (!scan || scan.cursor === null || scan.outcome !== null) return null;
-  if (scan.phase !== 'reading' && scan.phase !== 'window') return null;
+  // Direct select (D18): only a read is on one option; the Window after the list waits for any number.
+  if (scan.phase !== 'reading') return null;
   return options.find((option) => option.questionId === scan.questionId && option.version === scan.version && option.rank === scan.cursor) ?? null;
 }
 
-/** The option YES picked: during the veto and after it. null when nothing was picked. */
+/** The option the person picked: after the pick (and during a veto, on a scan database). null when nothing was picked. */
 export function pickedOption(scan: ScanState | null, options: readonly AnswerOption[]): AnswerOption | null {
   if (!scan || scan.pickedOptionId === null) return null;
   return options.find((option) => option.id === scan.pickedOptionId) ?? null;

@@ -112,9 +112,13 @@ describe('the try view model', () => {
       { id: 'o2', questionId: '21', version: 1, rank: 2, text: 'Noodle Bar is open late.', kind: 'reply' as const, tone: 'calm', sources: [] },
     ];
     const scan = { questionId: '21', version: 1, mode: 'answer' as const, answerMode: 'pick' as const, phase: 'window' as const, cursor: 2, stepStartedAt: 0, stepEndsAt: 1, pass: 1, maxPasses: 2, outcome: null, pickedOptionId: null };
-    const reading = tryView(input({ rows: rows({ questions: [q()], options: opts, scan }) }));
+    // Direct select (D18): the Window after the list is the wait for any number; no single option is "now".
+    const waiting = tryView(input({ rows: rows({ questions: [q()], options: opts, scan }) }));
+    assert.deepEqual(waiting.options.map((o) => o.now), [false, false]);
+    assert.equal(waiting.turn, 'Pick 1 to 2. Silence picks nothing.');
+    const reading = tryView(input({ rows: rows({ questions: [q()], options: opts, scan: { ...scan, phase: 'reading' as const } }) }));
     assert.deepEqual(reading.options.map((o) => o.now), [false, true]);
-    assert.equal(reading.turn, 'Option 2: YES picks it, NO skips it.');
+    assert.equal(reading.turn, 'Reading option 2 of 2. Tap its number any time.');
     assert.equal(reading.reply, null);
 
     const picked = { ...scan, phase: 'idle' as const, cursor: null, outcome: 'picked' as const, pickedOptionId: 'o2' };
@@ -147,7 +151,7 @@ describe('the try view model', () => {
   test('the notices say when the agent is offline and when voice is off, in plain words', () => {
     const v = tryView(input({ agentOnline: false, voice: 'off' }));
     assert.deepEqual(v.notices, [TRY_WORDS.agentOff, TRY_WORDS.voiceOff]);
-    assert.match(TRY_WORDS.honesty, /On-screen buttons stand in for the headset's YES, NO, CONFIRM and STOP/);
+    assert.match(TRY_WORDS.honesty, /On-screen buttons stand in for the headset's four picks \(1 to 4\) and STOP/);
   });
 
   test('settings default to the try database, never the demo, and /try is a role page with no demo board source', () => {
@@ -220,7 +224,7 @@ describe('the station engine for the try page', () => {
   test('an on-screen button is relayed with source button in keyboard mode, and ignored in headset mode', async () => {
     const { engine, conn } = await pairedEngine();
     engine.chooseMode('headset');
-    engine.press('YES');
+    engine.press('PICK_1');
     assert.equal(conn.named('gesture').length, 0, 'headset mode takes no buttons');
     engine.chooseMode('keyboard');
     engine.setSilent(true);
@@ -229,10 +233,10 @@ describe('the station engine for the try page', () => {
     await flush();
     conn.db.mySession.set([session(9n)]);
     await flush();
-    engine.press('YES');
+    engine.press('PICK_3');
     const g = conn.named('gesture')[0]?.args;
     assert.ok(g, 'the button was relayed');
-    assert.equal(g.command, 'YES');
+    assert.equal(g.command, 'PICK_3');
     assert.equal(g.source, 'button');
     assert.equal(g.confidence, 1);
     engine.stop();

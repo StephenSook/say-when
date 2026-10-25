@@ -14,6 +14,8 @@ import {
   caption,
   eventPillText,
   guessText,
+  isJawMarker,
+  pulseSide,
   headsetOffNow,
   modeBadge,
   nextBackoff,
@@ -135,7 +137,7 @@ describe('screen states', () => {
   test('a failed brain test dims the patches and says so in one line', () => {
     const view = buildBrainView(input({ meta: meta({ brainTest: { state: 'failed', summary: '11 of 20' } }) }));
     assert.equal(view.state, 'measuring');
-    assert.deepEqual(view.stateLine, { status: 'refused', text: 'Brain test failed. YES is a jaw clench today.' });
+    assert.deepEqual(view.stateLine, { status: 'refused', text: 'Brain test failed. 1 and 2 are jaw clenches today.' });
     assert.equal(view.c3.intensity, 0.5 * FAILED_TEST_DIM);
     assert.equal(view.details.brainTest, 'Brain test failed: 11 of 20');
   });
@@ -165,6 +167,26 @@ describe('mode pill', () => {
 describe('words', () => {
   const marker = (over: Partial<VizMarker>): VizMarker => ({ type: 'viz.marker', t: 0, id: 'm', command: 'YES', confidence: 0.82, source: 'imagery', ...over });
 
+  test('direct select (D18): the left fist is 1 on C4, the right fist 2 on C3; the jaw lane is 3, 4 and STOP', () => {
+    assert.equal(LABELS.legendC4, '1: C4 left-fist imagery');
+    assert.equal(LABELS.legendC3, '2: C3 right-fist imagery');
+    assert.equal(LABELS.jawLane, 'Jaw muscle, not brain');
+    assert.equal(LABELS.jawLegend, '3 single / 4 double / long = STOP');
+    assert.equal(pulseSide(marker({ command: 'PICK_1' })), 'c4');
+    assert.equal(pulseSide(marker({ command: 'PICK_2' })), 'c3');
+    assert.equal(pulseSide(marker({ command: 'PICK_3', source: 'jaw' })), null);
+    assert.equal(pulseSide(marker({ command: 'PICK_1', source: 'jaw' })), null, 'the jaw-only fallback never pulses the brain');
+    assert.equal(guessText(marker({ command: 'PICK_2' })), 'Guess 2 0.82');
+    assert.equal(guessText(marker({ command: 'PICK_3', source: 'jaw', confidence: null })), 'Jaw 3');
+    assert.equal(guessText(marker({ command: 'PICK_4', source: 'jaw', confidence: null })), 'Jaw 4');
+    assert.equal(guessText(marker({ command: 'STOP', source: 'jaw', confidence: null })), 'Jaw STOP');
+    assert.equal(guessText(marker({ command: 'PICK_1', source: 'jaw', confidence: null })), 'Jaw 1');
+    assert.equal(eventPillText(marker({ command: 'PICK_1', confidence: 0.7 })), '1 0.70');
+    assert.equal(eventPillText(marker({ command: 'PICK_4', source: 'jaw', confidence: null })), '4');
+    assert.equal(isJawMarker(marker({ command: 'PICK_3', source: 'jaw' })), true);
+    assert.equal(isJawMarker(marker({ command: 'PICK_2' })), false);
+  });
+
   test('the guess pill is a guess with a confidence, never a claim about what the person thinks', () => {
     assert.equal(guessText(marker({})), 'Guess YES 0.82');
     assert.equal(guessText(marker({ command: 'NO', confidence: null })), 'Guess NO');
@@ -174,13 +196,13 @@ describe('words', () => {
     assert.equal(eventPillText(marker({ command: 'STOP', source: 'jaw', confidence: null })), 'STOP');
   });
 
-  test('the words are short, use 8-12 Hz everywhere, and never name a yes area', () => {
+  test('the words are short, use 8-12 Hz everywhere, and never name an option area', () => {
     const all = [...Object.values(LABELS), caption(null), caption('Shashank')].join('\n');
-    assert.match(LABELS.explain, /No yes area in the brain\./);
+    assert.match(LABELS.explain, /No option area in the brain\./);
     assert.match(LABELS.subtitle, /8-12 Hz/);
     assert.doesNotMatch(all, /8 to 13|8-13/);
-    const claims = all.replace('No yes area in the brain.', '');
-    assert.doesNotMatch(claims, /yes area|no area|lights up|activated|brain power|\bfocus\b|\bcalm\b|\bmind\b|\bthinks?\b/i);
+    const claims = all.replace('No option area in the brain.', '');
+    assert.doesNotMatch(claims, /yes area|option area|no area|lights up|activated|brain power|\bfocus\b|\bcalm\b|\bmind\b|\bthinks?\b/i);
     assert.equal(caption(null), 'Template brain, not a scan.');
     assert.ok(LABELS.subtitle.length <= 80, 'the subtitle fits one line');
   });

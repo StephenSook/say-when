@@ -105,7 +105,13 @@ function OptionBody({ node }: { node: OptionNode }) {
   return (
     <>
       <div className={styles.row}>
-        <span className={styles.eyebrow}>{node.heading}</span>
+        {/* Direct select (D18): the number the person picks it by, from the one legend in lib/commands.ts. */}
+        {node.badge ? (
+          <span className={styles.pickBadge} aria-hidden="true">
+            {node.badge}
+          </span>
+        ) : null}
+        <span className={styles.eyebrow}>{node.label ? `${node.heading} · ${node.label}` : node.heading}</span>
         {node.state === 'picked' || node.state === 'reading' ? <StatusBadge status={node.status} word={node.word} /> : null}
       </div>
       <p className={cx(styles.optionText, node.text === null && styles.muted)} title={node.text ?? undefined}>

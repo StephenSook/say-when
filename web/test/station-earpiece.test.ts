@@ -44,7 +44,7 @@ class FakeOut {
 }
 
 function row(optionId: bigint, rank: number, patch: Partial<OptionRowLite> = {}): OptionRowLite {
-  return { optionId, questionId: 7n, version: 1, rank, kind: 'Reply', text: `Option ${rank}`, tone: 'warm', laugh: false, current: true, ...patch };
+  return { optionId, questionId: 7n, version: 1, rank, kind: 'Reply', text: `Option ${rank}`, label: '', tone: 'warm', laugh: false, current: true, ...patch };
 }
 
 function scan(patch: Partial<ScanLite>): ScanLite {

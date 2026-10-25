@@ -23,7 +23,7 @@ import type {
   InputKind,
   SafetyState,
 } from '@/lib/data/types';
-import { offWord, signalPhrase, withSignal } from '@/lib/commands';
+import { CONFIRM_SHORT, confirmPick, offWord, signalPhrase, withSignal } from '@/lib/commands';
 import { maskPhoneNumbers } from '@/lib/format';
 import { callStatusWord, statusFromCall, statusFromErrand, STATUS_WORDS, type RunStatus } from '@/lib/status';
 
@@ -41,8 +41,7 @@ export const AGENT_NAMES: Readonly<Record<AgentKind, string>> = {
 
 /** The empty state (docs/ui.md). It names the confirm in the session's input: a jaw clench only for the headset. */
 export function agentsEmptySentence(input: InputKind): string {
-  const confirm = signalPhrase('CONFIRM', input) ?? 'a CONFIRM';
-  return `No errand or call yet. Errands and calls are offered as options, or from the person's menu. Nothing is sent without ${confirm}.`;
+  return `No errand or call yet. Errands and calls are offered as numbered options. Nothing is sent without a read-back and a fresh ${confirmPick(input)}: ${CONFIRM_SHORT}.`;
 }
 
 /* ------------------------------------------------------------------------------------------------
@@ -85,7 +84,7 @@ export function newest<T>(rows: readonly T[]): T | null {
   return rows.length === 0 ? null : (rows[rows.length - 1] ?? null);
 }
 
-/** The option YES picked, looked up by id. */
+/** The option the person picked by its number, looked up by id. */
 export function findOption(options: readonly AnswerOption[], optionId: string | null): AnswerOption | null {
   if (optionId === null) return null;
   return options.find((option) => option.id === optionId) ?? null;
@@ -274,7 +273,7 @@ export function errandMaybeSent(errand: Errand): boolean {
   return errand.status === 'failed' && errandStep(errand) === 6;
 }
 
-/** The phone call's five steps: script read back, CONFIRM, ringing, connected, ended. */
+/** The phone call's five steps: script read back, the confirm (1 to send, 2 to cancel), ringing, connected, ended. */
 export interface CallPlan {
   script: RunStatus;
   confirm: RunStatus;
@@ -349,14 +348,14 @@ export function callPlan(call: CallRequest): CallPlan {
  * Reasons in plain words
  * ---------------------------------------------------------------------------------------------- */
 
-/** "STOP, a double jaw clench, hangs up.", "STOP, key S, hangs up.", or "STOP hangs up." when the input is unknown. */
+/** "STOP, a long jaw clench, hangs up.", "STOP, key S, hangs up.", or "STOP hangs up." when the input is unknown. */
 export function stopHangsUp(input: InputKind): string {
   const phrase = signalPhrase('STOP', input);
   return phrase ? `STOP, ${phrase}, hangs up.` : 'STOP hangs up.';
 }
 
 function commandStopSentence(command: CommandName, input: InputKind): string | null {
-  if (command === 'NO') return 'The person answered NO.';
+  if (command === 'PICK_2') return 'The person picked 2: cancel.';
   if (command === 'STOP') return `The person used ${withSignal('STOP', input)}.`;
   if (command === 'HEADSET_OFF') return input === 'headset' ? 'The headset lost contact.' : 'The input went off.';
   return null;
@@ -365,7 +364,7 @@ function commandStopSentence(command: CommandName, input: InputKind): string | n
 function reasonCodeSentence(code: string, input: InputKind): string | null {
   switch (code) {
     case 'window_closed':
-      return `The confirm window closed without ${signalPhrase('CONFIRM', input) ?? 'a CONFIRM'}.`;
+      return `The confirm window closed without ${confirmPick(input)}.`;
     case 'readback_not_finished':
       return 'The read-back did not finish.';
     case 'no_consent':
@@ -474,7 +473,7 @@ export interface Headline {
 /** No time or count in here: the sentence is a live region, so it must not change every second. */
 export function errandHeadline(errand: Errand, safety: SafetyWord, input: InputKind): Headline {
   const paused = pauseWords(safety, input);
-  const confirmed = signalPhrase('CONFIRM', input);
+  const confirmed = confirmPick(input);
   if (paused && errandStoppedByPause.has(errand.status)) return { status: 'stopped', text: `${paused} Nothing will be sent.` };
   switch (errand.status) {
     case 'preparing':
@@ -518,7 +517,7 @@ export function callHeadline(call: CallRequest, safety: SafetyWord, input: Input
 
 function callHeadlineWithoutHold(call: CallRequest, safety: SafetyWord, input: InputKind, commands: readonly CommandEvent[]): Headline {
   const paused = pauseWords(safety, input);
-  const confirmed = signalPhrase('CONFIRM', input);
+  const confirmed = confirmPick(input);
   const name = screenText(call.contactName) ?? 'the contact';
   if (paused && callStoppedByPause.has(call.status)) return { status: 'stopped', text: `${paused} Nobody will be called.` };
   if (paused && callCancelledByPause.has(call.status)) return { status: 'stopped', text: `${paused} Cancelling the call.` };

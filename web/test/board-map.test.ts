@@ -123,17 +123,19 @@ describe('boardRows: the live SpacetimeDB board as the dashboard rows', () => {
     assert.deepEqual(rows.pipelineEvents[3]?.detail, { version: 1, optionCount: 4, label: 'scan started', channel: 'earpiece' });
   });
 
-  test('the screens read it: Conversation, the partner phone and Live data follow option 2 in its window', () => {
+  test('the screens read it: Conversation, the partner phone and Live data follow the list waiting for a pick', () => {
     const rows = boardRows(midScan());
     const view = conversationOf(rows);
     assert.equal(view.question.id, '21');
     assert.equal(view.header.lead, 'Question 1', 'sharing is off, so no words');
     assert.equal(view.options.length, 4);
-    assert.equal(view.cursor?.optionId, '102');
+    // Direct select (D18): the Window after the list is the wait for any number, not one option's window.
+    assert.equal(view.cursor?.optionId, null);
+    assert.equal(view.cursor?.waitingFor, '1 to 4');
     assert.equal(view.cursor?.phase, 'window');
     assert.equal(view.legend, PICK_LEGEND);
     assert.deepEqual(view.pass, { pass: 1, max: 2 });
-    assert.equal(partnerOf(rows).status.text, 'They are choosing, option 2 of 4.');
+    assert.equal(partnerOf(rows).status.text, 'They are choosing from 4 options.');
     const live = liveOf(rows);
     assert.deepEqual(live.firstOption, { kind: 'final', ms: 4_300 }, 'from heard to the first option in the earpiece');
     for (const view of [conversationOf(rows), partnerOf(rows), live]) assert.doesNotMatch(JSON.stringify(view), BROKEN);
@@ -436,24 +438,25 @@ describe('boardRows: the live SpacetimeDB board as the dashboard rows', () => {
     assert.equal(detail('63').channel, 'aloud');
   });
 
-  test('commands are the ledger gesture rows: accepted, ignored with a reason in words, D11 names only', () => {
+  test('commands are the ledger gesture rows: accepted, ignored with a reason in words, direct select names only', () => {
     const rows = boardRows(
       midScan({
         ledger: [
           ...midScan().ledger,
-          ledger(510, 'gesture', 6_100, { command: 'YES', gestureId: 'smoke-yes-1', questionId: 21n, optionId: 102n, outcome: 'accepted:pick_reply', cursor: 2 }),
-          ledger(511, 'gesture', 6_400, { command: 'YES', gestureId: 'smoke-yes-2', outcome: 'ignored:refractory', reason: 'refractory' }),
-          ledger(512, 'gesture', 6_500, { command: 'CONFIRM', gestureId: 'smoke-confirm-3', outcome: 'ignored:quiet_hold', reason: 'quiet_hold', errandId: 12n }),
+          ledger(510, 'gesture', 6_100, { command: 'PICK_2', gestureId: 'smoke-yes-1', questionId: 21n, optionId: 102n, outcome: 'accepted:pick_reply', cursor: 2 }),
+          ledger(511, 'gesture', 6_400, { command: 'PICK_2', gestureId: 'smoke-yes-2', outcome: 'ignored:refractory', reason: 'refractory' }),
+          ledger(512, 'gesture', 6_500, { command: 'PICK_1', gestureId: 'smoke-confirm-3', outcome: 'ignored:quiet_hold', reason: 'quiet_hold', errandId: 12n }),
           ledger(513, 'gesture', 6_600, { command: 'STOP', gestureId: '', outcome: 'accepted:stop_errand_hang_up' }),
           ledger(514, 'gesture', 6_700, { command: 'SELECT', gestureId: 'old-name', outcome: 'accepted:pick' }),
+          ledger(516, 'gesture', 6_750, { command: 'YES', gestureId: 'scan-word', outcome: 'ignored:direct_mode', reason: 'direct_mode' }),
           ledger(515, 'pick', 6_100, { questionId: 21n, optionId: 102n, outcome: 'reply' }),
         ],
       }),
     );
     assert.deepEqual(rows.commands, [
-      { id: 'smoke-yes-1', command: 'YES', at: ms(6_100), accepted: true, ignoredReason: null, confidence: null, questionId: '21', optionId: '102' },
-      { id: 'smoke-yes-2', command: 'YES', at: ms(6_400), accepted: false, ignoredReason: 'Repeat inside the refractory time', confidence: null, questionId: null, optionId: null },
-      { id: 'smoke-confirm-3', command: 'CONFIRM', at: ms(6_500), accepted: false, ignoredReason: 'Too soon after the read-back', confidence: null, questionId: null, optionId: null },
+      { id: 'smoke-yes-1', command: 'PICK_2', at: ms(6_100), accepted: true, ignoredReason: null, confidence: null, questionId: '21', optionId: '102' },
+      { id: 'smoke-yes-2', command: 'PICK_2', at: ms(6_400), accepted: false, ignoredReason: 'Repeat inside the refractory time', confidence: null, questionId: null, optionId: null },
+      { id: 'smoke-confirm-3', command: 'PICK_1', at: ms(6_500), accepted: false, ignoredReason: 'Too soon after the read-back', confidence: null, questionId: null, optionId: null },
       { id: 'ledger:513', command: 'STOP', at: ms(6_600), accepted: true, ignoredReason: null, confidence: null, questionId: null, optionId: null },
     ]);
   });

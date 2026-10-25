@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Chip, CrossIcon, Dialog, ReplayIcon, StatusMark, TextLink } from '@/components/ui';
 import { cx } from '@/lib/cx';
-import { GUESS_SHOW_MS, LABELS, bridgeUrlFrom, buildBrainView, caption, guessText, isJawCommand, sceneFailedText, shouldAutoConnect, sourceText } from '@/lib/brain/model';
+import { GUESS_SHOW_MS, LABELS, bridgeUrlFrom, buildBrainView, caption, guessText, isJawMarker, pulseSide, sceneFailedText, shouldAutoConnect, sourceText } from '@/lib/brain/model';
 import { DEFAULT_VIZ_URL } from '@/lib/brain/protocol';
 import { brainInputOf } from '@/lib/brain/stream';
 import { useVizStream } from '@/lib/brain/useVizStream';
@@ -85,8 +85,8 @@ export default function BrainScreen() {
   const source = s.meta?.source ?? null;
 
   const last = s.markers.length - 1;
-  const marker = last >= 0 && now - s.markerAt[last] < GUESS_SHOW_MS && !isJawCommand(s.markers[last].command) && s.markers[last].command !== 'HEADSET_OFF' ? s.markers[last] : null;
-  const guessSide = marker && marker.source === 'imagery' ? (marker.command === 'YES' ? 'c3' : 'c4') : null;
+  const marker = last >= 0 && now - s.markerAt[last] < GUESS_SHOW_MS && !isJawMarker(s.markers[last]) && s.markers[last].command !== 'HEADSET_OFF' ? s.markers[last] : null;
+  const guessSide = marker && marker.source === 'imagery' ? pulseSide(marker) : null;
 
   const mode = view.mode;
   const modePill =

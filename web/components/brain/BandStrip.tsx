@@ -12,7 +12,7 @@
  */
 import { useEffect, useRef } from 'react';
 import { cx } from '@/lib/cx';
-import { AMBER, CYAN, LABELS, eventPillText, isJawCommand, pctText } from '@/lib/brain/model';
+import { AMBER, CYAN, LABELS, eventPillText, fistOf, isJawMarker, pctText } from '@/lib/brain/model';
 import type { VizState, VizStream } from '@/lib/brain/stream';
 import styles from './BandStrip.module.css';
 
@@ -159,7 +159,9 @@ export function BandStrip({ stream, live }: BandStripProps) {
         <span className={styles.values} />
       </div>
       <div className={cx(styles.row, styles.lane)} data-plot-row="jaw">
-        <span className={styles.name}>{LABELS.jawLane}</span>
+        <span className={styles.name}>
+          {LABELS.jawLane} <span className={styles.hz}>{LABELS.jawLegend}</span>
+        </span>
         <span className={styles.plot} data-plot />
         <span className={styles.values}>
           <span className={styles.muted}>{state.mi?.emgGate ? 'Muscle' : ''}</span>
@@ -310,11 +312,11 @@ function paint(root: HTMLDivElement, canvas: HTMLCanvasElement, s: VizState, row
   }
   for (const m of s.markers) {
     if (m.t < tStart || m.t > tEnd + 1) continue;
-    if (isJawCommand(m.command) && jaw) {
+    if (isJawMarker(m) && jaw) {
       pill(jaw.X(m.t), jaw.y0 + jaw.h / 2, eventPillText(m), 'rgba(255, 255, 255, 0.6)', 'rgba(5, 5, 5, 0.85)', jaw.x0 + jaw.w);
-    } else if ((m.command === 'YES' || m.command === 'NO') && guesses) {
+    } else if (fistOf(m.command) !== null && guesses) {
       const imagery = m.source === 'imagery';
-      const hue = m.command === 'YES' ? CYAN : AMBER;
+      const hue = fistOf(m.command) === 'right' ? CYAN : AMBER;
       pill(guesses.X(m.t), guesses.y0 + guesses.h / 2, eventPillText(m), imagery ? hue : 'rgba(255, 255, 255, 0.4)', 'rgba(5, 5, 5, 0.85)', guesses.x0 + guesses.w);
     }
   }

@@ -23,9 +23,10 @@ export function nowBlock(view: ConversationView): NowBlock {
   const { cursor } = view;
   if (cursor !== null) {
     const option = cursor.optionId === null ? null : (view.options.find((o) => o.id === cursor.optionId) ?? null);
-    // A cursor on an option that is not on screen has nothing to show; the yes or no prompt has no option on purpose.
-    if (option !== null || (cursor.optionId === null && view.yesNo)) {
-      return { kind: 'ear', option, cursor, prompt: option === null };
+    // A cursor on an option that is not on screen has nothing to show; the yes or no prompt and the wait for a pick
+    // after the list (direct select, D18) have no option on purpose.
+    if (option !== null || (cursor.optionId === null && (view.yesNo || Boolean(cursor.waitingFor)))) {
+      return { kind: 'ear', option, cursor, prompt: option === null && view.yesNo };
     }
   }
   if (view.picked !== null) return { kind: 'picked', option: view.picked, vetoing: view.vetoing, agent: view.agent };

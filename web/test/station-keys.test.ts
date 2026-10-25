@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import type { StationCommand } from '../lib/station/commands';
-import { canLearnSwitchKey, isTypingTarget, keyboardCommand, SwitchPattern } from '../lib/station/keys';
+import { canLearnSwitchKey, isPickKey, isTypingTarget, keyboardCommand, KEYBOARD_LEGEND, SwitchPattern } from '../lib/station/keys';
 import { fakeTimers } from './role-fakes';
 
 const key = (k: string, patch: Partial<{ repeat: boolean; metaKey: boolean; ctrlKey: boolean; altKey: boolean }> = {}) => ({
@@ -17,21 +17,26 @@ const key = (k: string, patch: Partial<{ repeat: boolean; metaKey: boolean; ctrl
 });
 
 describe('keyboard test keys', () => {
-  test('Y N C S H map to the five commands, either case', () => {
-    assert.equal(keyboardCommand(key('y')), 'YES');
-    assert.equal(keyboardCommand(key('N')), 'NO');
-    assert.equal(keyboardCommand(key('c')), 'CONFIRM');
+  test('1 2 3 4 pick options 1 to 4, S is STOP and H the headset-off test (direct select, D18)', () => {
+    assert.equal(keyboardCommand(key('1')), 'PICK_1');
+    assert.equal(keyboardCommand(key('2')), 'PICK_2');
+    assert.equal(keyboardCommand(key('3')), 'PICK_3');
+    assert.equal(keyboardCommand(key('4')), 'PICK_4');
     assert.equal(keyboardCommand(key('s')), 'STOP');
+    assert.equal(keyboardCommand(key('S')), 'STOP');
     assert.equal(keyboardCommand(key('h')), 'HEADSET_OFF');
+    assert.match(KEYBOARD_LEGEND, /1 2 3 4 = pick that option/);
+    assert.match(KEYBOARD_LEGEND, /1 = send it, 2 = cancel/);
+    assert.equal(isPickKey('4'), true);
+    assert.equal(isPickKey('5'), false);
   });
 
-  test('other keys, repeats and modifier keys are ignored', () => {
-    assert.equal(keyboardCommand(key('x')), null);
-    assert.equal(keyboardCommand(key('1')), null);
+  test('the scan keys, other keys, repeats and modifier keys are ignored', () => {
+    for (const k of ['y', 'n', 'c', '5', '0', 'x']) assert.equal(keyboardCommand(key(k)), null, k);
     assert.equal(keyboardCommand(key('Enter')), null);
-    assert.equal(keyboardCommand(key('y', { repeat: true })), null);
-    assert.equal(keyboardCommand(key('y', { metaKey: true })), null);
-    assert.equal(keyboardCommand(key('c', { ctrlKey: true })), null);
+    assert.equal(keyboardCommand(key('1', { repeat: true })), null);
+    assert.equal(keyboardCommand(key('1', { metaKey: true })), null);
+    assert.equal(keyboardCommand(key('2', { ctrlKey: true })), null);
     assert.equal(keyboardCommand(key('s', { altKey: true })), null);
   });
 
@@ -63,7 +68,7 @@ function switchHarness() {
 }
 
 describe('the switch pattern', () => {
-  test('a short press gives YES 400 ms after the release, with the keydown as onset', () => {
+  test('a short press gives PICK_1 400 ms after the release, with the keydown as onset', () => {
     const h = switchHarness();
     h.clock.advance(1_000);
     h.pattern.down(1_000);
@@ -72,10 +77,10 @@ describe('the switch pattern', () => {
     h.clock.advance(399);
     assert.equal(h.commands.length, 0);
     h.clock.advance(1);
-    assert.deepEqual(h.commands, [['YES', 1_000, 1_550]]);
+    assert.deepEqual(h.commands, [['PICK_1', 1_000, 1_550]]);
   });
 
-  test('a second press within 400 ms of the release gives CONFIRM at that keydown, with the first onset', () => {
+  test('a second press within 400 ms of the release gives PICK_2 at that keydown, with the first onset', () => {
     const h = switchHarness();
     h.clock.advance(1_000);
     h.pattern.down(1_000);
@@ -83,7 +88,7 @@ describe('the switch pattern', () => {
     h.pattern.up(1_120);
     h.clock.advance(300);
     h.pattern.down(1_420);
-    assert.deepEqual(h.commands, [['CONFIRM', 1_000, 1_420]]);
+    assert.deepEqual(h.commands, [['PICK_2', 1_000, 1_420]]);
     h.clock.advance(2_000);
     h.pattern.up(3_420);
     h.clock.advance(1_000);
@@ -102,7 +107,7 @@ describe('the switch pattern', () => {
     assert.equal(h.commands.length, 1);
   });
 
-  test('two presses further apart are two YES', () => {
+  test('two presses further apart are two PICK_1', () => {
     const h = switchHarness();
     h.pattern.down(0);
     h.clock.advance(100);
@@ -114,7 +119,7 @@ describe('the switch pattern', () => {
     h.clock.advance(400);
     assert.deepEqual(
       h.commands.map((c) => c[0]),
-      ['YES', 'YES'],
+      ['PICK_1', 'PICK_1'],
     );
   });
 

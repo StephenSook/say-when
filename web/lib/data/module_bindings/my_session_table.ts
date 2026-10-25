@@ -15,6 +15,7 @@ import {
   SessionErrand,
   SessionCall,
   SessionReply,
+  SessionSearch,
 } from "./types";
 
 
@@ -39,5 +40,8 @@ export default __t.row({
   lastGestureOutcome: __t.string().name("last_gesture_outcome"),
   get reply() {
     return __t.option(SessionReply);
+  },
+  get search() {
+    return __t.option(SessionSearch);
   },
 });

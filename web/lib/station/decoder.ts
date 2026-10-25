@@ -2,8 +2,9 @@
  * The decoder bridge (docs/station.md 2.4): a WebSocket client to Shashank's decoder on `ws://127.0.0.1:<port>`.
  * The decoder never calls SpacetimeDB; the station relays its commands and reports its health in heartbeats.
  *
- * Contract (PLAN Shared Contracts, docs/spacetime.md Appendix A):
- *   { "type": "gesture", "id": "<uuid>", "command": "YES", "onsetAgeMs": 840, "confidence": 0.82, "source": "imagery" }
+ * Contract (PLAN Shared Contracts, docs/spacetime.md Appendix A, direct select D18):
+ *   { "type": "gesture", "id": "<uuid>", "command": "PICK_2", "onsetAgeMs": 840, "confidence": 0.82, "source": "imagery" }
+ *   command: PICK_1 (left fist), PICK_2 (right fist), PICK_3 (single jaw clench), PICK_4 (double), STOP (long), HEADSET_OFF
  *   { "type": "health", "decoderHealthy": true }       at least every 250 ms
  *
  * - Open in headset mode only, as soon as the page is paired, so health shows before Start session.
@@ -11,10 +12,11 @@
  * - Text frames only, one JSON object each. Health is fresh for 500 ms (two missed messages).
  * - A bad id gets a fresh UUID so a STOP is never lost; a bad source becomes `decoder`; a missing or negative onset
  *   age is 0; confidence is clamped to 0 to 1 (missing is 0). An unknown type is ignored and counted; a command
- *   that is not one of the five words is dropped, counted and shown as "Bad decoder message".
+ *   that is not one of the six words is dropped, counted and shown as "Bad decoder message". A scan word (YES, NO,
+ *   CONFIRM) means the decoder runs `--mode scan`: dropped too, and the screen says to restart it with `--mode direct`.
  * - Nothing is sent back: the contract has no ack.
  */
-import { GESTURE_ID_RE, isStationCommand, SOURCE_RE, type CommandInput, type StationCommand } from './commands';
+import { GESTURE_ID_RE, isStationCommand, SCAN_WORDS, SOURCE_RE, type CommandInput, type StationCommand } from './commands';
 
 export const DECODER_HOST = '127.0.0.1';
 
@@ -50,7 +52,7 @@ export type DecoderFrame =
   /** Not counted as bad: a binary frame or a message type this station does not know. */
   | { kind: 'ignored'; reason: 'binary' | 'unknown_type' }
   /** Shown as "Bad decoder message". */
-  | { kind: 'bad'; reason: 'not_json' | 'bad_command' };
+  | { kind: 'bad'; reason: 'not_json' | 'bad_command' | 'scan_command' };
 
 /** One frame from the decoder, checked against every rule of docs/station.md 2.4. Never throws. */
 export function parseDecoderFrame(data: unknown): DecoderFrame {
@@ -65,6 +67,7 @@ export function parseDecoderFrame(data: unknown): DecoderFrame {
   const message = value as Record<string, unknown>;
   if (message.type === 'health') return { kind: 'health', healthy: message.decoderHealthy === true };
   if (message.type !== 'gesture') return { kind: 'ignored', reason: 'unknown_type' };
+  if (typeof message.command === 'string' && SCAN_WORDS.includes(message.command)) return { kind: 'bad', reason: 'scan_command' };
   if (!isStationCommand(message.command)) return { kind: 'bad', reason: 'bad_command' };
   const idOk = typeof message.id === 'string' && GESTURE_ID_RE.test(message.id);
   const age = typeof message.onsetAgeMs === 'number' && Number.isFinite(message.onsetAgeMs) && message.onsetAgeMs > 0 ? message.onsetAgeMs : 0;
@@ -110,6 +113,8 @@ export interface DecoderState {
   /** When the last bad message arrived, for a short-lived line on screen. */
   lastBadAt: number | null;
   lastIdReplacedAt: number | null;
+  /** When the decoder last sent a scan word (YES, NO, CONFIRM): it runs `--mode scan` against a direct database. */
+  lastScanWordAt: number | null;
   /** Raw error text, for a tooltip. */
   errorText: string | null;
   /** The current socket has been connecting for DECODER_SLOW_CONNECT_MS or more. */
@@ -163,6 +168,7 @@ export class DecoderBridge {
       idsReplaced: 0,
       lastBadAt: null,
       lastIdReplacedAt: null,
+      lastScanWordAt: null,
       errorText: null,
       slowConnect: false,
     };
@@ -321,7 +327,11 @@ export class DecoderBridge {
         this.state = { ...this.state, ignoredMessages: this.state.ignoredMessages + 1 };
         return;
       case 'bad':
-        this.set({ badMessages: this.state.badMessages + 1, lastBadAt: receivedAt });
+        this.set({
+          badMessages: this.state.badMessages + 1,
+          lastBadAt: receivedAt,
+          ...(frame.reason === 'scan_command' ? { lastScanWordAt: receivedAt } : {}),
+        });
         return;
       case 'gesture':
         if (frame.idReplaced) this.set({ idsReplaced: this.state.idsReplaced + 1, lastIdReplacedAt: receivedAt });

@@ -2,8 +2,9 @@
  * What the earpiece says (docs/station.md Appendix A), as data. Stock phrases use the assistant voice at the person's
  * pace and are cached once at start; menu items use the reply voice with no tone, exactly as the module writes them.
  *
- * `{act}` is how the person confirms in the session's input mode: "clench once" with the headset (the single jaw
- * clench, PLAN D17), "press C" in the keyboard test, "press twice" on a USB switch. The words never claim more than that.
+ * Direct select (D18): every confirm is a fresh two-option choice, "One: send it. Two: cancel.", the same words in
+ * every input mode (1 is the left fist, key 1, or a short switch press). The phrases are cached in IndexedDB by
+ * their text (lib/station/phrase-store.ts), so changed words are voiced once and stored again.
  */
 import type { InputMode } from '../role/storage';
 
@@ -23,9 +24,9 @@ export const PHRASES = {
   cancelled: 'Cancelled. Nothing was said.',
   noOptions: 'No options this time. Nothing was said.',
   questionWaiting: 'A new question is waiting.',
-  confirmTail: 'To send it, {act}. To cancel, do nothing.',
-  sayConfirm: 'That needs a confirm. To send it, {act}.',
-  tooSoon: 'Too soon. Wait a moment, then {act}.',
+  confirmTail: 'One: send it. Two: cancel.',
+  sayConfirm: 'That needs a confirm. One: send it. Two: cancel.',
+  tooSoon: 'Too soon. Wait a moment. One: send it. Two: cancel.',
   confirmed: 'Confirmed.',
   preparing: 'Getting it ready.',
   sent: 'Sent.',
@@ -55,22 +56,29 @@ export function isMenuItemText(text: string): boolean {
   return MENU_ITEM_TEXTS.includes(text);
 }
 
-/** How the person confirms in each input mode. */
-export const ACT_WORDS: Readonly<Record<InputMode, string>> = {
-  headset: 'clench once',
-  keyboard: 'press C',
-  switch: 'press twice',
-};
+/** The numbers the earpiece says before each option, rank 1 to 4. */
+export const NUMBER_WORDS: readonly string[] = ['One', 'Two', 'Three', 'Four'];
 
-/** A phrase's words for the session's input mode. */
-export function phraseText(key: PhraseKey, mode: InputMode): string {
-  return PHRASES[key].replace('{act}', ACT_WORDS[mode]);
+/**
+ * What the earpiece says for one option (D18): its number, then its short label, else its text: "One: good.",
+ * "Three: search the web." The room hears the option's full `text` only once it is picked.
+ */
+export function optionEarText(rank: number, label: string, text: string): string {
+  const words = (label.trim() !== '' ? label : text).trim().replace(/[\s.!?,;:]+$/, '');
+  const number = NUMBER_WORDS[rank - 1];
+  if (!number) return words === '' ? '' : `${words}.`;
+  return words === '' ? `${number}.` : `${number}: ${words}.`;
+}
+
+/** A phrase's words. Since D18 they are the same in every input mode; the mode stays in the signature for callers. */
+export function phraseText(key: PhraseKey, _mode: InputMode): string {
+  return PHRASES[key];
 }
 
 /**
- * The stock phrases cached at start for one input mode (docs/station.md 2.9 "Phrases ready"): the mode's variants
- * only, never `confirmTail` alone (it is spoken inside each read-back), and the headset or input off line that fits
- * the mode. With the four menu items this is 34 clips.
+ * The stock phrases cached at start for one input mode (docs/station.md 2.9 "Phrases ready"): never `confirmTail`
+ * alone (it is spoken inside each read-back), and the headset or input off line that fits the mode. With the four
+ * numbered menu items this is 34 clips.
  */
 export function warmPhraseKeys(mode: InputMode): PhraseKey[] {
   return (Object.keys(PHRASES) as PhraseKey[]).filter((key) => {

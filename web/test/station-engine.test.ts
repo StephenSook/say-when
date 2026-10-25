@@ -94,8 +94,8 @@ function sessionRow(patch: Record<string, unknown> = {}) {
   };
 }
 
-function option(optionId: bigint, rank: number, text: string) {
-  return { optionId, questionId: 7n, version: 1, rank, kind: { tag: 'Reply' }, menuItem: { tag: 'None' }, text, tone: 'warm', laugh: false, clipMs: undefined, current: true };
+function option(optionId: bigint, rank: number, text: string, label = '') {
+  return { optionId, questionId: 7n, version: 1, rank, kind: { tag: 'Reply' }, menuItem: { tag: 'None' }, text, label, tone: 'warm', laugh: false, clipMs: undefined, current: true };
 }
 
 function scanRow(patch: Record<string, unknown> = {}) {
@@ -152,6 +152,51 @@ async function pairedEngine() {
   return { engine, conn, ticker, internals: engine as any };
 }
 
+describe('direct select on the station (D18)', () => {
+  test('the earpiece reads each option as its number and short label; the text when there is no label', async () => {
+    const { engine, internals } = await pairedEngine();
+    assert.equal(internals.earUtterance({ rank: 1, label: 'Tea', text: 'Tea please', tone: 'warm' }).transcript, 'One: Tea.');
+    assert.equal(internals.earUtterance({ rank: 3, label: '', text: 'Search the web', tone: '' }).transcript, 'Three: Search the web.');
+    engine.stop();
+  });
+
+  test('PICK_1 in a web search confirm carries the search read-back digest; PICK_2 carries none', async () => {
+    const { engine, conn, internals } = await pairedEngine();
+    engine.chooseMode('keyboard');
+    engine.setSilent(true);
+    engine.startSession();
+    await flush();
+    const search = { searchId: 4n, status: { tag: 'AwaitingConfirm' }, readBackText: 'Search the web for ideas? One: yes. Two: cancel.', digest: 'a1b2c3d4e5f60718', confirmOpensAt: undefined, confirmClosesAt: undefined, reasonCode: '', reason: '' };
+    conn.db.mySession.set([sessionRow({ search })]);
+    await flush();
+    internals.readback.played.set('search:4', 'a1b2c3d4e5f60718');
+    internals.onKeyDown(key('1', 'Digit1'));
+    internals.onKeyDown(key('2', 'Digit2'));
+    const [one, two] = conn.named('gesture').map((g) => g.args);
+    assert.equal(one?.command, 'PICK_1');
+    assert.equal(one?.heardDigest, 'a1b2c3d4e5f60718', 'One: yes, with the digest of the read-back that played');
+    assert.equal(two?.command, 'PICK_2');
+    assert.equal(two?.heardDigest, '');
+    engine.stop();
+  });
+
+  test('keys 3 and 4 pick options 3 and 4; S is STOP', async () => {
+    const { engine, conn, internals } = await pairedEngine();
+    engine.chooseMode('keyboard');
+    engine.setSilent(true);
+    engine.startSession();
+    await flush();
+    conn.db.mySession.set([sessionRow()]);
+    await flush();
+    for (const [k, code] of [['3', 'Digit3'], ['4', 'Digit4'], ['s', 'KeyS']] as const) internals.onKeyDown(key(k, code));
+    assert.deepEqual(
+      conn.named('gesture').map((g) => g.args.command),
+      ['PICK_3', 'PICK_4', 'STOP'],
+    );
+    engine.stop();
+  });
+});
+
 describe('the station engine', () => {
   test('a silent keyboard test runs with no Cartesia key: start, beat, relay a key, read the outcome, end', async () => {
     const { engine, conn, ticker, internals } = await pairedEngine();
@@ -186,29 +231,37 @@ describe('the station engine', () => {
     assert.equal(bigStatus(s, Date.now()).title, 'Reading option 1 of 2');
     assert.equal(conn.named('reportClipReady').length, 0, 'nothing is synthesized or reported in the silent test');
 
-    internals.onKeyDown(key('y', 'KeyY'));
+    // Direct select (D18): key 2 picks option 2 by its number.
+    let prevented = false;
+    internals.onKeyDown({ ...key('2', 'Digit2'), preventDefault: () => (prevented = true) });
+    assert.equal(prevented, true, 'the pick key never also switches the dashboard screen');
     const gesture = conn.named('gesture')[0]?.args;
     assert.ok(gesture, 'the key was relayed');
-    assert.equal(gesture.command, 'YES');
+    assert.equal(gesture.command, 'PICK_2');
     assert.equal(gesture.source, 'key');
-    assert.equal(gesture.heardStepSeq, 10n);
-    assert.equal(gesture.heardOptionId, 11n);
+    assert.equal(gesture.heardStepSeq, 10n, 'the step heard at the onset');
+    assert.equal(gesture.heardOptionId, 0n, 'a pick names its rank, so the option id is 0');
     assert.equal(gesture.heardDigest, '');
     assert.equal(gesture.confidence, 1);
 
-    conn.db.mySession.set([sessionRow({ lastGestureId: gesture.gestureId, lastGestureOutcome: 'accepted:pick' })]);
+    conn.db.mySession.set([sessionRow({ lastGestureId: gesture.gestureId, lastGestureOutcome: 'accepted:pick_reply' })]);
     await flush();
     await flush();
     const entry = engine.getState().commands[0]!;
     assert.equal(entry.status, 'accepted');
-    assert.equal(entry.words, 'Picked option 1');
+    assert.equal(entry.words, 'Picked option 2. Saying it');
 
     internals.onKeyDown(key('x', 'KeyX'));
-    assert.equal(conn.named('gesture').length, 1, 'other keys do nothing');
+    internals.onKeyDown(key('y', 'KeyY'));
+    assert.equal(conn.named('gesture').length, 1, 'other keys, the scan keys included, do nothing');
 
-    let prevented = false;
-    internals.onKeyDown({ ...key('1', 'Digit1'), preventDefault: () => (prevented = true) });
+    internals.onKeyDown(key('s', 'KeyS'));
+    assert.equal(conn.named('gesture')[1]?.args.command, 'STOP');
+
+    prevented = false;
+    internals.onKeyDown({ ...key('5', 'Digit5'), preventDefault: () => (prevented = true) });
     assert.equal(prevented, true, 'the dashboard screen keys cannot navigate away while a session runs');
+    assert.equal(conn.named('gesture').length, 2, '5 is not a pick');
 
     engine.endSession();
     assert.equal(conn.named('endSession').length, 1);
@@ -342,8 +395,8 @@ describe('the station engine', () => {
     internals.onKeyUp(key(' ', 'Space', t + 120));
     await new Promise((resolve) => setTimeout(resolve, 450));
     const gesture = conn.named('gesture')[0]?.args;
-    assert.ok(gesture, 'the short press became YES');
-    assert.equal(gesture.command, 'YES');
+    assert.ok(gesture, 'the short press became PICK_1');
+    assert.equal(gesture.command, 'PICK_1');
     assert.equal(gesture.source, 'switch');
     engine.stop();
   });

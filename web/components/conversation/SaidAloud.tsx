@@ -2,7 +2,7 @@
 
 /**
  * "Said out loud" (docs/ui.md pattern 10): what the room hears, as opposed to "In the earpiece now",
- * which only the person hears. The reply appears only after YES picks a reply and its veto ends.
+ * which only the person hears. The reply appears only after the person picks a reply by its number (D18).
  */
 import { Spinner } from '@/components/ui/Spinner';
 import { cx } from '@/lib/cx';
@@ -37,7 +37,7 @@ export function SaidAloud({ reply, nothingSaid }: SaidAloudProps) {
           </p>
         </div>
       ) : (
-        <p className={styles.none}>{nothingSaid ? 'Nothing was said.' : 'Nothing yet. A reply is spoken only after YES.'}</p>
+        <p className={styles.none}>{nothingSaid ? 'Nothing was said.' : 'Nothing yet. A reply is spoken only once the person picks it.'}</p>
       )}
     </div>
   );

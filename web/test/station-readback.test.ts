@@ -114,10 +114,21 @@ describe('read-back helpers', () => {
     assert.equal(readbackCandidate(null, call({ status: 'Dialing' })), null);
   });
 
-  test('the confirm sentence on the end follows the input mode', () => {
-    assert.deepEqual(readbackSegments('Text.', 'keyboard'), ['Text.', 'To send it, press C. To cancel, do nothing.']);
-    assert.deepEqual(readbackSegments('Text.', 'headset'), ['Text.', 'To send it, clench once. To cancel, do nothing.']);
-    assert.deepEqual(readbackSegments('Text.', 'switch'), ['Text.', 'To send it, press twice. To cancel, do nothing.']);
+  test('an errand or call read-back ends with the two-option confirm; a search read-back is read as is (D18)', () => {
+    for (const mode of ['keyboard', 'headset', 'switch'] as const) {
+      assert.deepEqual(readbackSegments('Text.', mode), ['Text.', 'One: send it. Two: cancel.']);
+      assert.deepEqual(readbackSegments('Text.', mode, 'call'), ['Text.', 'One: send it. Two: cancel.']);
+    }
+    const search = 'Search the web for ideas? One: yes. Two: cancel.';
+    assert.deepEqual(readbackSegments(search, 'headset', 'search'), [search]);
+  });
+
+  test('a web search waits for its read-back after the errand and the call', () => {
+    const search: WorkLite = { ...call(), kind: 'search', id: 4n, status: 'Prepared', digest: 'a1b2c3d4e5f60718', readBackText: 'Search the web for ideas? One: yes. Two: cancel.' };
+    assert.equal(readbackCandidate(null, null, search)?.kind, 'search');
+    assert.equal(readbackCandidate(errand(), null, search)?.kind, 'errand');
+    assert.equal(readbackCandidate(null, null, { ...search, digest: 'not hex' }), null);
+    assert.equal(readbackCandidate(null, null, { ...search, status: 'AwaitingConfirm' }), null);
   });
 
   test('the window length comes from the row, else the config', () => {

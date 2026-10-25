@@ -2,7 +2,7 @@
  * The judge try page (/try, PLAN 5.11): what to show, from plain values. Pure, so every rule here runs in a test.
  *
  * The page runs Eleven on the `say-when-try` database with one identity, a Station: it asks the question, plays the
- * options, takes the judge's on-screen YES, NO, CONFIRM and STOP (recorded with source `button`, never as a headset
+ * options, takes the judge's on-screen 1, 2, 3, 4 and STOP (D18 direct select; recorded with source `button`, never as a headset
  * signal), and says the picked reply aloud. The module's try sandbox ties the try to that station alone
  * (spacetime/src/sandbox.ts). What it shows comes from the board rows of that database, whose text is shared on
  * purpose: the judge typed it.
@@ -23,7 +23,7 @@ export function trySettings(host: string | undefined, db: string | undefined): S
 }
 
 export const TRY_WORDS = {
-  honesty: "On-screen buttons stand in for the headset's YES, NO, CONFIRM and STOP.",
+  honesty: "On-screen buttons stand in for the headset's four picks (1 to 4) and STOP.",
   shared: "What you type shows on this sandbox's public board.",
   busy: 'Someone else is trying Eleven right now. Try again in a minute.',
   agentOff: "Eleven's agent is offline right now, so no options will come.",
@@ -182,20 +182,20 @@ function stepsFor(rows: DataRows, q: Question): TryStep[] {
 function turnOf(rows: DataRows, q: Question, options: TryOption[], errand: Errand | null): string | null {
   const scan = rows.scan;
   if (errand && (errand.status === 'reading_back' || errand.status === 'previewed' || errand.status === 'preparing')) return 'Getting the form ready and reading it back.';
-  if (errand && errand.status === 'awaiting_confirm') return 'CONFIRM sends it. STOP cancels.';
+  if (errand && errand.status === 'awaiting_confirm') return '1 sends it. 2 or STOP cancels.';
   if (!scan || scan.questionId !== q.id) return null;
   const total = options.length;
   switch (scan.phase) {
     case 'preparing':
       return 'Getting the options ready.';
     case 'reading':
-      return scan.answerMode === 'yes_no' ? 'Yes or no? Tap YES or NO.' : `Reading option ${scan.cursor ?? 1} of ${total}.`;
+      return `Reading option ${scan.cursor ?? 1} of ${total}. Tap its number any time.`;
     case 'window':
-      return scan.answerMode === 'yes_no' ? 'Yes or no? Tap YES or NO.' : `Option ${scan.cursor ?? 1}: YES picks it, NO skips it.`;
+      return `Pick 1 to ${total}. Silence picks nothing.`;
     case 'veto':
       return 'Picked. STOP still cancels it.';
     case 'paused':
-      return 'Paused. YES resumes.';
+      return 'Paused. 1 resumes.';
     case 'idle':
       if (scan.outcome === 'no_pick' || scan.outcome === 'none') return 'No pick. Nothing was said.';
       if (scan.outcome === 'stopped' || scan.outcome === 'cancelled') return 'Stopped. Nothing was said.';
@@ -207,7 +207,7 @@ const ERRAND_WORDS: Record<Errand['status'], string> = {
   preparing: 'Filling the form',
   previewed: 'Form filled, not sent',
   reading_back: 'Reading it back',
-  awaiting_confirm: 'Waiting for CONFIRM',
+  awaiting_confirm: 'Waiting for 1 to send, 2 to cancel',
   confirmed: 'Confirmed',
   submitting: 'Sending',
   sent: 'Sent to the demo form',
@@ -242,7 +242,8 @@ export function tryView(input: TryInput): TryView {
     rank: o.rank,
     text: o.text,
     kind: o.kind,
-    now: !!scan && scan.questionId === q.id && (scan.phase === 'reading' || scan.phase === 'window') && scan.cursor === o.rank && scan.answerMode === 'pick',
+    // Direct select (D18): an option is "now" only while it is read; the wait after the list is on no option.
+    now: !!scan && scan.questionId === q.id && scan.phase === 'reading' && scan.cursor === o.rank && scan.answerMode === 'pick',
     picked: !!scan && scan.pickedOptionId === o.id,
   }));
   const errandRow = [...input.rows.errands].reverse().find((e) => e.questionId === q.id) ?? null;

@@ -1,9 +1,9 @@
 /**
  * The true or false practice quiz on /eeg. Pure, so it is tested without React or a headset.
  *
- * TRUE is YES (imagine squeezing the right fist) and FALSE is NO (the left fist), the D11 map. Each question waits
- * one second before it counts an answer (so the end of the last one cannot spill over), then up to ten seconds for
- * a YES or NO from the decoder. The result shows for two seconds, then the next question comes up.
+ * TRUE is the right fist and FALSE the left fist: PICK_2 and PICK_1 from a direct select decoder (D18, the default),
+ * YES and NO from one in the scan map. Each question waits one second before it counts an answer (so the end of the
+ * last one cannot spill over), then up to ten seconds for a fist from the decoder. The result shows for two seconds, then the next question comes up.
  */
 export interface Question {
   text: string;
@@ -95,12 +95,16 @@ export function startQuiz(questions: Question[], now: number): QuizState {
   return { questions, index: 0, phase: questions.length ? 'asking' : 'done', askedAt: now, shownAt: 0, results: [] };
 }
 
-/** A YES or NO from the decoder. Anything else, or anything during the first second, is ignored. */
+/** The right fist is TRUE, the left fist FALSE, in either decoder map. */
+const RIGHT_FIST = new Set(['PICK_2', 'YES']);
+const LEFT_FIST = new Set(['PICK_1', 'NO']);
+
+/** A fist from the decoder (PICK_2 or YES is TRUE, PICK_1 or NO is FALSE). Anything else, or anything during the first second, is ignored. */
 export function onCommand(state: QuizState, command: string, confidence: number, now: number): QuizState {
   if (state.phase !== 'asking' || now - state.askedAt < QUIZ_TIMING.graceMs) return state;
-  if (command !== 'YES' && command !== 'NO') return state;
+  if (!RIGHT_FIST.has(command) && !LEFT_FIST.has(command)) return state;
   const question = state.questions[state.index];
-  const said = command === 'YES';
+  const said = RIGHT_FIST.has(command);
   const result: QuizResult = { question, said, correct: said === question.answer, confidence, ms: now - state.askedAt };
   return { ...state, phase: 'result', shownAt: now, results: [...state.results, result] };
 }

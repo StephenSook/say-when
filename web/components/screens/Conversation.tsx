@@ -7,14 +7,15 @@
  * earpiece, the pick, and the reply said out loud. Focus: the option being read right now.
  *
  * Top to bottom:
- * - "The partner asked" over the question. A turn from the person's own menu (YES while idle, D11)
- *   reads "Opened with YES" over "The person's menu", and its items show the same way as options.
+ * - "The partner asked" over the question. A turn from the person's own menu reads "Opened by the
+ *   person" over "The person's menu", and its items show the same way as options.
  * - The options at hero size with their kind and tone. The one under the cursor is outlined, says
  *   "In the earpiece now", marks the word being read, and shows a time-left bar only once its audio
  *   has ended and the response window is open. "Pass 1 of 2" and the way out of the list sit below:
  *   "NO skips this one. STOP means none of these. Silence moves on."
- * - The command strip: YES, NO, CONFIRM and STOP, each lit for 1.2 s when its command arrives.
- * - "Said out loud" with the reply, which appears only after YES.
+ * - The command strip, the gesture legend (lib/commands.ts): 1, 2, 3, 4 and STOP, each lit for 1.2 s
+ *   when its command arrives.
+ * - "Said out loud" with the reply, which appears only once the person picks it.
  *
  * States. It renders inside the shell's <main> behind ConnectionGate, so rows exist by the time it
  * renders; connecting and "Not connected" before any rows are the gate's.

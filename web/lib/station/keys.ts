@@ -2,28 +2,34 @@
  * The keyboard test keys and the USB switch (docs/station.md 2.5). Neither is headset input: every press is sent with
  * `source` `key` or `switch`, and the screen says so in words.
  *
- * Keyboard test (one capturing keydown listener, keyboard mode only, during a session):
- *   Y = YES, N = NO, C = CONFIRM, S = STOP, H = HEADSET_OFF (labeled "test" on screen)
+ * Keyboard test (one capturing keydown listener, keyboard mode only, during a session), direct select (D18):
+ *   1, 2, 3, 4 = PICK_1 to PICK_4 (in a confirm: 1 = send it, 2 = cancel), S = STOP, H = HEADSET_OFF (labeled "test")
  *   The onset is the keydown's `event.timeStamp`. Repeats and keys held with Cmd, Ctrl or Alt are ignored.
  *
  * USB switch, the jaw-only pattern on one learned key:
- *   a short press with no second press within 400 ms of its release   YES, 400 ms after the release, onset at keydown
- *   a second keydown within 400 ms of the first release                 CONFIRM at that keydown, onset at the first keydown
+ *   a short press with no second press within 400 ms of its release   PICK_1, 400 ms after the release, onset at keydown
+ *   a second keydown within 400 ms of the first release                 PICK_2 at that keydown, onset at the first keydown
  *   held for 1000 ms                                                    STOP when the hold reaches 1000 ms, onset at keydown
- *   NO is silence.
+ *   Options 3 and 4 are not on the switch.
  */
 import type { StationCommand } from './commands';
 
 export const KEYBOARD_MAP: Readonly<Record<string, StationCommand>> = {
-  y: 'YES',
-  n: 'NO',
-  c: 'CONFIRM',
+  '1': 'PICK_1',
+  '2': 'PICK_2',
+  '3': 'PICK_3',
+  '4': 'PICK_4',
   s: 'STOP',
   h: 'HEADSET_OFF',
 };
 
 /** The legend shown in keyboard mode. */
-export const KEYBOARD_LEGEND = 'Y = YES   N = NO   C = CONFIRM   S = STOP   H = headset off (test)';
+export const KEYBOARD_LEGEND = '1 2 3 4 = pick that option (in a confirm: 1 = send it, 2 = cancel)   S = STOP   H = headset off (test)';
+
+/** Digits the station takes as picks while a session runs; the dashboard's screen keys must not fire then. */
+export function isPickKey(key: string): boolean {
+  return key === '1' || key === '2' || key === '3' || key === '4';
+}
 
 export interface KeyLike {
   key: string;
@@ -70,9 +76,9 @@ type SwitchState =
   | { kind: 'idle' }
   /** The key is down; a hold may become STOP. */
   | { kind: 'down'; at: number }
-  /** Released after a short press; a second press within 400 ms makes CONFIRM, else YES. */
+  /** Released after a short press; a second press within 400 ms makes PICK_2, else PICK_1. */
   | { kind: 'released'; firstAt: number }
-  /** This press already produced its command (STOP, or the second press of CONFIRM): ignore it until the key goes up. */
+  /** This press already produced its command (STOP, or the second press of PICK_2): ignore it until the key goes up. */
   | { kind: 'spent' };
 
 /** The switch's press pattern as a small state machine. Feed it keydown and keyup times (no repeats). */
@@ -92,7 +98,7 @@ export class SwitchPattern {
       const firstAt = this.state.firstAt;
       this.cancel();
       this.state = { kind: 'spent' };
-      this.options.onCommand('CONFIRM', firstAt);
+      this.options.onCommand('PICK_2', firstAt);
       return;
     }
     if (this.state.kind !== 'idle') return;
@@ -119,7 +125,7 @@ export class SwitchPattern {
       this.timer = null;
       if (this.state.kind !== 'released') return;
       this.state = { kind: 'idle' };
-      this.options.onCommand('YES', firstAt);
+      this.options.onCommand('PICK_1', firstAt);
     }, SWITCH_DOUBLE_MS);
   }
 

@@ -12,6 +12,7 @@
 import { Chip } from '@/components/ui/Chip';
 import { StatusMark } from '@/components/ui/StatusMark';
 import { TextLink } from '@/components/ui/TextLink';
+import { optionBadge } from '@/lib/commands';
 import { cx } from '@/lib/cx';
 import type { AnswerOption } from '@/lib/data/types';
 import { EarLine } from './EarLine';
@@ -27,7 +28,11 @@ export interface OptionListProps {
 
 export function OptionList({ view, live }: OptionListProps) {
   const { options, cursor, picked, vetoing, agent, yesNo, menu, followUp, pausedWord } = view;
-  const label = yesNo ? 'Answers: YES picks the first, NO picks the second' : menu ? "The person's menu, read one item at a time" : 'Options, read one at a time';
+  const label = yesNo
+    ? 'Answers: 1 picks the first, 2 picks the second'
+    : menu
+      ? "The person's menu, read once, numbered"
+      : 'Options, read once, numbered. The person picks one by its number';
   return (
     <div key={view.listKey} className={styles.wrap}>
       {followUp ? <p className={styles.eyebrow}>Follow-up options</p> : null}
@@ -46,9 +51,9 @@ export function OptionList({ view, live }: OptionListProps) {
           />
         ))}
       </ol>
-      {yesNo && cursor !== null && cursor.optionId === null ? (
+      {cursor !== null && cursor.optionId === null && (yesNo || cursor.waitingFor) ? (
         <div className={cx(styles.prompt, cursor.phase === 'stopped' ? styles.halted : styles.current)}>
-          <EarLine cursor={cursor} live={live} pausedWord={pausedWord} prompt={YES_NO_PROMPT} />
+          <EarLine cursor={cursor} live={live} pausedWord={pausedWord} {...(yesNo ? { prompt: YES_NO_PROMPT } : {})} />
         </div>
       ) : null}
     </div>
@@ -67,13 +72,22 @@ interface OptionRowProps {
   pausedWord: string | null;
 }
 
+/** The short earpiece label (D18) when it says something the text does not; null for "Option N" or the text itself. */
+function earLabel(option: AnswerOption): string | null {
+  const label = screenText(option.label ?? '')?.trim() ?? '';
+  if (label === '' || label === screenText(option.text)?.trim() || /^Option \d+$/.test(label)) return null;
+  return label;
+}
+
 function OptionRow({ option, yesNo, cursor, picked, vetoing, agent, live, pausedWord }: OptionRowProps) {
   const text = screenText(option.text) ?? '';
   const kind = KIND_WORDS[option.kind];
   const tone = toneWord(option.tone);
   const stopped = cursor !== null && cursor.phase === 'stopped';
   const reading = cursor !== null && cursor.phase === 'reading' && live;
-  const number = yesNo && option.rank === 1 ? 'YES' : yesNo && option.rank === 2 ? 'NO' : String(option.rank);
+  // Direct select (D18): every option is picked by its number, the badge the legend and the earpiece use.
+  const number = optionBadge(option.rank) || String(option.rank);
+  const ear = earLabel(option);
 
   return (
     <li
@@ -89,8 +103,13 @@ function OptionRow({ option, yesNo, cursor, picked, vetoing, agent, live, paused
           {reading && cursor !== null ? <ReadingText text={text} startedAt={cursor.startedAt} endsAt={cursor.endsAt} timings={cursor.words} /> : text}
         </span>
       </span>
-      {kind !== null || tone !== null ? (
+      {kind !== null || tone !== null || ear !== null ? (
         <span className={styles.tags}>
+          {ear !== null ? (
+            <span className={styles.ear} title="What the earpiece says before the room hears anything">
+              Ear: {ear}
+            </span>
+          ) : null}
           {kind !== null ? <Chip tone="muted">{kind}</Chip> : null}
           {tone !== null ? <span className={styles.tone}>{tone}</span> : null}
         </span>
@@ -117,7 +136,7 @@ function PickedLine({ vetoing, agent }: { vetoing: boolean; agent: AgentStatus |
           Picked
         </span>
       </span>
-      {vetoing ? <span className={styles.veto}>About to be said out loud. NO or STOP still cancels it.</span> : null}
+      {vetoing ? <span className={styles.veto}>About to be said out loud. STOP still cancels it.</span> : null}
       {agent !== null ? (
         <span className={styles.state}>
           <StatusMark status={agent.status} showWord={false} word={agent.sentence} />

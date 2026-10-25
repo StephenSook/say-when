@@ -21,7 +21,7 @@
  * Live rows carry the options of the scanned version only (lib/data/spacetime-map.ts), so a round whose options were
  * replaced by a follow-up keeps its slots as "Option N" with the pick's own words when the select row has them.
  */
-import { signalPhrase, withSignal } from '../commands';
+import { CONFIRM_SHORT, confirmPick, optionBadge, signalPhrase } from '../commands';
 import { hitDisplay, latestOptions, latestQuestion } from '../data/derive';
 import type {
   AnswerOption,
@@ -35,6 +35,7 @@ import type {
   ScanOutcome,
   SourceRef,
 } from '../data/types';
+import { pickCommand } from '../data/types';
 import { formatCount, formatSeconds, maskPhoneNumbers } from '../format';
 import { callStatusWord } from '../status';
 import {
@@ -152,8 +153,12 @@ export interface OptionNode extends NodeCommon {
   kind: 'option';
   round: number;
   rank: number;
+  /** The number the person picks it by, "1" to "4" (D18), shown as a badge on the card. */
+  badge: string;
   /** "Option 2 of 4". */
   heading: string;
+  /** The earpiece's short label, "Cafe on Bay" (D18), when it differs from the words; null otherwise. */
+  label: string | null;
   /** The option's words, or null when they are not on this screen. */
   text: string | null;
   /** Where it came from: "From the person's notes", "From the web: example.org", "Drafted". null for a stand-in. */
@@ -161,7 +166,7 @@ export interface OptionNode extends NodeCommon {
   /** "Errand" or "Call" when the option is not a reply. */
   tag: string | null;
   state: OptionState;
-  /** On the picked option: "Picked by headset (YES). Spoken in the room." */
+  /** On the picked option: "Picked with 3, a single jaw clench. Spoken in the room." */
   pickLine: string | null;
 }
 
@@ -428,23 +433,33 @@ function slotsOf(options: readonly AnswerOption[]): Slotted[] {
 
 /**
  * How the person picked, in the session's true input: a key press never reads as a headset signal (docs/station.md
- * 2.3, lib/commands.ts).
+ * 2.3, lib/commands.ts). Direct select (D18): the pick is the option's number, "Picked with 3, a single jaw clench".
  */
-export function pickPhrase(input: InputKind): string {
+export function pickPhrase(input: InputKind, rank: number): string {
+  const command = pickCommand(rank);
+  if (command === null) return 'Picked';
+  const phrase = signalPhrase(command, input);
   switch (input) {
     case 'headset':
-      return 'Picked by headset (YES)';
+      return phrase ? `Picked with ${rank}, ${phrase}` : `Picked with ${rank}`;
     case 'keyboard':
-      return 'Picked by key Y (keyboard test)';
+      return `Picked with key ${rank} (keyboard test)`;
     case 'switch':
-      return 'Picked by a short switch press (YES)';
+      return phrase ? `Picked with ${rank}, ${phrase}` : `Picked with ${rank}`;
     default:
-      return 'Picked with YES';
+      return `Picked with ${rank}`;
   }
 }
 
+/** The earpiece's short label when it says something the words do not: null for "Option N" and for the words. */
+function earLabel(option: AnswerOption, words: string | null): string | null {
+  const label = screenText(option.label ?? '');
+  if (label === null || label === `Option ${option.rank}` || label === words) return null;
+  return label;
+}
+
 function confirmedWords(input: InputKind): string {
-  const phrase = signalPhrase('CONFIRM', input);
+  const phrase = confirmPick(input);
   return phrase ? `Confirmed with ${phrase}.` : 'Confirmed.';
 }
 
@@ -477,7 +492,7 @@ export function sourceLine(option: AnswerOption, hasWords: boolean): string {
   return hasWords ? 'Drafted' : 'Sources not shared on this screen';
 }
 
-const KIND_TAGS: Readonly<Record<OptionKind, string | null>> = { reply: null, errand: 'Errand', call: 'Call', menu: 'Menu' };
+const KIND_TAGS: Readonly<Record<OptionKind, string | null>> = { reply: null, errand: 'Errand', call: 'Call', search: 'Web search', category: 'Category', menu: 'Menu' };
 
 const ENDINGS: Readonly<Record<Exclude<ScanOutcome, 'picked'>, { title: string; meta: string }>> = {
   none: { title: STOP_LINE, meta: 'Nothing was said or sent.' },
@@ -1017,7 +1032,7 @@ function errandBranch(ctx: Context, round: Round, errand: Errand, pickedRank: nu
         status: 'waiting',
         word: 'Waiting',
         title: 'Confirm window',
-        meta: `Waiting for ${withSignal('CONFIRM', ctx.input)}.`,
+        meta: `Waiting for ${CONFIRM_SHORT}.`,
         until: errand.confirmClosesAt,
       };
     }
@@ -1074,7 +1089,7 @@ function callBranch(ctx: Context, round: Round, call: CallRequest, pickedRank: n
       const status: TreeStatus = call.status === 'refused' ? 'refused' : 'stopped';
       fields = { status, title: 'Confirm window', meta: reason ? `${sentence(reason)} No call was made.` : 'Not confirmed. No call was made.' };
     } else {
-      fields = { status: 'waiting', word: 'Waiting', title: 'Confirm window', meta: `Waiting for ${withSignal('CONFIRM', ctx.input)}.`, until: call.confirmClosesAt };
+      fields = { status: 'waiting', word: 'Waiting', title: 'Confirm window', meta: `Waiting for ${CONFIRM_SHORT}.`, until: call.confirmClosesAt };
     }
     steps.push(step(qid, round.index, pickedRank, 1, 'c2', fields, c1));
   }
@@ -1360,8 +1375,9 @@ export function deriveReplyTree(rows: DataRows, questionId?: string | null): Rep
     }
 
     // Which option is in the earpiece now, for the open round only.
+    // Direct select (D18): an option is in the earpiece only while it is read; the wait after the list is on no option.
     const readingRank =
-      round.pick === null && scan && scan.outcome === null && (scan.phase === 'reading' || scan.phase === 'window') && round.slots.some((s) => s.option?.version === scan.version)
+      round.pick === null && scan && scan.outcome === null && scan.phase === 'reading' && round.slots.some((s) => s.option?.version === scan.version)
         ? scan.cursor
         : null;
     const ended = round.pick === null && scanEnded && round.slots.length > 0 && round.slots.some((s) => s.option === null || s.option.version === scan!.version);
@@ -1383,8 +1399,8 @@ export function deriveReplyTree(rows: DataRows, questionId?: string | null): Rep
       else if (readingRank === s.rank) state = 'reading';
       let pickLine: string | null = null;
       if (isPicked && pick) {
-        const lead = pickPhrase(ctx.input);
-        if (pick.status === 'started' && (kind === 'reply' || kind === null)) pickLine = `${lead}. NO or STOP can still cancel it.`;
+        const lead = pickPhrase(ctx.input, s.rank);
+        if (pick.status === 'started' && (kind === 'reply' || kind === null)) pickLine = `${lead}. STOP can still cancel it.`;
         else if ((kind === 'reply' || kind === 'menu' || kind === null) && question.spokenAt !== null && question.spokenAt >= pick.at && question.spokenAt < round.next) pickLine = `${lead}. Spoken in the room.`;
         else pickLine = `${lead}.`;
       }
@@ -1398,7 +1414,9 @@ export function deriveReplyTree(rows: DataRows, questionId?: string | null): Rep
         rect,
         round: round.index,
         rank: s.rank,
+        badge: optionBadge(s.rank),
         heading,
+        label: option ? earLabel(option, words) : null,
         text: words,
         source,
         tag: kind ? KIND_TAGS[kind] : null,
@@ -1503,7 +1521,7 @@ export function deriveReplyTree(rows: DataRows, questionId?: string | null): Rep
         tight: unionRect(pickRects),
         nodeIds: [picked.id, ...stepIds],
       },
-      `${pickPhrase(ctx.input)}: option ${picked.rank}.`,
+      `${pickPhrase(ctx.input, picked.rank)}: option ${picked.rank}.`,
     );
     const tail = branch?.steps[branch.steps.length - 1] ?? null;
     previousTail = tail ? { id: tail.id, rect: tail.rect, tone: 'picked' } : { id: picked.id, rect: picked.rect, tone: 'picked' };

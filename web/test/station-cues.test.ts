@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { cueAction, CueSpeaker, type CueContext } from '../lib/station/cues';
 import { Channel, type ClipLike } from '../lib/station/earpiece';
-import { PHRASES, phraseText, warmPhraseKeys, type PhraseKey } from '../lib/station/phrases';
+import { NUMBER_WORDS, optionEarText, PHRASES, phraseText, warmPhraseKeys, type PhraseKey } from '../lib/station/phrases';
 import { fakeTimers, flush } from './role-fakes';
 
 const ctx = (patch: Partial<CueContext> = {}): CueContext => ({ mode: 'headset', phase: 'idle', readbackActive: false, errandReason: '', callReason: '', ...patch });
@@ -75,10 +75,13 @@ describe('what each cue says', () => {
     assert.deepEqual(cueAction(cue('something_new'), ctx()), { type: 'none' });
   });
 
-  test('the {act} variants per mode and the 34 clips cached at start', () => {
-    assert.equal(phraseText('tooSoon', 'headset'), 'Too soon. Wait a moment, then clench once.');
-    assert.equal(phraseText('sayConfirm', 'keyboard'), 'That needs a confirm. To send it, press C.');
-    assert.equal(phraseText('tooSoon', 'switch'), 'Too soon. Wait a moment, then press twice.');
+  test('the two-option confirm in every mode (D18), and the 34 clips cached at start', () => {
+    for (const mode of ['headset', 'keyboard', 'switch'] as const) {
+      assert.equal(phraseText('confirmTail', mode), 'One: send it. Two: cancel.');
+      assert.equal(phraseText('sayConfirm', mode), 'That needs a confirm. One: send it. Two: cancel.');
+      assert.equal(phraseText('tooSoon', mode), 'Too soon. Wait a moment. One: send it. Two: cancel.');
+    }
+    for (const words of Object.values(PHRASES)) assert.ok(!/\{act\}|clench once|press C|YES|CONFIRM/.test(words), words);
     for (const mode of ['headset', 'keyboard', 'switch'] as const) {
       const keys = warmPhraseKeys(mode);
       assert.equal(keys.length + 4, 34, mode);
@@ -139,6 +142,41 @@ function harness() {
   });
   return { clock, optionsOut, promptsOut, options, prompts, speaker, chimes, readbackStops: () => readbackStops, optionStops: () => optionStops };
 }
+
+describe('web search cues (D18)', () => {
+  const ctx: CueContext = { mode: 'headset', phase: 'idle', readbackActive: false, errandReason: '', callReason: '' };
+  test('the search read-back cue adds nothing (the station reads it); a refused search says Not sent', () => {
+    assert.deepEqual(cueAction({ kind: 'search_readback', reason: '', callId: 0n }, ctx), { type: 'none' });
+    assert.deepEqual(cueAction({ kind: 'search_refused', reason: 'no_consent', callId: 0n }, ctx), { type: 'info', phrase: 'notSent' });
+  });
+});
+
+describe('the numbered earpiece list (D18)', () => {
+  test('each option is its number, then its short label: "One: good."', () => {
+    assert.deepEqual(NUMBER_WORDS, ['One', 'Two', 'Three', 'Four']);
+    assert.equal(optionEarText(1, 'good', "I'm doing awesome, how about you?"), 'One: good.');
+    assert.equal(optionEarText(2, 'Not great', 'Honestly, not great today.'), 'Two: Not great.');
+    assert.equal(optionEarText(3, 'Search the web', 'Search the web for ideas'), 'Three: Search the web.');
+    assert.equal(optionEarText(4, 'Something else.', 'Something else'), 'Four: Something else.', 'one period, never two');
+  });
+
+  test('an empty label reads the text; an odd rank reads the words alone', () => {
+    assert.equal(optionEarText(1, '', 'Tea please!'), 'One: Tea please.');
+    assert.equal(optionEarText(2, '   ', 'Coffee'), 'Two: Coffee.');
+    assert.equal(optionEarText(5, 'Later', 'Later'), 'Later.');
+    assert.equal(optionEarText(1, '', ''), 'One.');
+  });
+
+  test('the four options read in order make the list the person hears', () => {
+    const list = [
+      ['good', 'Doing awesome, how about you?'],
+      ['not great', 'Not great today.'],
+      ['tired', "I'm a bit tired."],
+      ['busy', 'Busy, talk later?'],
+    ].map(([label, text], i) => optionEarText(i + 1, label!, text!));
+    assert.equal(list.join(' '), 'One: good. Two: not great. Three: tired. Four: busy.');
+  });
+});
 
 describe('cue priorities', () => {
   test('a safety cue cuts an option and a read-back, then speaks', async () => {

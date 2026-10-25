@@ -104,6 +104,12 @@ export function cueAction(cue: Pick<CueLite, 'kind' | 'reason' | 'callId'>, ctx:
       return ctx.callReason.trim() !== '' ? { type: 'info_text', text: ctx.callReason, fallback: 'noCall' } : { type: 'info', phrase: 'noCall' };
     case 'call_ended':
       return { type: 'info', phrase: 'callEnded' };
+    // Direct select (D18): the station reads the search read-back itself from my_session.search, so its cue adds
+    // nothing; a refused search says nothing was sent.
+    case 'search_readback':
+      return { type: 'none' };
+    case 'search_refused':
+      return { type: 'info', phrase: 'notSent' };
     case 'question_waiting':
       return { type: 'info', phrase: 'questionWaiting' };
     case 'failed':

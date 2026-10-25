@@ -1,8 +1,8 @@
 'use client';
 
 /**
- * The command strip (docs/ui.md "Command strip"): the person's four commands at the bottom center,
- * a legend and a live echo of the input. When a command event arrives, its chip lights for 1.2 s
+ * The command strip (docs/ui.md "Command strip"): the gesture legend of direct select (D18), 1, 2,
+ * 3, 4 and STOP, at the bottom center, a legend and a live echo of the input. When a command event arrives, its chip lights for 1.2 s
  * (litCommand): accent border and fill, and its light turns from a ring into a filled dot, so the
  * echo is a shape as well as a color. Ignored repeats never light. HEADSET_OFF is a system event,
  * not a command the person gives, so it has no chip; the shell banner shows it.

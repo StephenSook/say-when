@@ -31,4 +31,5 @@ export default __t.row({
   laugh: __t.bool(),
   clipMs: __t.option(__t.u32()).name("clip_ms"),
   current: __t.bool(),
+  label: __t.string(),
 });

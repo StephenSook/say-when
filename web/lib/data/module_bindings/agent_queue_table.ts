@@ -47,4 +47,7 @@ export default __t.row({
   recentErrandTitle: __t.string().name("recent_errand_title"),
   recentErrandSentAt: __t.option(__t.timestamp()).name("recent_errand_sent_at"),
   createdAt: __t.timestamp().name("created_at"),
+  parentQuestionId: __t.u64().name("parent_question_id"),
+  parentQuestionText: __t.string().name("parent_question_text"),
+  category: __t.string(),
 });

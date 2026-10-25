@@ -4,24 +4,25 @@
  * (lib/data/source-mode.ts). The provider loads this file with a dynamic import, so it ships in its
  * own chunk and the browser fetches it only when the replay is on.
  *
- * One loop walks one question end to end with the D11 commands, following the module's decision
- * table (docs/spacetime.md 4.1 to 4.4), then the next loop asks it again as a new question:
+ * One loop walks one question end to end with direct select (D18, docs/direct-select.md): the earpiece reads
+ * the options once, numbered, then waits, and the person picks any of them by its number. Then the next loop asks
+ * it again as a new question:
  *
  *   0.0 s   the partner asks; Listen runs
  *   2.4 s   Heard; Apify search, then Moss recall (one shared memory, one private), then Claude
- *           drafts four options in four tones
- *   5.3 s   option 1 is read into the earpiece; silence, so the scan moves on when its window closes
- *  10.8 s   option 2 is read; NO skips it
- *  13.9 s   option 3 is read; YES picks it (a repeat inside the refractory time is ignored); after a
- *           0.7 s veto the reply is released and said out loud
- *  21.4 s   Claude offers follow-up options; YES picks the errand option
- *  25.4 s   the errand: the form is filled, the values are read back off the page, the read-back plays
- *           in the earpiece, CONFIRM (a single jaw clench), and the form is sent
- *  36.7 s   another follow-up; YES picks the call option; the script is read back, CONFIRM, dialing,
- *           ringing, connected, transcript lines
- *  61.5 s   STOP (a double jaw clench) hangs up the call
- *  63.6 s   STOP while idle pauses; YES resumes
- *  67.2 s   the headset loses contact (HEADSET_OFF, a system event); YES resumes
+ *           drafts four options in four tones, each with a short earpiece label
+ *   5.3 s   the earpiece reads "One: cafeteria. Two: Thai place. Three: cafe on Bay. Four: too tired.", then
+ *           waits for a pick
+ *  11.5 s   PICK_3 (a single jaw clench) picks option 3; it is said out loud at once (no veto in direct
+ *           select); a repeat inside the refractory time is ignored
+ *  16.5 s   Claude offers follow-up options; PICK_1 (the imagined left fist) picks the errand
+ *  20.8 s   the errand: the form is filled, the values are read back off the page, the read-back plays
+ *           with "One: send it. Two: cancel.", PICK_1 confirms, and the form is sent
+ *  33.7 s   another follow-up; a PICK_4 is ignored (there is no option 4); PICK_1 picks the call; the
+ *           script is read back, PICK_1 confirms, dialing, ringing, connected, transcript lines
+ *  58.7 s   STOP (a long jaw clench) hangs up the call
+ *  60.8 s   STOP while idle pauses; PICK_1 resumes
+ *  64.4 s   the headset loses contact (HEADSET_OFF, a system event); PICK_1 resumes
  *  71.0 s   the loop starts again with a new question number
  *
  * Every name and value is obviously sample ("Demo user", "Cafe on Bay St", example.com links).
@@ -29,6 +30,7 @@
  * Data timing is fixed; reduced motion only changes the visuals.
  */
 import { countWords } from '../format';
+import { optionEarText } from '../station/phrases';
 import { createStateStore, initialState, type DataSource } from './source';
 import type {
   AnswerOption,
@@ -53,13 +55,12 @@ import type {
 
 export const REPLAY_SESSION_ID = 'sample-session';
 
-/** Each option's response window, after its audio ends. The real one is set at calibration (about 3 to 4 s). */
-export const WINDOW_MS = 3_500;
-/** The first option of each scan waits a little longer, so the person can get ready (docs/ui.md). */
-export const FIRST_WINDOW_MS = 4_000;
-/** After YES on a reply: time for NO or STOP before it is said out loud (docs/spacetime.md `reply_veto_ms`). */
-export const VETO_MS = 700;
-/** The CONFIRM window after a read-back. */
+/**
+ * Direct select (D18): after the last option is read, the list waits this long for a pick (the module's
+ * `idle_pause_ms`, 2 minutes), then the scan ends with no pick. There is no window per option and no veto.
+ */
+export const PICK_WAIT_MS = 120_000;
+/** The confirm window after a read-back ("One: send it. Two: cancel."). */
 export const CONFIRM_WINDOW_MS = 8_000;
 
 /** Length of one loop. */
@@ -74,7 +75,8 @@ const WORD_MS = 300;
 const READ_BACK_MS = 5_000;
 /** Scanning starts with estimated clip lengths if the clips are not in by then (docs/spacetime.md `clip_deadline_ms`). */
 const CLIP_DEADLINE_MS = 4_000;
-const MAX_PASSES = 2;
+// Direct select reads the list once (D18): one pass.
+const MAX_PASSES = 1;
 
 const QUESTION_TEXT = 'Where can we get dinner near the hospital tonight?';
 const DAY_MS = 86_400_000;
@@ -160,6 +162,8 @@ function escapeXml(text: string): string {
 }
 
 interface OptionDraft {
+  /** The short earpiece words (1 to 3 words): the earpiece reads "One: <label>." */
+  label: string;
   text: string;
   kind: AnswerOption['kind'];
   /** One of cartesia/src/tones.ts TONES: neutral, calm, warm, sad, firm. */
@@ -346,23 +350,23 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
     { id: `web:sample-ramp-${loop}`, origin: 'web', score: 0.58, text: 'Cafe on Bay St has a ramp at the side door', source: accessRef },
   ];
 
-  // An open question: four options in four tones.
+  // An open question: four options in four tones, each with a short earpiece label (D18).
   const firstOptions: OptionDraft[] = [
-    { text: 'The hospital cafeteria is fine.', kind: 'reply', tone: 'neutral', sources: [visitorRef] },
-    { text: "The Thai place on Lombard, it's quiet.", kind: 'reply', tone: 'calm', sources: [thaiRef] },
-    { text: 'The cafe on Bay St, it has a ramp.', kind: 'reply', tone: 'warm', sources: [cafeRef, accessRef, sharedMemoryRef] },
-    { text: "Not tonight, I'm too tired.", kind: 'reply', tone: 'sad', sources: [] },
+    { label: 'Cafeteria', text: 'The hospital cafeteria is fine.', kind: 'reply', tone: 'neutral', sources: [visitorRef] },
+    { label: 'Thai place', text: "The Thai place on Lombard, it's quiet.", kind: 'reply', tone: 'calm', sources: [thaiRef] },
+    { label: 'Cafe on Bay', text: 'The cafe on Bay St, it has a ramp.', kind: 'reply', tone: 'warm', sources: [cafeRef, accessRef, sharedMemoryRef] },
+    { label: 'Too tired', text: "Not tonight, I'm too tired.", kind: 'reply', tone: 'sad', sources: [] },
   ];
 
-  // Follow-ups after the pick (D11): an errand, a call, or nothing else.
+  // Follow-ups after the pick: an errand, a call, or nothing else.
   const errandOptions: OptionDraft[] = [
-    { text: 'Send the care team a dinner request.', kind: 'errand', tone: 'calm', sources: [] },
-    { text: 'Call Demo caregiver to meet us there.', kind: 'call', tone: 'calm', sources: [] },
-    { text: 'Nothing else.', kind: 'reply', tone: 'neutral', sources: [] },
+    { label: 'Send request', text: 'Send the care team a dinner request.', kind: 'errand', tone: 'calm', sources: [] },
+    { label: 'Call caregiver', text: 'Call Demo caregiver to meet us there.', kind: 'call', tone: 'calm', sources: [] },
+    { label: 'Nothing else', text: 'Nothing else.', kind: 'reply', tone: 'neutral', sources: [] },
   ];
   const callOptions: OptionDraft[] = [
-    { text: 'Call Demo caregiver to meet us there.', kind: 'call', tone: 'calm', sources: [] },
-    { text: 'Nothing else.', kind: 'reply', tone: 'neutral', sources: [] },
+    { label: 'Call caregiver', text: 'Call Demo caregiver to meet us there.', kind: 'call', tone: 'calm', sources: [] },
+    { label: 'Nothing else', text: 'Nothing else.', kind: 'reply', tone: 'neutral', sources: [] },
   ];
 
   const optionId = (version: number, rank: number) => `opt-${loop}-v${version}-${rank}`;
@@ -377,6 +381,7 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
           version,
           rank: i + 1,
           text: draft.text,
+          label: draft.label,
           kind: draft.kind,
           tone: draft.tone,
           sources: draft.sources,
@@ -395,52 +400,40 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
     });
   };
 
-  /** Reads one option into the earpiece, then opens its response window. */
-  const readOption = (start: number, version: number, rank: number, draft: OptionDraft, windowMs: number) => {
-    const reading = readMs(draft.text);
-    const readEnd = start + reading;
-    const windowEnd = readEnd + windowMs;
-    const id = optionId(version, rank);
-    setScan(start, `scan v${version} option ${rank} reading`, {
-      version,
-      phase: 'reading',
-      cursor: rank,
-      stepStartedAt: at(start),
-      stepEndsAt: at(readEnd),
+  /**
+   * Direct select: reads every option once, numbered ("One: cafeteria."), back to back in rank order, then waits for a
+   * pick. Returns when the list ends and the wait begins.
+   */
+  const readList = (start: number, version: number, drafts: readonly OptionDraft[]) => {
+    let t = start;
+    drafts.forEach((draft, i) => {
+      const rank = i + 1;
+      const words = optionEarText(rank, draft.label, draft.text);
+      const reading = readMs(words);
+      const id = optionId(version, rank);
+      setScan(t, `scan v${version} option ${rank} reading`, {
+        version,
+        phase: 'reading',
+        cursor: rank,
+        stepStartedAt: at(t),
+        stepEndsAt: at(t + reading),
+      });
+      // The clip is made before reading starts, so its length and word timings ride on the start
+      // (PLAN D10: word timings drive the on-screen word mark).
+      const clip = { optionId: id, rank, text: words, channel: 'earpiece' as const, tone: draft.tone, durationMs: reading, words: wordTimings(words) };
+      event(t, 'speak', 'started', clip, null);
+      event(t + reading, 'speak', 'ok', clip, reading);
+      t += reading;
     });
-    // The clip is made before reading starts, so its length and word timings ride on the start
-    // (PLAN D10: word timings drive the on-screen word mark).
-    const clip = { optionId: id, rank, text: draft.text, channel: 'earpiece' as const, tone: draft.tone, durationMs: reading, words: wordTimings(draft.text) };
-    event(start, 'speak', 'started', clip, null);
-    event(readEnd, 'speak', 'ok', clip, reading);
-    setScan(readEnd, `scan v${version} option ${rank} window`, { phase: 'window', stepStartedAt: at(readEnd), stepEndsAt: at(windowEnd) });
-    return { readEnd, windowEnd };
+    // The wait for a pick: any number, any time; silence picks nothing.
+    setScan(t, `scan v${version} waiting for a pick`, { phase: 'window', cursor: drafts.length, stepStartedAt: at(t), stepEndsAt: at(t + PICK_WAIT_MS) });
+    return t;
   };
 
-  /** YES on a reply: a short veto (NO or STOP could still cancel), then the reply is released. */
-  const pickReply = (t: number, version: number, rank: number, draft: OptionDraft) => {
+  /** The picked option: the module acts at once (a reply is said, an errand or call starts its read-back). */
+  const picked = (t: number, version: number, rank: number, draft: OptionDraft) => {
     const id = optionId(version, rank);
-    command(t, 'YES', { confidence: 0.96, optionId: id });
-    setScan(t, `scan v${version} veto`, { phase: 'veto', pickedOptionId: id, stepStartedAt: at(t), stepEndsAt: at(t + VETO_MS) });
-    event(t, 'select', 'started', { optionId: id, rank, text: draft.text, kind: draft.kind }, null);
-    const releasedAt = t + VETO_MS;
-    setScan(releasedAt, `scan v${version} picked`, {
-      phase: 'idle',
-      cursor: null,
-      outcome: 'picked',
-      stepStartedAt: at(releasedAt),
-      stepEndsAt: at(releasedAt),
-    });
-    event(releasedAt, 'select', 'ok', { optionId: id, rank, text: draft.text, kind: draft.kind }, VETO_MS);
-    updateQuestion(releasedAt, 'reply released', { replyText: draft.text });
-    return { id, releasedAt };
-  };
-
-  /** YES on an errand or call option: picked at once; its own read-back and CONFIRM follow. */
-  const pickAction = (t: number, version: number, rank: number, draft: OptionDraft) => {
-    const id = optionId(version, rank);
-    command(t, 'YES', { confidence: 0.96, optionId: id });
-    setScan(t, `scan v${version} picked`, {
+    setScan(t, `scan v${version} picked ${rank}`, {
       phase: 'idle',
       cursor: null,
       outcome: 'picked',
@@ -451,6 +444,20 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
     event(t, 'select', 'started', { optionId: id, rank, text: draft.text, kind: draft.kind }, null);
     event(t + 50, 'select', 'ok', { optionId: id, rank, text: draft.text, kind: draft.kind }, 50);
     return id;
+  };
+
+  /** A pick of a reply: said out loud in the room at once (D18 has no veto). */
+  const pickReply = (t: number, version: number, rank: number, name: CommandName, draft: OptionDraft) => {
+    command(t, name, { confidence: 0.96, optionId: optionId(version, rank) });
+    const id = picked(t, version, rank, draft);
+    updateQuestion(t + 50, 'reply released', { replyText: draft.text });
+    return { id, releasedAt: t + 50 };
+  };
+
+  /** A pick of an errand or call: its own read-back and a fresh PICK_1 ("One: send it") follow. */
+  const pickAction = (t: number, version: number, rank: number, name: CommandName, draft: OptionDraft) => {
+    command(t, name, { confidence: 0.96, optionId: optionId(version, rank) });
+    return picked(t, version, rank, draft);
   };
 
   // 0.0 s: a new question while the partner talks. The headset is on.
@@ -485,25 +492,17 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
   event(5_150, 'plan', 'ok', { label: 'claude', version: 1, optionCount: firstOptions.length }, 750);
   publishOptions(5_150, 1, firstOptions);
 
-  // Option 1: read, then its window (the first one is longer). Silence, so the scan moves on.
-  const one = readOption(5_300, 1, 1, firstOptions[0]!, FIRST_WINDOW_MS);
-
-  // Option 2: read; NO skips it partway through its window.
-  const two = readOption(one.windowEnd, 1, 2, firstOptions[1]!, WINDOW_MS);
-  const noAt = two.readEnd + 900;
-  command(noAt, 'NO', { confidence: 0.91, optionId: optionId(1, 2) });
-
-  // Option 3: read; YES picks it. A repeat YES inside the refractory time is ignored.
-  const three = readOption(noAt + 100, 1, 3, firstOptions[2]!, WINDOW_MS);
-  const replyPick = pickReply(three.readEnd + 1_200, 1, 3, firstOptions[2]!);
-  command(three.readEnd + 1_400, 'YES', {
+  // The list: four numbered options, read once, then the wait. PICK_3, a single jaw clench, picks option 3.
+  const firstListEnd = readList(5_300, 1, firstOptions);
+  const replyPick = pickReply(firstListEnd + 2_600, 1, 3, 'PICK_3', firstOptions[2]!);
+  command(firstListEnd + 2_800, 'PICK_3', {
     accepted: false,
     ignoredReason: 'Repeat inside the refractory time',
     confidence: 0.88,
     optionId: replyPick.id,
   });
 
-  // The released reply is said out loud for the room.
+  // The picked reply is said out loud for the room, at once.
   const replyText = firstOptions[2]!.text;
   const aloudAt = replyPick.releasedAt + 100;
   const aloudMs = readMs(replyText);
@@ -517,16 +516,16 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
   );
   updateQuestion(aloudAt + aloudMs, 'reply spoken', { spokenAt: at(aloudAt + aloudMs) });
 
-  // Follow-up options: Claude offers the errand, a call, or nothing else. YES picks the errand.
-  const followUpAt = aloudAt + aloudMs + 100;
+  // Follow-up options: Claude offers the errand, a call, or nothing else. PICK_1 picks the errand.
+  const followUpAt = aloudAt + aloudMs + 1_400;
   event(followUpAt, 'plan', 'started', { label: 'claude' }, null);
   event(followUpAt + 700, 'plan', 'ok', { label: 'claude', version: 2, optionCount: errandOptions.length, followUp: true }, 700);
   publishOptions(followUpAt + 700, 2, errandOptions);
-  const errandRead = readOption(followUpAt + 800, 2, 1, errandOptions[0]!, FIRST_WINDOW_MS);
-  const errandPickAt = errandRead.readEnd + 1_000;
-  const errandOptionId = pickAction(errandPickAt, 2, 1, errandOptions[0]!);
+  const errandListEnd = readList(followUpAt + 800, 2, errandOptions);
+  const errandPickAt = errandListEnd + 1_500;
+  const errandOptionId = pickAction(errandPickAt, 2, 1, 'PICK_1', errandOptions[0]!);
 
-  // The errand: nothing is sent without a CONFIRM after the read-back.
+  // The errand: nothing is sent without a fresh PICK_1 after the read-back.
   const readBack: ReadBackItem[] = [
     { label: 'Who is this from?', value: 'Demo user', source: 'memory' },
     { label: 'What do you need?', value: 'Meal or drink' },
@@ -535,7 +534,7 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
   ];
   const errandReadBackText =
     'Care team request, from Demo user. Meal or drink: dinner at the cafe on Bay St with my partner, 7 pm tonight. ' +
-    'Clench once to send.';
+    'One: send it. Two: cancel.';
   const errandAt = errandPickAt + 100;
   step(errandAt, 'errand drafted', (rows) => {
     rows.errands.push({
@@ -582,7 +581,7 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
     confirmClosesAt: at(errandWindowAt + CONFIRM_WINDOW_MS),
   });
   const errandConfirmAt = errandWindowAt + 2_600;
-  command(errandConfirmAt, 'CONFIRM', { confidence: 0.98 }, (rows, id) => {
+  command(errandConfirmAt, 'PICK_1', { confidence: 0.98 }, (rows, id) => {
     const errand = rows.errands.find((e) => e.id === errandId);
     if (errand) Object.assign(errand, { status: 'confirmed', confirmedAt: at(errandConfirmAt), confirmCommandId: id });
   });
@@ -595,16 +594,21 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
   });
   event(sentAt, 'errand', 'ok', { errandId }, sentAt - errandAt);
 
-  // Another follow-up: the call, or nothing else. YES picks the call.
-  const callFollowUpAt = sentAt + 200;
+  // Another follow-up: the call, or nothing else. A PICK_4 finds no option 4; PICK_1 picks the call.
+  const callFollowUpAt = sentAt + 1_200;
   event(callFollowUpAt, 'plan', 'started', { label: 'claude' }, null);
   event(callFollowUpAt + 500, 'plan', 'ok', { label: 'claude', version: 3, optionCount: callOptions.length, followUp: true }, 500);
   publishOptions(callFollowUpAt + 500, 3, callOptions);
-  const callRead = readOption(callFollowUpAt + 600, 3, 1, callOptions[0]!, FIRST_WINDOW_MS);
-  const callPickAt = callRead.readEnd + 900;
-  const callOptionId = pickAction(callPickAt, 3, 1, callOptions[0]!);
+  const callListEnd = readList(callFollowUpAt + 600, 3, callOptions);
+  command(callListEnd + 600, 'PICK_4', {
+    accepted: false,
+    ignoredReason: 'There is no option with that number',
+    confidence: 0.9,
+  });
+  const callPickAt = callListEnd + 1_900;
+  const callOptionId = pickAction(callPickAt, 3, 1, 'PICK_1', callOptions[0]!);
 
-  // The call: a consented call to the caregiver, released only by its own CONFIRM.
+  // The call: a consented call to the caregiver, released only by its own fresh PICK_1.
   const callAt = callPickAt + 100;
   step(callAt, 'call prepared', (rows) => {
     rows.calls.push({
@@ -615,7 +619,7 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
       scriptDigest: sampleHex(`call-${loop}`),
       readBackText:
         'Call Demo caregiver. Tell them Demo user and their partner are having dinner at the cafe on Bay St at 7 tonight, ' +
-        'and ask if they can meet there. Clench once to call.',
+        'and ask if they can meet there. One: send it. Two: cancel.',
       status: 'prepared',
       result: null,
       endReason: null,
@@ -643,7 +647,7 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
     confirmClosesAt: at(callWindowAt + CONFIRM_WINDOW_MS),
   });
   const callConfirmAt = callWindowAt + 2_100;
-  command(callConfirmAt, 'CONFIRM', { confidence: 0.98 }, (rows, id) => {
+  command(callConfirmAt, 'PICK_1', { confidence: 0.98 }, (rows, id) => {
     const call = rows.calls.find((c) => c.id === callId);
     if (call) Object.assign(call, { status: 'confirmed', confirmedAt: at(callConfirmAt), confirmCommandId: id });
   });
@@ -674,7 +678,7 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
     });
   });
 
-  // STOP, a double jaw clench, hangs up. During a call STOP does not pause (docs/spacetime.md 4.2): the
+  // STOP, a long jaw clench, hangs up. During a call STOP does not pause (docs/spacetime.md 4.2): the
   // module asks the call agent to hang up (`cancel_requested`), and the call ends once the line drops.
   const hangUpAt = connectedAt + 10_300;
   command(hangUpAt, 'STOP', { confidence: 0.97 }, (rows, id) => {
@@ -690,26 +694,26 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
   });
   event(endedAt, 'call', 'ok', { callId }, endedAt - callAt);
 
-  // STOP while idle pauses; YES resumes.
+  // STOP while idle pauses; PICK_1 resumes.
   const pauseAt = hangUpAt + 2_100;
   command(pauseAt, 'STOP', { confidence: 0.97 }, (rows) => {
     rows.safety = { state: 'paused', since: at(pauseAt) };
   });
   setScan(pauseAt, 'scan paused', { phase: 'paused', stepStartedAt: at(pauseAt), stepEndsAt: at(pauseAt) });
   const resumeAt = pauseAt + 2_600;
-  command(resumeAt, 'YES', { confidence: 0.95 }, (rows) => {
+  command(resumeAt, 'PICK_1', { confidence: 0.95 }, (rows) => {
     rows.safety = { state: 'ok', since: at(resumeAt) };
   });
   setScan(resumeAt, 'scan resumed', { phase: 'idle', stepStartedAt: at(resumeAt), stepEndsAt: at(resumeAt) });
 
-  // The headset loses contact. HEADSET_OFF is a system event, not a command the person gives. YES resumes once contact is good.
+  // The headset loses contact. HEADSET_OFF is a system event, not a command the person gives. PICK_1 resumes once contact is good.
   const headsetOffAt = resumeAt + 1_000;
   command(headsetOffAt, 'HEADSET_OFF', { confidence: null }, (rows) => {
     rows.safety = { state: 'headset_off', since: at(headsetOffAt) };
   });
   setScan(headsetOffAt, 'scan paused, headset off', { phase: 'paused', stepStartedAt: at(headsetOffAt), stepEndsAt: at(headsetOffAt) });
   const contactAt = headsetOffAt + 2_600;
-  command(contactAt, 'YES', { confidence: 0.95 }, (rows) => {
+  command(contactAt, 'PICK_1', { confidence: 0.95 }, (rows) => {
     rows.safety = { state: 'ok', since: at(contactAt) };
   });
   setScan(contactAt, 'scan resumed after contact', { phase: 'idle', stepStartedAt: at(contactAt), stepEndsAt: at(contactAt) });

@@ -1,6 +1,7 @@
 /**
  * From a command to `gesture(...)` (lib/station/commands.ts, docs/station.md 2.7 and 7.3 A3): the arguments per
- * command, the CONFIRM digest (errand before call, '' when no read-back finished), `onset_age_ms` with the one-way
+ * command (direct select, D18), the confirm digest on PICK_1 (errand, then call, then search; '' when no read-back
+ * finished), `onset_age_ms` with the one-way
  * estimate, the resend windows (3 s and 30 s), decoder ids relayed once, and the outcome read from `my_session`.
  */
 import assert from 'node:assert/strict';
@@ -23,21 +24,23 @@ import {
 import { fakeTimers, flush } from './role-fakes';
 
 function input(patch: Partial<CommandInput> = {}): CommandInput {
-  return { command: 'YES', gestureId: null, source: 'key', confidence: 1, onsetLocal: 0, via: 'key', ...patch };
+  return { command: 'PICK_2', gestureId: null, source: 'key', confidence: 1, onsetLocal: 0, via: 'key', ...patch };
 }
 
 describe('gesture arguments', () => {
-  test('every command carries the heard step and option, the source and the confidence', () => {
-    for (const command of ['YES', 'NO', 'CONFIRM', 'STOP', 'HEADSET_OFF'] as const) {
+  test('every command carries the heard step, the exact command word, the source and the confidence', () => {
+    for (const command of ['PICK_1', 'PICK_2', 'PICK_3', 'PICK_4', 'STOP', 'HEADSET_OFF'] as const) {
       const args = buildGestureArgs(input({ command, onsetLocal: 1_000 }), 'g1', { stepSeq: 12n, optionId: 102n }, 'abcd1234abcd1234', 1_300, 40);
       assert.equal(args.gestureId, 'g1');
-      assert.equal(args.command, command);
-      assert.equal(args.heardStepSeq, 12n);
-      assert.equal(args.heardOptionId, 102n);
+      assert.equal(args.command, command, 'the module gets the exact word');
+      assert.equal(args.heardStepSeq, 12n, 'the step heard at the onset: the module checks it is a step of the live list');
+      // The module ignores the option id for a list pick, so a pick sends 0.
+      assert.equal(args.heardOptionId, command.startsWith('PICK_') ? 0n : 102n);
       assert.equal(args.source, 'key');
       assert.equal(args.confidence, 1);
       assert.equal(args.onsetAgeMs, 340);
-      assert.equal(args.heardDigest, command === 'CONFIRM' ? 'abcd1234abcd1234' : '');
+      // PICK_1 is the confirm ("One: send it"), so it carries the read-back digest.
+      assert.equal(args.heardDigest, command === 'PICK_1' ? 'abcd1234abcd1234' : '');
     }
   });
 
@@ -55,20 +58,25 @@ describe('gesture arguments', () => {
     assert.equal(onsetAge(1_000, 900, Number.NaN), 100);
   });
 
-  test('resend windows: 3 s for YES, NO and CONFIRM; 30 s for STOP and HEADSET_OFF', () => {
-    assert.equal(resendWindowMs('YES'), 3_000);
-    assert.equal(resendWindowMs('NO'), 3_000);
-    assert.equal(resendWindowMs('CONFIRM'), 3_000);
+  test('resend windows: 3 s for a pick; 30 s for STOP and HEADSET_OFF', () => {
+    for (const pick of ['PICK_1', 'PICK_2', 'PICK_3', 'PICK_4'] as const) assert.equal(resendWindowMs(pick), 3_000);
     assert.equal(resendWindowMs('STOP'), 30_000);
     assert.equal(resendWindowMs('HEADSET_OFF'), 30_000);
   });
 });
 
-describe('the CONFIRM digest', () => {
+describe('the confirm digest (PICK_1 in a confirm)', () => {
   const played = new Map([
     [readbackKey('errand', 7n), 'e1e1e1e1e1e1e1e1'],
     [readbackKey('call', 9n), 'c9c9c9c9c9c9c9c9'],
+    [readbackKey('search', 4n), '5ea4c45ea4c45ea4'],
   ]);
+
+  test('a web search uses its own read-back digest (D18)', () => {
+    assert.equal(confirmDigest({ search: { searchId: 4n, status: 'AwaitingConfirm' } }, played), '5ea4c45ea4c45ea4');
+    assert.equal(confirmDigest({ search: { searchId: 5n, status: 'AwaitingConfirm' } }, played), '', 'not the one that was read');
+    assert.equal(confirmDigest({ search: { searchId: 4n, status: 'Stopped' } }, played), '');
+  });
 
   test('the errand comes before the call, as in the module', () => {
     assert.equal(confirmDigest({ errand: { errandId: 7n, status: 'AwaitingConfirm' }, call: { callId: 9n, status: 'AwaitingConfirm' } }, played), 'e1e1e1e1e1e1e1e1');
@@ -92,11 +100,20 @@ describe('outcomes', () => {
     assert.equal(outcomeWords('accepted:answer_no', null), 'Answered no');
     assert.equal(outcomeWords('accepted:stop_errand', null), 'Stopped the request');
     assert.equal(outcomeWords('ignored:refractory', 2), 'Ignored: Repeat inside the refractory time');
+    // Direct select (D18)
+    assert.equal(outcomeWords('accepted:pick_reply', 3), 'Picked option 3. Saying it');
+    assert.equal(outcomeWords('accepted:pick_search', 3), 'Picked option 3, a web search');
+    assert.equal(outcomeWords('accepted:pick_category', 1), 'Picked option 1, a category');
+    assert.equal(outcomeWords('accepted:confirm_search', 1), 'Confirmed the web search');
+    assert.equal(outcomeWords('accepted:stop_search', 2), 'Stopped the web search');
+    assert.equal(outcomeWords('accepted:resume', 1), 'Resumed');
+    assert.equal(outcomeWords('ignored:rank_out_of_range', 4), 'Ignored: There is no option with that number');
+    assert.equal(outcomeWords('ignored:stale_question', 2), 'Ignored: Picked from a list that had already moved on');
   });
 
   test('earpiece feedback: Too soon for the quiet hold, the not-counted chime for a missed option, nothing else', () => {
     assert.deepEqual(outcomeFeedback('ignored:quiet_hold'), { phrase: 'tooSoon' });
-    for (const reason of ['stale_step', 'heard_mismatch', 'no_contact', 'digest_mismatch']) {
+    for (const reason of ['stale_step', 'heard_mismatch', 'no_contact', 'digest_mismatch', 'no_list', 'stale_question', 'rank_out_of_range']) {
       assert.deepEqual(outcomeFeedback(`ignored:${reason}`), { chime: 'notCounted' });
     }
     for (const outcome of ['accepted:pick', 'ignored:refractory', 'ignored:veto', 'ignored:not_ready', 'ignored:too_late']) {
@@ -148,9 +165,10 @@ describe('the command sender', () => {
   test('a key press plays its tick at once, sends, and reads its outcome from my_session', async () => {
     const h = harness();
     h.sender.relay(input({ onsetLocal: 9_900 }));
-    assert.deepEqual(h.chimes, [COMMAND_CHIME.YES]);
+    assert.deepEqual(h.chimes, [COMMAND_CHIME.PICK_2]);
     assert.equal(h.sent.length, 1);
-    assert.equal(h.sent[0]!.heardOptionId, 102n);
+    assert.equal(h.sent[0]!.command, 'PICK_2');
+    assert.equal(h.sent[0]!.heardOptionId, 0n, 'a pick names its rank, not an option id');
     assert.equal(h.sent[0]!.onsetAgeMs, 150);
     assert.equal(h.sender.entries()[0]!.status, 'sending');
     await flush();
@@ -199,8 +217,8 @@ describe('the command sender', () => {
     assert.ok(h.sent[1]!.onsetAgeMs > h.sent[0]!.onsetAgeMs);
   });
 
-  test('YES is dropped once its onset is 3 s old; STOP is still resent at 10 s', async () => {
-    const yes = harness({ send: () => Promise.reject(new UnknownCallResultError('YES')) });
+  test('a pick is dropped once its onset is 3 s old; STOP is still resent at 10 s', async () => {
+    const yes = harness({ send: () => Promise.reject(new UnknownCallResultError('PICK_2')) });
     yes.sender.relay(input({ onsetLocal: 10_000 - 3_100 }));
     await flush();
     await flush();
@@ -236,11 +254,25 @@ describe('the command sender', () => {
     assert.equal(h.sent[0]!.gestureId, 'dec-1');
   });
 
-  test('CONFIRM carries the digest; other commands carry none', () => {
+  test('PICK_1 carries the digest (in a confirm it is "One: send it"); other commands carry none', () => {
     const h = harness();
-    h.sender.relay(input({ command: 'CONFIRM' }));
-    h.sender.relay(input({ command: 'NO' }));
+    h.sender.relay(input({ command: 'PICK_1' }));
+    h.sender.relay(input({ command: 'PICK_2' }));
+    h.sender.relay(input({ command: 'PICK_3' }));
+    h.sender.relay(input({ command: 'STOP' }));
     assert.equal(h.sent[0]!.heardDigest, 'e1e1e1e1e1e1e1e1');
     assert.equal(h.sent[1]!.heardDigest, '');
+    assert.equal(h.sent[2]!.heardDigest, '');
+    assert.equal(h.sent[3]!.heardDigest, '');
+    assert.equal(h.sender.entries()[1]!.words, 'Sending');
+  });
+
+  test('chimes: a high tick for 1, a low one for 2, the double tick for a jaw pick, the STOP tone', () => {
+    assert.equal(COMMAND_CHIME.PICK_1, 'yes');
+    assert.equal(COMMAND_CHIME.PICK_2, 'no');
+    assert.equal(COMMAND_CHIME.PICK_3, 'confirm');
+    assert.equal(COMMAND_CHIME.PICK_4, 'confirm');
+    assert.equal(COMMAND_CHIME.STOP, 'stop');
+    assert.equal(COMMAND_CHIME.HEADSET_OFF, 'stop');
   });
 });

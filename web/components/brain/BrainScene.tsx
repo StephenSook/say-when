@@ -180,7 +180,7 @@ function FrontMarker({ prepared }: { prepared: Prepared }) {
 }
 
 /**
- * "C3" over its number, pinned out to the side of its electrode by a thin callout line, so it never sits over the
+ * "C3 · 2" (the right fist, option 2) over its number, pinned out to the side of its electrode by a thin callout line, so it never sits over the
  * brain or runs off the top of the stage, and turning the brain carries it along.
  */
 function PatchLabel({ site, side, text }: { site: Site; side: 'c3' | 'c4'; text: string }) {
@@ -193,7 +193,10 @@ function PatchLabel({ site, side, text }: { site: Site; side: 'c3' | 'c4'; text:
       <Line points={[site.sensor, lineEnd]} color={side === 'c3' ? CYAN : AMBER} lineWidth={1} transparent opacity={0.5} />
       <Html position={at} center zIndexRange={[5, 0]} className={styles.labelWrap}>
         <div className={styles.label}>
-          <span className={side === 'c3' ? styles.nameC3 : styles.nameC4}>{side === 'c3' ? 'C3' : 'C4'}</span>
+          {/* Direct select (D18): the right fist (C3) is option 2, the left fist (C4) is option 1. */}
+          <span className={side === 'c3' ? styles.nameC3 : styles.nameC4} title={side === 'c3' ? 'Right-fist imagery: option 2' : 'Left-fist imagery: option 1'}>
+            {side === 'c3' ? 'C3 · 2' : 'C4 · 1'}
+          </span>
           <span className={text === 'no reading' ? styles.valueMuted : styles.value}>{text}</span>
         </div>
       </Html>
@@ -203,7 +206,7 @@ function PatchLabel({ site, side, text }: { site: Site; side: 'c3' | 'c4'; text:
 
 /**
  * The decoder's guess as a short ring on its side: an expanding, fading ring at the electrode's patch. It plays only
- * for an imagined YES or NO (pulseSide), never for the jaw, a key or a switch, and it never changes the glow.
+ * for an imagined fist, 1 or 2 (pulseSide), never for the jaw, a key or a switch, and it never changes the glow.
  */
 function DecoderPulse({ stream, c3, c4 }: { stream: VizStream; c3: Site; c4: Site }) {
   const ref = useRef<Group>(null);
