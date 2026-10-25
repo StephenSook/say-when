@@ -47,7 +47,7 @@ scripts/demo-up.sh --db say-when-demo --calls
 ```
 
 - It reads the keys from the Keychain (never printed), starts the sidecar with `caffeinate` so the Mac does not sleep, waits until `/healthz` on `127.0.0.1:8791` says connected and paired, then warms the form-errand Actor, Moss and one voice token. Each warm line should say `ok`.
-- `--calls` turns calls on only when the private consent file and call settings exist and `cartesia` `call:check` passes with no contact refused. Calls go only to the consented contact, only 9 AM to 9 PM. If it refuses, it says why and starts nothing; run it again without `--calls` and the demo skips the call.
+- `--calls` turns calls on only when the private consent file and call settings exist and `cartesia` `call:check` passes with no contact refused. Calls go only to the consented contact, at any hour (PLAN D20 removed the 9 AM to 9 PM rule), still with the AI disclosure, the read-back and a fresh CONFIRM. If it refuses, it says why and starts nothing; run it again without `--calls` and the demo skips the call.
 - Check it: `scripts/demo-up.sh --db say-when-demo status`. Log: `~/.config/say-when/demo-up/say-when-demo.log`.
 
 **9:10. Pair the three pages** (about 2 s each once the code shows).
