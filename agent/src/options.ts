@@ -7,6 +7,7 @@ import type { CandidateOption, Recall } from '@say-when/moss';
 
 import { LIMITS } from './contract.js';
 import type { MemoryContext, Plan, PlannedOption, WebContext } from './planner/types.js';
+import { MIN_PICK_OPTIONS } from './planner/validate.js';
 import type { CallContact, OptionInput, Provenance, SourceRef, Tone } from './types.js';
 
 /** Module limits on an option's sources (spacetime/src/agent.ts checkOption). */
@@ -99,8 +100,25 @@ export function buildOptions(plan: Plan, memory: readonly MemoryContext[], web: 
         });
         candidates.push({ id, text: planned.text, support });
     });
+    // A refused call can leave a single option. The person still gets a choice, never one answer (PLAN D22).
+    if (plan.answerMode === 'pick') {
+        for (const pad of PAD_REPLIES) {
+            if (options.length >= MIN_PICK_OPTIONS) break;
+            if (options.some((o) => o.tone === pad.tone || o.text.toLowerCase() === pad.text.toLowerCase())) continue;
+            candidates.push({ id: `o${options.length + 1}`, text: pad.text, support: 0 });
+            options.push({ kind: 'reply', text: pad.text, tone: pad.tone, laugh: false, provenance: 'stock', sources: [], memoryRefs: [], actionJson: '' });
+        }
+    }
     return { options, candidates, droppedCalls };
 }
+
+/** Stock replies that fill a pick question back up to two options, each in its own tone. */
+const PAD_REPLIES: readonly { text: string; tone: Tone }[] = [
+    { text: 'Not now.', tone: 'calm' },
+    { text: 'Ask me again later.', tone: 'neutral' },
+    { text: 'Let me think about it.', tone: 'warm' },
+    { text: 'No, thank you.', tone: 'firm' },
+];
 
 /** Reorders options by a moss ordering of their candidate ids (`o1`, `o2`, ...). Unknown ids keep their place. */
 export function applyOrder(options: readonly OptionInput[], orderIds: readonly string[]): OptionInput[] {
