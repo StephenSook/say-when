@@ -55,7 +55,8 @@ COMMANDS = PICKS + ("YES", "NO", "CONFIRM", "STOP", "HEADSET_OFF")   # every wor
 # flag.
 YES_THRESHOLD = 0.90         # --yes-threshold: an imagined RIGHT fist at or above this is sent at once (YES, PICK_2)
 NO_THRESHOLD = 0.96          # --no-threshold: an imagined LEFT fist at or above this is sent at once (NO, PICK_1)
-FALLBACK_S = 10.0            # --fallback-s: with no command for this long, the hand with more confident moments wins
+FALLBACK_S = 0.0             # --fallback-s: off (Stephen, Oct 24 about 11:59 PM: stray picks every 10 s); N > 0 turns on a
+                             # window of N s after which the hand with more confident moments wins
 FALLBACK_THRESHOLD = 0.65    # --fallback-threshold: a prediction at or above this is a confident moment for its hand
 FALLBACK_MIN = 3             # --fallback-min: the winning hand needs at least this many (one noisy frame never picks)
 
