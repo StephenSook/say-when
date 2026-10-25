@@ -37,11 +37,11 @@ import { maskPhoneNumbers } from '../../lib/format';
 import { callStatusWord, statusFromCall, statusFromErrand, type RunStatus } from '../../lib/status';
 
 /** The line under the list while options are read (docs/ui.md "Screen 3"). */
-export const PICK_LEGEND = 'NO skips this one. STOP means none of these. Silence moves on.';
+export const PICK_LEGEND = 'NO skips this one. STOP means none of these. Silence repeats it.';
 /** The same line for the person's own menu. */
-export const MENU_LEGEND = 'NO skips this one. STOP closes the menu. Silence moves on.';
+export const MENU_LEGEND = 'NO skips this one. STOP closes the menu. Silence repeats it.';
 /** The same line for a yes or no question: one prompt, and YES or NO answers it. */
-export const YES_NO_LEGEND = 'YES answers yes. NO answers no. STOP means neither. Silence moves on.';
+export const YES_NO_LEGEND = 'YES answers yes. NO answers no. STOP means neither. Silence asks again.';
 /** The stock prompt the earpiece plays for a yes or no question (docs/spacetime.md 4.1). */
 export const YES_NO_PROMPT = 'Yes or no?';
 

@@ -200,7 +200,7 @@ export function bigStatus(s: StationSnapshot, now: number): BigStatus {
     case 'reading':
       return status('working', scan.answerMode === 'yes_no' ? 'Reading: Yes or no?' : `Reading ${item} ${scan.cursor}${of}`);
     case 'window':
-      return status('working', scan.answerMode === 'yes_no' ? 'Window open for yes or no' : `Window open for ${item} ${scan.cursor}${of}`, 'NO skips. Silence moves on.');
+      return status('working', scan.answerMode === 'yes_no' ? 'Window open for yes or no' : `Window open for ${item} ${scan.cursor}${of}`, 'NO skips. Silence repeats it.');
     case 'veto': {
       const left = Math.max(0, scan.stepMs - (now - scan.arrivedWall));
       const saying = `Saying it in ${formatSeconds(left)}.`;

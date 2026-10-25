@@ -152,7 +152,7 @@ The headset reads two things: imagined hand squeezes and the jaw. No eyes.
 | Single jaw clench | CONFIRM | The only way anything leaves the room (a form or a call). (Was a double clench until D17.) |
 | Double jaw clench, or a held clench | STOP | Cancel, none of these, hang up, pause. (Was a long clench until D16 and a single clench until D17.) |
 
-How it plays out: a yes or no question costs one thought ("Are you tired?" then right fist, the voice says "Yes"); an open question plays four options in four tones and silence moves on, so the person thinks once on the one they want; when the talk leads to an errand or a call, Claude offers it as a follow-up option ("Send the care team a lunch request", "Call my sister", "Nothing else"), YES picks it, the read-back plays, and only a single clench sends it (D17); while nothing is happening, YES opens the person's own menu, which keeps their independence; during a call a double clench hangs up (D17). HEADSET-OFF and the 2-minute idle auto-pause still cancel anything pending. Imagined movement is slow, so each option's response window is about 3 to 4 seconds, set at calibration. Proposed by Khadim; adopted by Stephen.
+How it plays out: a yes or no question costs one thought ("Are you tired?" then right fist, the voice says "Yes"); an open question plays four options in four tones and each one waits until the person answers (D19): YES picks it, NO moves to the next, silence reads it again; when the talk leads to an errand or a call, Claude offers it as a follow-up option ("Send the care team a lunch request", "Call my sister", "Nothing else"), YES picks it, the read-back plays, and only a single clench sends it (D17); while nothing is happening, YES opens the person's own menu, which keeps their independence; during a call a double clench hangs up (D17). HEADSET-OFF and the 2-minute idle auto-pause still cancel anything pending. Imagined movement is slow, so each option's response window is about 3 to 4 seconds, set at calibration. Proposed by Khadim; adopted by Stephen.
 
 **Locked Oct 24 by Stephen.**
 
@@ -168,6 +168,12 @@ SpacetimeDB is the whole live backend, not a store behind an API:
 6. **A public pipeline table drives the live dashboards** on any laptop, and an event table carries chimes and toasts.
 
 **Locked Oct 23 by Stephen. Design detail in `docs/spacetime.md`.**
+
+### D19: The scan waits for the person: silence never moves on (Oct 24, team)
+
+In the scan, each option (or the yes or no prompt) now waits for an answer. YES picks it, NO moves to the next option, and silence at the end of the response window reads the same option again instead of moving on. The option stays current from its first read, so a YES or NO given during any read of it lands on it. NO on the last option still starts the next pass, and the session's idle pause (two minutes with no accepted command) still ends a wait with nothing said. Rationale: imagined movement needs about 2 s of steady imagery to decode, and with a 3.5 s window per option the cursor moved on before the person could answer. Logic only in the module (`repeatOption` in `spacetime/src/clock.ts`, the StepEnd tick in `index.ts`); no table changes, so a republish keeps the data. `scanPolicy.silenceRepeats = false` restores the D11 timed scan.
+
+**Locked Oct 24 by the team.**
 
 ### D17: Single jaw clench = CONFIRM, double = STOP (Oct 24, team), supersedes D16's jaw mapping
 

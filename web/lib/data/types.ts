@@ -474,7 +474,7 @@ export interface CommandEvent {
  * - 'idle': nothing is being read (before a question, after a scan ends, after a reply is released).
  * - 'preparing': the options are being drafted or their clips made.
  * - 'reading': the option under the cursor is playing in the earpiece.
- * - 'window': its audio ended and the response window is open: YES picks, NO skips, silence moves on.
+ * - 'window': its audio ended and the response window is open: YES picks, NO skips, silence reads it again (D19).
  * - 'veto': YES picked a reply; for a moment (about 0.7 s) NO or STOP can still cancel it before it is said out loud.
  * - 'paused': STOP while idle, HEADSET_OFF, the idle auto-pause or the operator. YES resumes.
  */
@@ -492,8 +492,8 @@ export type ScanOutcome = 'picked' | 'none' | 'no_pick' | 'stopped' | 'cancelled
 
 /**
  * The scan clock (docs/ui.md gap 4, PLAN D12, docs/spacetime.md `scan_state`): which option is in the
- * earpiece and how long is left. NO skips the option under the cursor, and silence moves on when the
- * window closes. Neither ends the scan.
+ * earpiece and how long is left. NO skips the option under the cursor, and silence reads it again when the
+ * window closes (D19). Neither ends the scan.
  */
 export interface ScanState {
   questionId: string;

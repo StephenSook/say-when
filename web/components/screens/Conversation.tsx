@@ -12,7 +12,7 @@
  * - The options at hero size with their kind and tone. The one under the cursor is outlined, says
  *   "In the earpiece now", marks the word being read, and shows a time-left bar only once its audio
  *   has ended and the response window is open. "Pass 1 of 2" and the way out of the list sit below:
- *   "NO skips this one. STOP means none of these. Silence moves on."
+ *   "NO skips this one. STOP means none of these. Silence repeats it."
  * - The command strip: YES, NO, CONFIRM and STOP, each lit for 1.2 s when its command arrives.
  * - "Said out loud" with the reply, which appears only after YES.
  *

@@ -43,7 +43,9 @@ import {
   pushIdle,
   recordWordTimings,
   releaseReply,
+  repeatOption,
   resume,
+  scanPolicy,
   startScan,
 } from './clock';
 import { applyTiming, defaultConfig, getConfig } from './config';
@@ -892,7 +894,10 @@ export const scanTick = spacetimedb.reducer({ onSchedule: scanTimer }, { job: sc
       if (s.phase.tag === 'Reading') {
         enterWindow(ctx, s);
       } else if (s.phase.tag === 'Window') {
-        if (s.answerMode.tag === 'Pick' && s.cursor < s.optionCount) enterReading(ctx, s, s.cursor + 1);
+        // D19: silence never moves on. The option (or the yes or no prompt) is read again; only NO moves to the next
+        // option, only YES picks, and the idle pause caps the wait.
+        if (scanPolicy.silenceRepeats) repeatOption(ctx, s);
+        else if (s.answerMode.tag === 'Pick' && s.cursor < s.optionCount) enterReading(ctx, s, s.cursor + 1);
         else endPass(ctx, s);
       }
       return;
