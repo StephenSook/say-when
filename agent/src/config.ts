@@ -9,6 +9,7 @@ import { parseEnv } from 'node:util';
 
 import { isEmailAddress, maskEmail } from './email.js';
 import { DEFAULT_PLANNER_EFFORT, DEFAULT_PLANNER_MODEL, DEFAULT_PLANNER_TIMEOUT_MS, type Effort } from './planner/claude.js';
+import { loadPreload, PRELOAD_DEFAULTS, PreloadFileError, type PreloadSearch } from './preload.js';
 import { isSandboxDatabase, SANDBOX_LIMIT_DEFAULTS, type SandboxLimits } from './sandbox.js';
 
 export interface AgentConfig {
@@ -22,6 +23,16 @@ export interface AgentConfig {
     healthHost: string | null;
     planner: { model: string; effort: Effort; timeoutMs: number };
     search: { enabled: boolean; timeoutMs: number; placesNear: { lat: number; lng: number } | null };
+    /**
+     * PLAN D26: the preloaded search results (src/preload.ts). `searches` is the list from AGENT_PRELOAD_FILE (maps
+     * searches only when AGENT_PLACES_NEAR is set); off (empty) with AGENT_PRELOAD=off, an empty list or no Apify.
+     */
+    preload: { searches: PreloadSearch[]; refreshMs: number; timeoutMs: number };
+    /**
+     * AGENT_PINNED_PLACE (PLAN D26): a place always offered as one reply to a place question (the demo venue), or null.
+     * Only its name: it is cited when the maps search found it, and is never given an address, hours or a rating.
+     */
+    pinnedPlace: string | null;
     errands: { enabled: boolean };
     /** ERRAND_EMAIL_TO (PLAN D25): the care team email after a sent form, or null when it is off. Private: never logged. */
     email: { to: string | null };
@@ -101,7 +112,8 @@ export const DEFAULTS = {
     uri: 'https://maincloud.spacetimedb.com',
     database: 'say-when-dev',
     timeZone: 'America/Los_Angeles',
-    searchTimeoutMs: 20_000,
+    // PLAN D26 (Stephen, Oct 25): the whole wait for outside facts is at most 11 s.
+    searchTimeoutMs: 11_000,
     maxJobs: 3,
     maxOptions: 4,
 } as const;
@@ -112,7 +124,13 @@ export function defaultAnthropicProfile(): boolean {
 }
 
 /** Reads every setting. `tokenFileDefault` is agent/.agent-token. */
-export function readConfig(env: Env, tokenFileDefault: string, hasAnthropicProfile: () => boolean = defaultAnthropicProfile): ConfigResult {
+export function readConfig(
+    env: Env,
+    tokenFileDefault: string,
+    hasAnthropicProfile: () => boolean = defaultAnthropicProfile,
+    /** agent/preload.example.json: the preload list when AGENT_PRELOAD_FILE is not set. Null: no default list. */
+    preloadFileDefault: string | null = null,
+): ConfigResult {
     const checks: EnvCheck[] = [];
     const problems: string[] = [];
 
@@ -180,6 +198,47 @@ export function readConfig(env: Env, tokenFileDefault: string, hasAnthropicProfi
         }
     } else {
         checks.push({ name: 'AGENT_PLACES_NEAR', state: 'not set', note: 'place questions use the web search' });
+    }
+
+    // PLAN D26: preloaded search results (src/preload.ts), used when a live search is slow or fails.
+    const preloadWanted = flag(env, 'AGENT_PRELOAD', true, checks, problems, 'preloaded search results as the fallback');
+    const preloadRefreshMs = integer(env, 'AGENT_PRELOAD_REFRESH_MS', PRELOAD_DEFAULTS.refreshMs, 0, 24 * 60 * 60_000, checks, problems, 'preload refresh, 0 for never');
+    if (preloadRefreshMs > 0 && preloadRefreshMs < 60_000) problems.push('AGENT_PRELOAD_REFRESH_MS must be 0 or at least 60000.');
+    const preloadTimeoutMs = integer(env, 'AGENT_PRELOAD_TIMEOUT_MS', PRELOAD_DEFAULTS.timeoutMs, 5_000, 60_000, checks, problems, 'each preload search deadline');
+    const preloadFileSet = (env.AGENT_PRELOAD_FILE ?? '').trim();
+    const preloadFile = preloadFileSet || preloadFileDefault;
+    let preloadSearches: PreloadSearch[] = [];
+    if (!preloadWanted || !apify) {
+        checks.push({ name: 'AGENT_PRELOAD_FILE', state: preloadFileSet ? 'set' : 'not set', note: preloadWanted ? 'no preload: no APIFY_TOKEN' : 'no preload: AGENT_PRELOAD is off' });
+    } else if (!preloadFile) {
+        checks.push({ name: 'AGENT_PRELOAD_FILE', state: 'not set', note: 'no preload list' });
+    } else if (!preloadFileSet && !existsSync(preloadFile)) {
+        checks.push({ name: 'AGENT_PRELOAD_FILE', state: 'not set', note: 'no preload: the default list is missing' });
+    } else {
+        try {
+            const all = loadPreload(preloadFile);
+            preloadSearches = all.filter((search) => search.kind === 'web' || placesNear !== null);
+            const skipped = all.length - preloadSearches.length;
+            checks.push({
+                name: 'AGENT_PRELOAD_FILE',
+                state: preloadFileSet ? 'set' : 'not set',
+                note: `${preloadSearches.length} preload searches${skipped > 0 ? `, ${skipped} maps searches skipped without AGENT_PLACES_NEAR` : ''}`,
+            });
+        } catch (error) {
+            checks.push({ name: 'AGENT_PRELOAD_FILE', state: 'invalid', note: error instanceof PreloadFileError ? error.message : 'could not be read' });
+            problems.push(`AGENT_PRELOAD_FILE: ${error instanceof PreloadFileError ? error.message : 'the preload file could not be read.'}`);
+        }
+    }
+    const pinnedRaw = (env.AGENT_PINNED_PLACE ?? '').replace(/\s+/g, ' ').trim();
+    let pinnedPlace: string | null = null;
+    if (pinnedRaw === '') {
+        checks.push({ name: 'AGENT_PINNED_PLACE', state: 'not set', note: 'no pinned place' });
+    } else if (!/^[\p{L}\p{N} '&.,-]{2,60}$/u.test(pinnedRaw)) {
+        checks.push({ name: 'AGENT_PINNED_PLACE', state: 'invalid', note: 'a place name of 2 to 60 letters, digits and spaces' });
+        problems.push('AGENT_PINNED_PLACE must be a place name of 2 to 60 letters, digits and spaces.');
+    } else {
+        pinnedPlace = pinnedRaw;
+        checks.push({ name: 'AGENT_PINNED_PLACE', state: 'set', note: 'offered as one reply to every place question' });
     }
 
     // Moss memory.
@@ -293,6 +352,8 @@ export function readConfig(env: Env, tokenFileDefault: string, hasAnthropicProfi
             healthHost,
             planner: { model, effort, timeoutMs: plannerTimeout },
             search: { enabled: apify, timeoutMs: searchTimeoutMs, placesNear },
+            preload: { searches: preloadSearches, refreshMs: preloadRefreshMs, timeoutMs: preloadTimeoutMs },
+            pinnedPlace,
             errands: { enabled: apify && formErrand },
             email: { to: emailTo },
             moss: { enabled: mossWanted && mossReady, reopen },

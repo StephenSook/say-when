@@ -16,6 +16,7 @@ import { buildUserMessage, SYSTEM_PROMPT } from '../src/planner/prompt.js';
 import type { PlanReply } from '../src/planner/schema.js';
 import type { PlanInput } from '../src/planner/types.js';
 import { PREFETCH_LIMITS, SearchPrefetch } from '../src/prefetch.js';
+import { SearchCache } from '../src/preload.js';
 import { categorySearch, shortPlaceQuery, type PlannedSearch } from '../src/retrieval.js';
 import { harness, placeRow, reply, waitFor, type Harness, type HarnessOptions } from './helpers.js';
 
@@ -165,7 +166,7 @@ describe('search prefetch: the category search job', () => {
         assert.ok(logged(h, 'search prefetch dropped unused').some((e) => e.fields.why === 'failed' && e.fields.unused === 1));
     });
 
-    it('reports a prefetched run that fails while the job waits, then searches again', async () => {
+    it('reports a prefetched run that fails while the job waits, and does not search again (D26: one search per pick)', async () => {
         const h = start();
         const places = h.search.places.bind(h.search);
         let fail: (error: Error) => void = () => undefined;
@@ -179,7 +180,7 @@ describe('search prefetch: the category search job', () => {
         };
         await offerCategories(h, 113n);
         h.search.rows = [placeRow(1), placeRow(2)];
-        h.api.reply(placesReply());
+        h.api.reply({ answer_mode: 'pick', options: [reply({ label: 'Not sure', text: 'Not sure, honestly.', tone: 'calm' }), reply({ label: 'Ask later', text: 'Ask me later.', tone: 'warm' })] });
         const jobId = h.db.addFollowUpJob({ kind: 'category_search', questionText: FUN_QUESTION, parentQuestionId: 113n, category: 'Thrill' });
         await waitFor(() => searchEvents(h, jobId).some((e) => e.status === 'started'), 3_000, 'search started');
         fail(new Error('maps down'));
@@ -188,12 +189,48 @@ describe('search prefetch: the category search job', () => {
         assert.deepEqual(events.map((e) => [e.status, e.detail]), [
             ['started', 'maps'],
             ['error', 'maps error'],
-            ['started', 'maps'],
-            ['ok', 'maps'],
         ]);
         assert.equal(counts(events[1]?.countsJson ?? '{}').prefetched, true);
-        assert.deepEqual(h.search.calls.at(-1), { kind: 'maps', query: 'thrilling activities', near: NEAR });
-        assert.equal(h.search.calls.length, 4);
+        assert.equal(h.search.calls.length, 3, 'no second search for the pick');
+        assert.ok(logged(h, 'the prefetched search failed; planning without outside facts (one search per pick)').length === 1);
+    });
+
+    it('uses the preloaded rows when the prefetched run fails while the job waits, with no second search (D26)', async () => {
+        const h = start({ cacheGraceMs: 5_000 });
+        const preloaded = { ...placeRow(7), fetchedAt: '2026-10-25T08:00:00.000Z' };
+        const cache = new SearchCache(h.db, h.log, () => performance.now(), {
+            searches: [{ kind: 'maps', query: 'park' }],
+            timeoutMs: 1_000,
+            refreshMs: 0,
+            send: async (planned) => ({ rows: [preloaded], ms: 1, query: planned.query, partial: false }),
+        });
+        h.deps.retrieval.cache = cache;
+        await cache.refresh();
+        const places = h.search.places.bind(h.search);
+        let fail: (error: Error) => void = () => undefined;
+        const failing = new Promise<SearchResult>((_resolve, reject) => (fail = reject));
+        let held = 0;
+        h.search.places = (query, options) => {
+            if (held >= 3) return places(query, options);
+            held += 1;
+            h.search.calls.push({ kind: 'maps', query });
+            return failing;
+        };
+        await offerCategories(h, 116n);
+        // "Nature" went out as "hiking trails", whose place key is park.
+        const jobId = h.db.addFollowUpJob({ kind: 'category_search', questionText: FUN_QUESTION, parentQuestionId: 116n, category: 'Nature' });
+        await waitFor(() => searchEvents(h, jobId).some((e) => e.status === 'started'), 3_000, 'search started');
+        fail(new Error('maps down'));
+        await waitFor(() => h.db.job(jobId)?.status === 'done');
+        cache.close();
+        const events = searchEvents(h, jobId);
+        assert.deepEqual(events.map((e) => [e.status, e.detail]), [['started', 'maps'], ['ok', 'maps cached']]);
+        const c = counts(events[1]?.countsJson ?? '{}');
+        assert.equal(c.prefetched, true);
+        assert.equal(c.cached, true);
+        assert.equal(c.liveFailed, true);
+        assert.equal(h.search.calls.length, 3, 'no second search');
+        assert.deepEqual(h.db.publishes.at(-1)?.options.map((o) => [o.sources[0]?.placeId, o.sources[0]?.fetchedAt]), [['place7', '2026-10-25T08:00:00.000Z']]);
     });
 
     it('searches again once a prefetched run is past its time to live, and counts the unused ones', async () => {

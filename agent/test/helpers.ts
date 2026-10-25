@@ -13,6 +13,7 @@ import { ConversationLog, PreviewBook, SentBook, type JobDeps } from '../src/job
 import { MemoryWatch } from '../src/requests.js';
 import { recordingLogger, type RecordingLogger } from '../src/log.js';
 import { Orchestrator, type OrchestratorOptions } from '../src/orchestrator.js';
+import { withPlaceWords, type SearchCacheLookup } from '../src/retrieval.js';
 import { ClaudePlanner, type MessagesApi } from '../src/planner/claude.js';
 import type { PlanReply } from '../src/planner/schema.js';
 import type { CallHandleLike, DialerPort, ErrandPort, MemoryPort, SearchPort, WebIndexPort } from '../src/ports.js';
@@ -556,6 +557,11 @@ export interface HarnessOptions {
     prefetch?: boolean;
     /** PLAN D25, the care team email after a sent form (src/email.ts). Off by default. */
     email?: ErrandEmailDeps;
+    /** PLAN D26: AGENT_PINNED_PLACE (JobDeps.pinnedPlace). None by default. */
+    pinnedPlace?: string;
+    /** PLAN D26: the preloaded search results (RetrievalDeps.cache) and the grace before they are used. None by default. */
+    cache?: SearchCacheLookup;
+    cacheGraceMs?: number;
 }
 
 export function harness(options: HarnessOptions = {}): Harness {
@@ -578,12 +584,15 @@ export function harness(options: HarnessOptions = {}): Harness {
         db,
         planner,
         retrieval: {
-            classify: classifyQuestion,
+            // As in src/main.ts: "any good spots?" is a place question too (PLAN D26).
+            classify: withPlaceWords(classifyQuestion),
             search: options.search === false ? null : search,
             memory: options.memory === false ? null : memory,
             web: options.memory === false ? null : web,
             placesNear: options.placesNear ? { lat: 37.87, lng: -122.27 } : null,
             searchTimeoutMs: options.searchTimeoutMs ?? 5_000,
+            ...(options.cache ? { cache: options.cache } : {}),
+            ...(options.cacheGraceMs !== undefined ? { cacheGraceMs: options.cacheGraceMs } : {}),
             log,
         },
         errands: options.errands === false ? null : errands,
@@ -607,6 +616,7 @@ export function harness(options: HarnessOptions = {}): Harness {
         direct: options.direct,
         prefetch: options.prefetch,
         ...(options.email ? { email: options.email } : {}),
+        ...(options.pinnedPlace ? { pinnedPlace: options.pinnedPlace } : {}),
     };
     // Short retry waits so the tests of claims that never reached the module run fast.
     const callRunner = new CallRunner({

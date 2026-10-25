@@ -106,6 +106,15 @@ Stephen, about 1:20 AM: "when Khadim says 'do you know', that should automatical
 - **The confirm is skipped for this one phrase, on purpose.** The question goes to Apify without a pick, under web search consent, as the scan path sends it. The trigger is the literal phrase, so "How do you know her?" and "Do you know what time it is?" search too.
 - **Tests** (`agent/test/direct.test.ts`): Search always rank 3, including after a recent errand with a call option; "do you know" runs one search before Claude drafts and its replies cite the rows (web and maps); a failed search is written as an error; no "do you know" means no search before a pick; no consent means no search and no Search option.
 
+### 4.5 Search capped at 11 s, preloaded results, place words, the pinned place (D26, Sun Oct 25 2026, branch `search-preload`)
+
+Stephen, 2:15 AM: "Apify errored a couple times, I think it's timing out. Preload some data for Google Maps and any other sites, and max 11 seconds for it." Sidecar only; the module, the station and the screens do not change.
+
+- **One search per pick, 11 s at most** (`AGENT_SEARCH_TIMEOUT_MS`, default 11000). A Category pick takes over its prefetched run (section 3); if that run fails or runs out of time, there is no second search. The Apify runs end on Apify's side 2 s before the deadline (RAG Web Browser `requestTimeoutSecs`, Maps `timeout`, at least 10 s for Maps).
+- **Preloaded results** (`agent/src/preload.ts`, `AGENT_PRELOAD`, `AGENT_PRELOAD_FILE`, `AGENT_PRELOAD_REFRESH_MS`, `AGENT_PRELOAD_TIMEOUT_MS`). A fixed list of real searches (`agent/preload.example.json`) runs at start and every 20 minutes, two at a time, under web search consent only. A search that matches an entry waits 1.5 s for its live result, then uses the preloaded rows (and stops the live run), or uses them when the live search fails. The event says `maps cached` or `web cached` (`cached`, `ageS`, `liveFailed`), and every row keeps its original `fetchedAt`, so the screens show when it was fetched. A revocation empties the cache.
+- **Place words** ("any good spots?", "somewhere fun", "things to do", "hang out") go to Google Maps near the venue (`withPlaceWords`).
+- **Places as the replies.** A place question whose maps search found places gets those places as its replies, by name, each citing its row ("Let's go to Crissy Field!"), with no plan; Search the web stays third on "do you know". `AGENT_PINNED_PLACE` ("Palace of Fine Arts" at the demo) is always the first of them, cited from the live or preloaded maps row when there is one, and otherwise a plain reply with its name only.
+
 ## 5. Honesty and safety (unchanged rules)
 
 - Nothing leaves the room (errand, message, call, web search start) without a read-back and a fresh confirm pick. One exception since D24: a partner question with "do you know" is searched at once, under web search consent (section 4.4).

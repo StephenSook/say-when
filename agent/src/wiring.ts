@@ -19,6 +19,8 @@ import type { AllowedForm, CallContact } from './types.js';
 export interface Wired {
     planner: ClaudePlanner;
     search: SearchPort | null;
+    /** The same Apify search with the preload deadline (AGENT_PRELOAD_TIMEOUT_MS), for src/preload.ts. */
+    preloadSearch: SearchPort | null;
     errands: ErrandPort | null;
     memory: MemoryPort | null;
     web: WebIndexPort | null;
@@ -28,6 +30,15 @@ export interface Wired {
     moss: MossRun | null;
 }
 
+/**
+ * The Apify run's own time limit for a search deadline (PLAN D26): the deadline minus 2 s, at least 5 s, so the run
+ * stops on Apify's side too and sends back what it found before the sidecar stops waiting. A Maps run's limit is at
+ * least 10 s (the client's minimum), so with the 11 s deadline it ends 1 s before the sidecar gives up.
+ */
+export function apifyRunSecs(timeoutMs: number, min = 5): number {
+    return Math.max(min, Math.floor(timeoutMs / 1000) - 2);
+}
+
 /** The search port over the Apify client. `fetchFn` is for tests; the sidecar uses the global fetch. */
 export function searchPort(config: ApifyConfig, timeoutMs: number, fetchFn?: FetchLike): SearchPort {
     const http = fetchFn ? { fetch: fetchFn } : {};
@@ -35,11 +46,12 @@ export function searchPort(config: ApifyConfig, timeoutMs: number, fetchFn?: Fet
         // No retries inside the client: each send of the question is the sidecar's own decision, made right after it
         // read the web search consent (src/retrieval.ts searchStep). A retry after a backoff would send it again
         // without that check. (Place search never retries starting a run.)
-        web: (question, { signal }) => searchWeb(question, { config, signal, timeoutMs, maxResults: 3, retries: 0, ...http }),
+        web: (question, { signal }) =>
+            searchWeb(question, { config, signal, timeoutMs, requestTimeoutSecs: apifyRunSecs(timeoutMs), maxResults: 3, retries: 0, ...http }),
         // Three places: direct select offers at most three replies, and a run asked for fewer places ends sooner (a
         // run for 6 hit its 20 s limit on Oct 25). A run that reaches its limit still returns what it found (partial).
         places: (query, { signal, near }) =>
-            searchPlaces(query, { config, signal, ...(near ? { near } : {}), maxPlaces: 3, timeoutSecs: Math.max(10, Math.floor(timeoutMs / 1000) - 5), ...http }),
+            searchPlaces(query, { config, signal, ...(near ? { near } : {}), maxPlaces: 3, timeoutSecs: apifyRunSecs(timeoutMs, 10), ...http }),
     };
 }
 
@@ -96,10 +108,12 @@ export async function wire(config: AgentConfig, env: Readonly<Record<string, str
     });
 
     let search: SearchPort | null = null;
+    let preloadSearch: SearchPort | null = null;
     let errands: ErrandPort | null = null;
     if (config.search.enabled) {
         const apify = loadApifyConfig(env);
         search = searchPort(apify, config.search.timeoutMs);
+        if (config.preload.searches.length > 0) preloadSearch = searchPort(apify, config.preload.timeoutMs);
         // The module's job lease is 45 s and its submit lease 60 s (docs/spacetime.md 2.10), and the submit lease
         // must outlast the sidecar's own submit timeout. One preview attempt of up to 35 s fits inside the lease;
         // a submit gets 45 s and is never retried.
@@ -144,7 +158,7 @@ export async function wire(config: AgentConfig, env: Readonly<Record<string, str
     }
 
     const forms = config.formsFile ? loadForms(config.formsFile) : [];
-    return { planner, search, errands, memory, web, dialer, contacts, forms, moss };
+    return { planner, search, preloadSearch, errands, memory, web, dialer, contacts, forms, moss };
 }
 
 export { classifyQuestion };
