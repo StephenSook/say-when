@@ -43,7 +43,9 @@ class HeadsetInput:
         model, meta, _ = store.load(args.models)
         if not meta["deployable"] and not args.allow_unusable:
             sys.exit("The imagery model did not beat chance; --allow-unusable to try anyway.")
-        self.engine = Engine(model, meta, HandConfig(threshold=args.threshold), port=args.port, log=log)
+        # One bar for both hands, picked at once, and no 10 s fallback (a round is shorter than that).
+        cfg = HandConfig(yes_threshold=args.threshold, no_threshold=args.threshold, fallback_s=0)
+        self.engine = Engine(model, meta, cfg, port=args.port, log=log)
         self.q = queue.Queue()
         self._stop = False
         self.engine.start()

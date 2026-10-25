@@ -32,10 +32,12 @@ CUES = {
 # The brain chooses, the jaw commits or stops.
 HAND_COMMAND = {"right": "YES", "left": "NO"}
 COMMANDS = ("YES", "NO", "CONFIRM", "STOP", "HEADSET_OFF")
-# PLAN D21: an imagined YES or NO fires only when the smoothed top probability stays at or above this for the whole
-# dwell, so every imagery gesture carries a confidence of at least 0.9. Fewer false picks; the wearer has to hold the
-# imagined squeeze more strongly or for longer. live.py --threshold overrides it.
-IMAGERY_THRESHOLD = 0.9
+# PLAN D21 imagery rules, on the smoothed probabilities (eeg/hands.py). Each is a live.py flag.
+YES_THRESHOLD = 0.90         # --yes-threshold: an imagined RIGHT fist at or above this is YES at once
+NO_THRESHOLD = 0.96          # --no-threshold: an imagined LEFT fist at or above this is NO at once
+FALLBACK_S = 10.0            # --fallback-s: with no command for this long, the hand with more confident moments wins
+FALLBACK_THRESHOLD = 0.65    # --fallback-threshold: a prediction at or above this is a confident moment for its hand
+FALLBACK_MIN = 3             # --fallback-min: the winning hand needs at least this many (one noisy frame never picks)
 
 # ---------------------------------------------------------------- signal processing
 FS_NOMINAL = 125.0
