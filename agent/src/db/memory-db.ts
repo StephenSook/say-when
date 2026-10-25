@@ -740,6 +740,8 @@ export class MemoryDb implements AgentDb {
             }
             case 'completeErrand':
                 return this.complete(raw as ReducerArgs['completeErrand']);
+            case 'agentErrandEmail':
+                return this.errandEmail(raw as ReducerArgs['agentErrandEmail']);
             case 'claimCall': {
                 const a = raw as ReducerArgs['claimCall'];
                 const c = this.calls.get(a.callId);
@@ -902,6 +904,35 @@ export class MemoryDb implements AgentDb {
         e.reasonCode = to === 'submitted' ? '' : a.reasonCode || a.status;
         e.reason = to === 'submitted' ? '' : a.reason;
         e.submitMs = a.submitMs;
+    }
+
+    /** PLAN D25, as spacetime/src/consent.ts errandEmail: one email step per status, only for a Submitted errand. */
+    private errandEmail(a: ReducerArgs['agentErrandEmail']): void {
+        const name = 'agentErrandEmail';
+        const steps: Record<string, string> = { started: 'sending', ok: 'sent', error: 'failed' };
+        const step = steps[a.status];
+        if (!step) throw refuse(name, 'status must be started, ok or error');
+        if (!DETAIL_PATTERN.test(a.detail)) throw refuse(name, 'bad detail');
+        if (!a.detail.startsWith('email ')) throw refuse(name, 'detail must start with email');
+        checkCounts(name, a.countsJson);
+        if (a.payloadJson.length > 16_384) throw refuse(name, 'payload_json is larger than 16 KB');
+        const e = this.errands.get(a.errandId);
+        if (!e || e.claimAttempt !== a.attempt || e.claimedBy !== this.me) throw new DbCallError('stale', name, 'stale attempt');
+        if (e.status !== 'submitted') throw refuse(name, 'errand is not sent');
+        const eventKey = `e${a.errandId}:email:${step}`;
+        if (this.events.some((event) => event.eventKey === eventKey)) return;
+        this.events.push({
+            id: this.id(),
+            eventKey,
+            jobId: 0n,
+            questionId: 0n,
+            stage: 'errand',
+            status: a.status,
+            detail: a.detail,
+            ms: a.status === 'started' ? null : a.ms,
+            countsJson: a.countsJson === '' ? '{}' : a.countsJson,
+            payloadJson: a.payloadJson,
+        });
     }
 
     private callStatus(a: ReducerArgs['reportCallStatus']): void {

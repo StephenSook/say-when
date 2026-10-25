@@ -12,6 +12,7 @@ import { CLOCK_SKEW_MS } from './calls.js';
 import { LIMITS } from './contract.js';
 import type { AgentDb } from './db/db.js';
 import { callReducer } from './db/retry.js';
+import { emailPayload, prepareEmail, type ErrandEmailDeps } from './email.js';
 import { classifyYesNo, stockYesNo } from './fastpath.js';
 import type { Logger } from './log.js';
 import { applyOrder, buildOptions, looksYesNo, memoryFirstOptions } from './options.js';
@@ -179,6 +180,11 @@ export interface JobDeps {
     memoryShareable: boolean;
     /** Memory consent marks for past requests (src/requests.ts). Unset: previews carry no mark, so no note is kept. */
     memoryWatch?: MemoryWatch;
+    /**
+     * PLAN D25, the care team email after a sent form (src/email.ts): the preview drafts it and the read-back says so.
+     * Unset (ERRAND_EMAIL_TO not set, or the try sandbox): no email, and the read-back is the Actor's own.
+     */
+    email?: ErrandEmailDeps;
     /** Wall clock, epoch ms. */
     now: () => number;
     /** Monotonic clock for durations. */
@@ -745,16 +751,25 @@ async function previewJob(row: AgentQueueRow, attempt: number, deps: JobDeps, si
             await attach({ status: 'failed', reasonCode: 'read_back_too_long', reason: 'The read-back is too long to say, so nothing was sent.', previewMs });
             return;
         }
+        const formTitle = result.formTitle ?? row.formTitle;
+        // PLAN D25: the care team email is drafted now, and the read-back says so, so the one confirm covers both. A
+        // read-back that would be too long with the email in it goes without the email (and no email is sent).
+        const email = deps.email
+            ? prepareEmail(deps.email, { errandId: row.errandId, formKey: row.formKey, formTitle }, { readBackText: result.readBackText, readBack: result.readBack, previewDigest: result.previewDigest })
+            : null;
+        if (deps.email && !email) deps.log.warn('the read-back with the email is too long; this errand sends no email', { errand: row.errandId });
         const readBackJson = JSON.stringify(result.readBack);
         // Before the attach: once the errand shows previewed, the read-back and the CONFIRM can follow at any time.
         const memory = deps.memoryWatch?.mark() ?? null;
         await step.ok('preview previewed', {
             counts: { readBack: result.readBack.length, unmatched: result.unmatched.length, missingRequired: result.missingRequired.length, previewMs },
         });
+        // Before the attach too: the attach ends this job, and the module takes no step from a job that ended.
+        if (email) await events.instant('errand', 'ok', 'email drafted', 0, { counts: { errandId: Number(row.errandId) }, payload: emailPayload(email.draft) });
         const attached = await attach({
             status: 'previewed',
-            formTitle: result.formTitle ?? row.formTitle,
-            readBackText: result.readBackText,
+            formTitle,
+            readBackText: email ? email.readBackText : result.readBackText,
             readBackJson: readBackJson.length <= LIMITS.readBackJsonChars ? readBackJson : '[]',
             previewDigest: result.previewDigest,
             screenshotUrl: result.screenshotUrl && result.screenshotUrl.length <= LIMITS.screenshotUrl ? result.screenshotUrl : '',
@@ -763,6 +778,8 @@ async function previewJob(row: AgentQueueRow, attempt: number, deps: JobDeps, si
         if (attached.attached) {
             // The submit gate checks the module's confirmed digest against this one.
             deps.previews.record(row.errandId, { digest: result.previewDigest, formUrl: row.formUrl, fieldsJson: row.fieldsJson, certain: attached.certain, memory });
+            // Sent only after the module shows this errand Submitted, with this digest confirmed (src/errands.ts).
+            if (email) deps.email?.book.record(email.draft);
         }
         return;
     }

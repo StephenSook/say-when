@@ -121,6 +121,7 @@ export function check(conn: DbConnection): void {
         agentDone: conn.reducers.agentDone,
         claimErrand: conn.reducers.claimErrand,
         completeErrand: conn.reducers.completeErrand,
+        agentErrandEmail: conn.reducers.agentErrandEmail,
         claimCall: conn.reducers.claimCall,
         reportCallStatus: conn.reducers.reportCallStatus,
         addCallLine: conn.reducers.addCallLine,

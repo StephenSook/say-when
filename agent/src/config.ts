@@ -7,6 +7,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { parseEnv } from 'node:util';
 
+import { isEmailAddress, maskEmail } from './email.js';
 import { DEFAULT_PLANNER_EFFORT, DEFAULT_PLANNER_MODEL, DEFAULT_PLANNER_TIMEOUT_MS, type Effort } from './planner/claude.js';
 import { isSandboxDatabase, SANDBOX_LIMIT_DEFAULTS, type SandboxLimits } from './sandbox.js';
 
@@ -22,6 +23,8 @@ export interface AgentConfig {
     planner: { model: string; effort: Effort; timeoutMs: number };
     search: { enabled: boolean; timeoutMs: number; placesNear: { lat: number; lng: number } | null };
     errands: { enabled: boolean };
+    /** ERRAND_EMAIL_TO (PLAN D25): the care team email after a sent form, or null when it is off. Private: never logged. */
+    email: { to: string | null };
     moss: { enabled: boolean; reopen: boolean };
     calls: { enabled: boolean };
     formsFile: string | null;
@@ -264,6 +267,24 @@ export function readConfig(env: Env, tokenFileDefault: string, hasAnthropicProfi
         if (!loopback) problems.push('AGENT_HEALTH_HOST must be 127.0.0.1, ::1 or localhost (leave it unset to listen on every address).');
     }
 
+    // PLAN D25: the care team email after a sent form (src/email.ts). The address is private: only its shape is
+    // checked, and neither a check nor a problem ever prints it. Never in the try sandbox (judges run it).
+    const emailRaw = (env.ERRAND_EMAIL_TO ?? '').trim();
+    let emailTo: string | null = null;
+    if (emailRaw === '') {
+        checks.push({ name: 'ERRAND_EMAIL_TO', state: 'not set', note: 'no email after a form' });
+    } else if (!isEmailAddress(emailRaw)) {
+        checks.push({ name: 'ERRAND_EMAIL_TO', state: 'invalid', note: 'one email address' });
+        problems.push('ERRAND_EMAIL_TO must be one email address.');
+    } else if (sandboxWanted) {
+        checks.push({ name: 'ERRAND_EMAIL_TO', state: 'set', note: 'off: the try sandbox never sends an email' });
+    } else if (!(apify && formErrand)) {
+        checks.push({ name: 'ERRAND_EMAIL_TO', state: 'set', note: 'off: it needs APIFY_TOKEN and FORM_ERRAND_URL' });
+    } else {
+        emailTo = emailRaw;
+        checks.push({ name: 'ERRAND_EMAIL_TO', state: 'set', note: `the care team email after a sent form, to ${maskEmail(emailRaw)}` });
+    }
+
     return {
         config: {
             spacetime: { uri, database, tokenFile, token },
@@ -273,6 +294,7 @@ export function readConfig(env: Env, tokenFileDefault: string, hasAnthropicProfi
             planner: { model, effort, timeoutMs: plannerTimeout },
             search: { enabled: apify, timeoutMs: searchTimeoutMs, placesNear },
             errands: { enabled: apify && formErrand },
+            email: { to: emailTo },
             moss: { enabled: mossWanted && mossReady, reopen },
             calls: { enabled: calls },
             formsFile,

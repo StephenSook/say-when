@@ -98,6 +98,7 @@ const SAMPLES: { [K in ReducerName]: ReducerArgs[K] } = {
     agentDone: { jobId: 1n, attempt: 1, countsJson: '{}' },
     claimErrand: { errandId: 1n, digest: '0123456789abcdef' },
     completeErrand: { errandId: 1n, attempt: 1, status: 'unknown', confirmationText: '', screenshotUrl: '', reasonCode: '', reason: '', submitMs: 0 },
+    agentErrandEmail: { errandId: 1n, attempt: 1, status: 'ok', detail: 'email sent', ms: 1, countsJson: '{}', payloadJson: '' },
     claimCall: { callId: 1n, digest: '0123456789abcdef' },
     reportCallStatus: { callId: 1n, attempt: 1, status: 'ended', result: 'answered', endReason: '', reasonCode: '', reason: '' },
     addCallLine: { callId: 1n, attempt: 1, lineKey: 'l', role: 'assistant', text: 't' },

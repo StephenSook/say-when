@@ -20,6 +20,7 @@ import { CallRunner } from './calls.js';
 import { loadEnvFiles, readConfig, type ConfigResult } from './config.js';
 import { BINDINGS_DIR, BINDINGS_SDK, loadBuilder } from './db/bindings.js';
 import { SpacetimeAgentDb, TokenSaveError } from './db/spacetime-db.js';
+import { apifyMail, EmailBook, type ErrandEmailDeps } from './email.js';
 import { ErrandRunner } from './errands.js';
 import { MemoryWatch } from './requests.js';
 import { ConversationLog, PreviewBook, SentBook, type JobDeps } from './jobs.js';
@@ -134,11 +135,26 @@ async function run(result: ConfigResult, log: Logger): Promise<number> {
     const sent = new SentBook();
     let calls: CallRunner | null = null;
     const wired = await wire(config, process.env, log, (snapshot) => calls?.onSnapshot(snapshot));
+    // PLAN D25: the care team email after a sent form (src/email.ts), through Apify's Send Email Actor with the same
+    // APIFY_TOKEN. Off unless ERRAND_EMAIL_TO is set and errands run (never in the try sandbox: src/config.ts).
+    const email: ErrandEmailDeps | undefined =
+        config.email.to && wired.errands
+            ? {
+                  to: config.email.to,
+                  mail: apifyMail({ token: loadApifyConfig(process.env).token }),
+                  book: new EmailBook(),
+                  forms: wired.forms,
+                  timeZone: config.timeZone,
+                  now: Date.now,
+                  clock: () => performance.now(),
+              }
+            : undefined;
     log.info('features', {
         search: wired.search !== null,
         placesNear: config.search.placesNear !== null,
         memory: wired.memory !== null,
         errands: wired.errands !== null,
+        email: email !== undefined,
         forms: wired.forms.length,
         calls: wired.dialer !== null,
         model: config.planner.model,
@@ -183,6 +199,7 @@ async function run(result: ConfigResult, log: Logger): Promise<number> {
         maxOptions: config.maxOptions,
         memoryShareable: config.memoryShareable,
         memoryWatch,
+        ...(email ? { email } : {}),
         now: Date.now,
         clock: () => performance.now(),
         requestId: () => `call-${randomUUID().replace(/-/g, '').slice(0, 24)}`,
@@ -204,6 +221,7 @@ async function run(result: ConfigResult, log: Logger): Promise<number> {
         clock: () => performance.now(),
         // Past requests (src/requests.ts): never in the judge try sandbox.
         pastRequests: { memory: wired.memory, forms: wired.forms, timeZone: config.timeZone, now: Date.now, sandbox: config.sandbox !== null, watch: memoryWatch },
+        ...(email ? { email } : {}),
     });
     // A categories job with search prefetch pays for up to PREFETCH_LIMITS.perQuestion searches, so the try caps count them.
     const meter = config.sandbox ? new SandboxMeter(config.sandbox, Date.now, deps.prefetch ? PREFETCH_LIMITS.perQuestion : 0) : null;

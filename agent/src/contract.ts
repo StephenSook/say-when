@@ -50,6 +50,8 @@ export const REDUCERS = {
         wire: 'complete_errand',
         args: ['errand_id', 'attempt', 'status', 'confirmation_text', 'screenshot_url', 'reason_code', 'reason', 'submit_ms'],
     },
+    // PLAN D25: the care team email's steps after a Submitted errand (spacetime/src/consent.ts errandEmail).
+    agentErrandEmail: { wire: 'agent_errand_email', args: ['errand_id', 'attempt', 'status', 'detail', 'ms', 'counts_json', 'payload_json'] },
     claimCall: { wire: 'claim_call', args: ['call_id', 'digest'] },
     reportCallStatus: {
         wire: 'report_call_status',

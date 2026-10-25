@@ -7,6 +7,7 @@ import type { CandidateOption, IndexResult, MemoryHit, Ordering, Recall, WebSear
 
 import { CallRunner } from '../src/calls.js';
 import { MemoryDb } from '../src/db/memory-db.js';
+import type { ErrandEmailDeps } from '../src/email.js';
 import { ErrandRunner } from '../src/errands.js';
 import { ConversationLog, PreviewBook, SentBook, type JobDeps } from '../src/jobs.js';
 import { MemoryWatch } from '../src/requests.js';
@@ -553,6 +554,8 @@ export interface HarnessOptions {
     direct?: boolean;
     /** Search prefetch (JobDeps.prefetch). Off by default here, so the older direct select tests count only their own searches. */
     prefetch?: boolean;
+    /** PLAN D25, the care team email after a sent form (src/email.ts). Off by default. */
+    email?: ErrandEmailDeps;
 }
 
 export function harness(options: HarnessOptions = {}): Harness {
@@ -603,6 +606,7 @@ export function harness(options: HarnessOptions = {}): Harness {
         draftFirst: options.draftFirst,
         direct: options.direct,
         prefetch: options.prefetch,
+        ...(options.email ? { email: options.email } : {}),
     };
     // Short retry waits so the tests of claims that never reached the module run fast.
     const callRunner = new CallRunner({
@@ -625,6 +629,7 @@ export function harness(options: HarnessOptions = {}): Harness {
         clock,
         retryMs: 5,
         pastRequests: { memory: deps.retrieval.memory, forms: deps.forms, timeZone: deps.timeZone, now: deps.now, sandbox: options.sandbox ?? false, watch: memoryWatch },
+        ...(options.email ? { email: options.email } : {}),
     });
     const orchestrator = new Orchestrator(
         deps,
