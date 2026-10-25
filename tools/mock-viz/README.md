@@ -11,8 +11,8 @@ The numbers follow the synthetic bridge (`VIZ_PROTOCOL.md` section 5): the same 
 | Scenario | What it plays | What the screen should show |
 |---|---|---|
 | `01-rest` | 10 s of rest, baseline set, every band within about 4 points of 0 | Pill "Synthetic test signal", no state line, both patches dark, strip lines on the dashed rest line |
-| `02-right-fist-yes` | right fist 3 to 6 s: C3 8-12 Hz about -30, slow potential about +25, C4 near 0; YES (imagery, 0.96; the decoder sends YES and NO only at 0.9 or more, PLAN D21) at 5.4 s | C3 glows cyan, C4 dark; at 5.4 s the cyan pill "Guess YES 0.96", a cyan ring on C3, "YES 0.96" on the guesses lane |
-| `03-left-fist-no` | the mirror: C4 about -30, C3 near 0; NO (imagery) at 5.4 s | C4 glows amber, amber pill "Guess NO 0.90", amber ring on C4 |
+| `02-right-fist-yes` | right fist 3 to 6 s: C3 8-12 Hz about -30, slow potential about +25, C4 near 0; YES (imagery, 0.96; an at-once YES is 0.90 or more, PLAN D21) at 5.4 s | C3 glows cyan, C4 dark; at 5.4 s the cyan pill "Guess YES 0.96", a cyan ring on C3, "YES 0.96" on the guesses lane |
+| `03-left-fist-no` | the mirror: C4 about -30, C3 near 0; NO (imagery, 0.96; an at-once NO is 0.96 or more, PLAN D21) at 5.4 s | C4 glows amber, amber pill "Guess NO 0.96", amber ring on C4 |
 | `04-held-clench-stop` | one clench held from 4.0 to 4.8 s, `emgGate` true for 9 frames, EMG about 100 to 140 uV; STOP (jaw) at 4.8 s, while still held (a held clench is STOP, PLAN D21; a double clench sends nothing) | "Muscle detected. Brain readings paused." for about 0.9 s, both sides "no reading", shaded moments on every row; "STOP" on the jaw lane; no guess pill, no ring |
 | `05-single-clench-confirm` | one clench at 4.0 s, `emgGate` true for 3 frames; CONFIRM (jaw) at 4.8 s (a single clench is CONFIRM, PLAN D17) | the muscle line for about 0.3 s, then "CONFIRM" on the jaw lane |
 | `06-headset-off` | rest; contact poor at 4.5 s, off at 5.0 s; HEADSET_OFF (source `contact`) at 5.05 s; then no frames at all | "No signal" about 0.5 to 0.6 s after the last frame, both sides "no reading", legend "C3 no contact", "C4 no contact"; the pill stays (the socket is open) |

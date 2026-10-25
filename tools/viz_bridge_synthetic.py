@@ -278,9 +278,10 @@ class Script:
             return []
         return [(command, source) for _, command, source in crossed]
 
-    def confidence(self) -> float:
-        # The decoder sends YES and NO only at 0.9 or more (PLAN D21).
-        return round(min(0.97, max(0.9, 0.93 + self.rng.uniform(-0.03, 0.03))), 2)
+    def confidence(self, command: str) -> float:
+        # At-once picks (PLAN D21): YES at 0.90 or more, NO at 0.96 or more.
+        lo, hi = (0.90, 0.97) if command == "YES" else (0.96, 0.99)
+        return round(self.rng.uniform(lo, hi), 2)
 
 
 class Bridge:
@@ -498,7 +499,7 @@ class Bridge:
                     "t": round(time.time(), 3),
                     "id": str(uuid.uuid4()),
                     "command": command,
-                    "confidence": self.script.confidence() if source == "imagery" else None,
+                    "confidence": self.script.confidence(command) if source == "imagery" else None,
                     "source": source,
                 }, essential=True)
         else:

@@ -345,8 +345,9 @@ class Maker:
                     "t": r3(m_at),
                     "id": uuid4(self.rng),
                     "command": command,
-                    # The decoder sends YES and NO only at 0.9 or more (PLAN D21).
-                    "confidence": r3(round(self.rng.uniform(0.90, 0.97), 2)) if source == "imagery" else None,
+                    # At-once picks (PLAN D21): YES at 0.90 or more, NO at 0.96 or more.
+                    "confidence": r3(round(self.rng.uniform(*((0.90, 0.97) if command == "YES" else (0.96, 0.99))), 2))
+                    if source == "imagery" else None,
                     "source": source,
                 }
                 self.add(m_at, frame=marker)
@@ -542,7 +543,7 @@ PLANS = [
     ),
     Plan(
         name="03-left-fist-no", seed=103, seconds=SEC,
-        description="Left fist: the mirror of 02. C4 8-12 Hz drops to about -30, C3 near 0, then NO (imagery, 0.9 to 0.97).",
+        description="Left fist: the mirror of 02. C4 8-12 Hz drops to about -30, C3 near 0, then NO (imagery, 0.96 to 0.99).",
         screen="C4 patch glows amber, C3 dark; at 5.4 s an amber ring pulse on C4 and the pill Guess NO 0.9x.",
         imagery=[(3.0, 6.0, "c4", 1.0)],
         markers=[(5.4, "NO", "imagery")],

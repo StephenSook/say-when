@@ -287,7 +287,7 @@ const CHECKS: Record<string, (r: Run) => void> = {
     assert.ok(plateau.every((s) => (s.mi as VizMi).laterality > 20), 'laterality about +27');
     const yes = onlyMarker(r, 'YES', 'imagery');
     assert.equal(pulseSide(yes), 'c3', 'the YES would pulse the C3 ring');
-    // PLAN D21: the decoder sends YES and NO only at 0.9 or more.
+    // PLAN D21: an at-once YES is 0.90 or more.
     assert.ok(yes.confidence !== null && yes.confidence >= 0.9 && yes.confidence <= 0.97);
     assert.match(guessText(yes), /^Guess YES 0\.\d\d$/);
     assert.ok(snapAt(r, 5.4).markers.includes(yes), 'the YES lands at 5.4 s, during the glow');
@@ -299,6 +299,7 @@ const CHECKS: Record<string, (r: Run) => void> = {
     checkRestDark(between(r, 6.1, 10), r.name);
     assert.ok(between(r, 3.5, 5.5).every((s) => (s.mi as VizMi).laterality < -20), 'laterality about -27');
     const no = onlyMarker(r, 'NO', 'imagery');
+    assert.ok(no.confidence !== null && no.confidence >= 0.96, 'an at-once NO is 0.96 or more (PLAN D21)');
     assert.equal(pulseSide(no), 'c4');
     assert.match(guessText(no), /^Guess NO 0\.\d\d$/);
   },
@@ -637,8 +638,8 @@ describe('every scenario through the page logic', () => {
           assert.match(id, UUID4);
           assert.ok(!ids.has(id), 'marker ids are unique');
           ids.add(id);
-          // PLAN D21: an imagery YES or NO carries a confidence of 0.9 or more.
-          if (f.source === 'imagery') assert.ok(typeof f.confidence === 'number' && f.confidence >= 0.9 && f.confidence <= 1);
+          // PLAN D21: the lowest an imagery YES or NO can carry is the 10 s fallback's 0.65.
+          if (f.source === 'imagery') assert.ok(typeof f.confidence === 'number' && f.confidence >= 0.65 && f.confidence <= 1);
           if (f.source === 'jaw') {
             assert.ok(f.command === 'CONFIRM' || f.command === 'STOP');
             assert.equal(f.confidence, null);
