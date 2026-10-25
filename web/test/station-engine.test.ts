@@ -133,7 +133,7 @@ function key(k: string, code: string, timeStamp = performance.now()) {
   return { key: k, code, repeat: false, metaKey: false, ctrlKey: false, altKey: false, timeStamp, target: null, preventDefault() {}, stopPropagation() {} };
 }
 
-async function pairedEngine() {
+async function pairedEngine(storage = memoryStorage()) {
   const conn = new StationConn();
   conn.db.config.rows = [configRow()];
   conn.db.deviceStatus.rows = [deviceStatusRow(ME, 'Station', 1n)];
@@ -141,7 +141,7 @@ async function pairedEngine() {
   const ticker = new ManualTicker();
   const engine = new StationEngine({
     settings: SETTINGS,
-    storage: memoryStorage(),
+    storage,
     builder: () => builder as any,
     mint: async () => ({ token: '', expiresAtMs: 0n, error: 'voice_key_missing' }),
     ticker,
@@ -200,8 +200,8 @@ describe('direct select on the station (D18)', () => {
 
 describe("the partner's question in the earpiece (Oct 25)", () => {
   /** A paired keyboard station with a fake Cartesia player and a fake earpiece output; voiced unless `silent`. */
-  async function voicedStation(options: { silent?: boolean } = {}) {
-    const paired = await pairedEngine();
+  async function voicedStation(options: { silent?: boolean; readQuestion?: boolean; storage?: ReturnType<typeof memoryStorage> } = {}) {
+    const paired = await pairedEngine(options.storage);
     const spoken: string[] = [];
     const plays: string[] = [];
     paired.internals.player = {
@@ -221,10 +221,25 @@ describe("the partner's question in the earpiece (Oct 25)", () => {
     };
     paired.engine.chooseMode('keyboard');
     if (options.silent) paired.engine.setSilent(true);
+    // Off by default since Oct 25; the tests of what is said turn it on.
+    if (options.readQuestion ?? true) paired.engine.setReadQuestion(true);
     return { ...paired, spoken, plays };
   }
 
-  test('a new partner question is said as "Question: ..." on the options channel; menu and follow-up turns are not', async () => {
+  test('off by default (Oct 25): a new partner question is not said, and an "on" saved under the old key is ignored', async () => {
+    const storage = memoryStorage();
+    storage.setItem('neurolingo/station/read_question', 'on');
+    const { engine, conn, spoken } = await voicedStation({ readQuestion: false, storage });
+    assert.equal(engine.getState().setup.readQuestion, false, 'off by default');
+    engine.startSession();
+    await flush();
+    conn.db.mySession.set([sessionRow({ questionId: 7n, questionText: 'Want some tea?' })]);
+    await flush();
+    assert.deepEqual(spoken, []);
+    engine.stop();
+  });
+
+  test('turned on, a new partner question is said as "Question: ..." on the options channel; menu and follow-up turns are not', async () => {
     const { engine, conn, spoken, plays } = await voicedStation();
     engine.startSession();
     await flush();
@@ -234,7 +249,7 @@ describe("the partner's question in the earpiece (Oct 25)", () => {
     assert.deepEqual(spoken, ['Question: Want some tea? Call a number.']);
     assert.deepEqual(plays, ['Question: Want some tea? Call a number.']);
     assert.equal(engine.getState().playing, 'question');
-    assert.equal(engine.getState().setup.readQuestion, true, 'on by default');
+    assert.equal(engine.getState().setup.readQuestion, true);
     assert.equal(conn.named('reportClipReady').length, 0, 'the question is never reported as an option clip');
 
     // The module's categories turn after a confirmed search copies the question's words; then the person's menu.
@@ -252,7 +267,7 @@ describe("the partner's question in the earpiece (Oct 25)", () => {
     await flush();
     engine.setReadQuestion(false);
     assert.equal(engine.getState().setup.readQuestion, false);
-    assert.equal(internals.storage.getItem('neurolingo/station/read_question'), 'off');
+    assert.equal(internals.storage.getItem('neurolingo/station/read_question_v2'), 'off');
     conn.db.mySession.set([sessionRow({ questionId: 7n, questionText: 'Tea?' })]);
     await flush();
     assert.deepEqual(spoken, []);

@@ -140,15 +140,18 @@ describe('the station setup values', () => {
     assert.equal(readOptionSpeed(storage), null);
   });
 
-  test("reading the partner's question in the earpiece is on unless turned off", () => {
+  test("reading the partner's question in the earpiece is off unless turned on (Oct 25)", () => {
     const storage = memoryStorage();
+    assert.equal(readReadQuestion(storage), false);
+    storage.items.set('neurolingo/station/read_question', 'on');
+    assert.equal(readReadQuestion(storage), false, 'an "on" saved under the old key is ignored');
+    assert.equal(saveReadQuestion(true, storage), true);
+    assert.equal(storage.items.get('neurolingo/station/read_question_v2'), 'on');
     assert.equal(readReadQuestion(storage), true);
     assert.equal(saveReadQuestion(false, storage), true);
-    assert.equal(storage.items.get('neurolingo/station/read_question'), 'off');
+    assert.equal(storage.items.get('neurolingo/station/read_question_v2'), 'off');
     assert.equal(readReadQuestion(storage), false);
-    assert.equal(saveReadQuestion(true, storage), true);
-    assert.equal(readReadQuestion(storage), true);
-    assert.equal(readReadQuestion(throwingStorage), true, 'a storage that throws keeps the default');
+    assert.equal(readReadQuestion(throwingStorage), false, 'a storage that throws keeps the default');
   });
 });
 

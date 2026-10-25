@@ -100,7 +100,8 @@ export const STATION_KEYS = {
   switchKey: 'neurolingo/station/switch_key',
   assistantSpeed: 'neurolingo/station/assistant_speed',
   optionSpeed: 'neurolingo/station/option_speed',
-  readQuestion: 'neurolingo/station/read_question',
+  // v2 (Oct 25): the default flipped to off, so a saved "on" from the old key is ignored once.
+  readQuestion: 'neurolingo/station/read_question_v2',
 } as const;
 
 /** The decoder's port on 127.0.0.1 (docs/station.md 2.4; proposed, Shashank confirms). */
@@ -172,9 +173,9 @@ export function saveSpeed(which: 'assistant' | 'option', speed: number | null, s
   return writeItem(key, String(speed), storage);
 }
 
-/** "Read the partner's question in the earpiece": on unless it was turned off on this browser. */
+/** "Read the partner's question in the earpiece": off unless it was turned on on this browser (Oct 25). */
 export function readReadQuestion(storage: StorageLike | null = browserStorage()): boolean {
-  return readItem(STATION_KEYS.readQuestion, storage) !== 'off';
+  return readItem(STATION_KEYS.readQuestion, storage) === 'on';
 }
 
 export function saveReadQuestion(on: boolean, storage: StorageLike | null = browserStorage()): boolean {
@@ -198,7 +199,10 @@ export function saveReplyVolume(volume: number, storage: StorageLike | null = br
 
 export const SPEAKER_MIRROR_KEY = 'neurolingo/speaker/mirror_earpiece';
 
-/** "Mirror the earpiece" (lib/speaker/mirror.ts): on unless it was turned off on this browser. */
+/**
+ * "Say read-backs" (lib/speaker/mirror.ts, once "Mirror the earpiece"): on unless it was turned off on this browser.
+ * Same key and default as before; since Oct 25 the mirror says read-backs only.
+ */
 export function readMirrorEarpiece(storage: StorageLike | null = browserStorage()): boolean {
   return readItem(SPEAKER_MIRROR_KEY, storage) !== 'off';
 }

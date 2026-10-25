@@ -1,13 +1,13 @@
 /**
  * Mirror the earpiece (Stephen, Sun Oct 25 2026: "make Cartesia output the voice every time when it's reading the
- * stuff back"). Judges in the room cannot hear the headset, so the room voice also says what the wearer hears: the
- * partner's question ("Question: ..."), each numbered option as it is read ("One: good."), and every read-back
- * ("... One: send it. Two: cancel."), as well as the picked reply it already says. Plain TypeScript outside React;
- * the words come from lib/speaker/mirror-rows.ts and the audio is the same Cartesia voice as the reply.
+ * stuff back"). Judges in the room cannot hear the headset, so the room voice also says every read-back ("... One:
+ * send it. Two: cancel."), as well as the picked reply it already says. Since Oct 25 (Stephen: "take off question
+ * repeating", "take off answer choices being repeated") it says neither the partner's question nor the numbered
+ * options: lib/speaker/mirror-rows.ts offers read-backs only. Plain TypeScript outside React; the audio is the same
+ * Cartesia voice as the reply.
  *
  * The rules:
- * 1. Lines are said one at a time, in the order they arrive (a question, then its options, then any read-back). The
- *    room voice never talks over itself.
+ * 1. Lines are said one at a time, in the order they arrive. The room voice never talks over itself.
  * 2. Each line has a key and is said at most once. A line for an older question than the newest one seen is dropped,
  *    and a newer question drops the queued lines of older ones and cuts the one being said.
  * 3. The picked reply has priority: when it starts, the line being said is cut and every queued line for that

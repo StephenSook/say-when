@@ -143,19 +143,19 @@ export function buildSpeakerView(input: SpeakerViewInput): SpeakerView {
   }
 }
 
-// ---------- Mirror the earpiece (lib/speaker/mirror.ts) ----------
+// ---------- Say read-backs (lib/speaker/mirror.ts; read-backs only since Oct 25) ----------
 
 export const MIRROR_TEXT = {
-  off: 'Mirror off. Only the picked reply is said.',
-  noSharing: 'Mirror needs board sharing on. Only the picked reply is said.',
-  unavailable: 'Mirror unavailable: the board could not be read.',
-  needsAudio: 'Tap Start room voice to hear the earpiece here.',
-  waitingAudio: 'Earpiece lines are waiting. Tap Start room voice.',
-  idle: 'Mirroring the earpiece.',
+  off: 'Read-backs off. Only the picked reply is said.',
+  noSharing: 'Read-backs need board sharing on. Only the picked reply is said.',
+  unavailable: 'Read-backs unavailable: the board could not be read.',
+  needsAudio: 'Tap Start room voice to hear the read-backs here.',
+  waitingAudio: 'A read-back is waiting. Tap Start room voice.',
+  idle: 'Saying read-backs.',
   question: 'Saying the question',
   option: 'Saying an option',
   readback: 'Saying the read-back',
-  failed: 'Could not play the last earpiece line.',
+  failed: 'Could not play the last read-back.',
 } as const;
 
 export interface MirrorView {

@@ -10,9 +10,10 @@
  *   Missed reply to question 7, released 3 min ago.  Could not say the reply.
  * The reply's words show only while the room's sharing toggle is on; otherwise "Reply to question 7".
  *
- * Mirror the earpiece (lib/speaker/mirror.ts, on by default): the room also hears what the headset wearer hears, the
- * partner's question, the numbered options and every read-back, read from the board views while sharing is on. One
- * small status line under the reply says what it is doing, or what it needs (the tap, board sharing).
+ * Say read-backs (lib/speaker/mirror.ts, on by default): the room also hears every read-back the headset wearer hears,
+ * read from the board views while sharing is on. Since Oct 25 it does not repeat the partner's question or the
+ * numbered options. One small status line under the reply says what it is doing, or what it needs (the tap, board
+ * sharing).
  */
 import { useEffect, useId, useState } from 'react';
 import { DeviceChip, PairingCard, RoleConnectionChip, ROOM_VOICE_LABELS, StartAudio, VoiceStatus } from '@/components/device';
@@ -97,7 +98,7 @@ function RoomVoice({ speaker }: { speaker: ReturnType<typeof useSpeaker> }) {
       <div className={styles.mirror}>
         <label className={styles.check}>
           <input type="checkbox" checked={speaker.mirror.on} onChange={(event) => speaker.setMirrorOn(event.currentTarget.checked)} />
-          <span>Mirror the earpiece</span>
+          <span>Say read-backs</span>
         </label>
         <p className={cx(styles.mirrorLine, styles[mirror.line.tone])} title={mirror.line.title ?? undefined} role="status">
           <span className={styles.mark} data-mark={mirror.line.mark} aria-hidden="true">
