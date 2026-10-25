@@ -12,7 +12,7 @@ Written and committed before any measurement, so the bar cannot move after we se
 | Held jaw clench (about 1 second) | STOP: cancel, none of these, hang up, pause. |
 | Double jaw clench | Nothing: the decoder sends no command for it. |
 
-The brain makes the choices and the jaw commits or stops. The jaw clench is a muscle signal (EMG), not a brain signal, and we say so. Nothing leaves the room without a fresh single clench after the spoken read-back. (PLAN D17 swapped the jaw map on Oct 24; until then a double was CONFIRM and a single was STOP. PLAN D21, later on Oct 24, made STOP a held clench only, so a double now means nothing, and raised the decoder's confidence bar for an imagined YES or NO from 0.6 to 0.9. The pass bar below did not change.)
+The brain makes the choices and the jaw commits or stops. The jaw clench is a muscle signal (EMG), not a brain signal, and we say so. Nothing leaves the room without a fresh single clench after the spoken read-back. (PLAN D17 swapped the jaw map on Oct 24; until then a double was CONFIRM and a single was STOP. PLAN D21, later on Oct 24, made STOP a held clench only, so a double now means nothing, and changed how the decoder sends an imagined YES or NO (at once at 0.90 for YES and 0.96 for NO, or a 10 s fallback; it was 0.6 held for 1 s). The pass bar below did not change.)
 
 ## The rule
 

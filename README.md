@@ -26,8 +26,8 @@ Every step writes to SpacetimeDB, so the dashboard on any laptop updates live ov
 
 | Command | Signal | What it does |
 |---|---|---|
-| YES | Imagine squeezing your right fist (counts only at 90% decoder confidence or more) | Picks the option just heard, or answers yes. While nothing is happening, it opens the person's own menu ("I need something", "Send a request", "Call", "Say something else"). |
-| NO | Imagine squeezing your left fist (same 90% bar) | Skips the option, or answers no. |
+| YES | Imagine squeezing your right fist (at once at 0.90 decoder confidence or more, or by the 10 s fallback) | Picks the option just heard, or answers yes. While nothing is happening, it opens the person's own menu ("I need something", "Send a request", "Call", "Say something else"). |
+| NO | Imagine squeezing your left fist (at once at 0.96 or more, or by the 10 s fallback) | Skips the option, or answers no. |
 | CONFIRM | Single jaw clench | The only way anything leaves the room: it sends the form or places the call that was just read back. It only counts inside the confirm window after the full read-back. |
 | STOP | Hold a jaw clench (about 1 second) | Cancels, means "none of these", hangs up a call, and pauses. |
 
@@ -39,7 +39,7 @@ The hand commands are imagined movements read over the motor cortex, so they onl
 
 - The model never clicks submit and never dials. An errand or call option only prepares and reads back; CONFIRM (a single jaw clench) releases it.
 - Fail closed. Silence, a timeout, NO, STOP (a held jaw clench), or a lost signal all mean "do not act". A double jaw clench sends nothing, so two quick clenches never count as two CONFIRMs.
-- An imagined YES or NO counts only when the decoder is at least 90% sure for the whole hold (PLAN D21). Fewer false picks, at the cost of a stronger or longer imagined squeeze.
+- An imagined YES fires at once only when the decoder is at least 90% sure, and NO only at 96% (PLAN D21). Otherwise a 10 s fallback sends the hand with more moments at 65% or more, with at least 3 of them; a tie sends nothing. The fallback can turn sustained noise into a YES or NO pick, which the minimum count limits but does not prevent. A pick never sends a form or places a call: that still needs CONFIRM after the read-back.
 - A confirm must be fresh: it starts after the read-back ends, lands inside the window, matches the digest of what was read back, and is used once.
 - Calls go only to people who consented. The voice says it is an automated assistant with an AI-generated voice and who it calls for, then what the sent request asked for (only fields the form marks speakable, each checked again before it is said) and when it was sent, and gives a callback number at the end before it hangs up.
 - The form-errand Actor only fills forms on an allowlist and refuses CAPTCHAs, logins, passwords, payments, and uploads.
