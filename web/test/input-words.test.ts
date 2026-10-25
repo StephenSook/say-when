@@ -15,7 +15,7 @@ import { commandChipLabel, commandWord, inputChip, safetySentence } from '../lib
 import { eventsForQuestion, latestQuestion, spokenReply } from '../lib/data/derive';
 import { replayRowsAt } from '../lib/data/replay';
 import { boardRows, inputFromLabel, inputFromLedger, type BoardSnapshot } from '../lib/data/spacetime-map';
-import { PERSON_COMMANDS, type DataRows, type InputKind } from '../lib/data/types';
+import { PERSON_COMMANDS, SHOWN_COMMANDS, type DataRows, type InputKind } from '../lib/data/types';
 import { call, errand, event, ledger, midScan, option, question, read, scan, ts, wordTiming } from './board-fixtures';
 
 const INPUTS: readonly InputKind[] = ['headset', 'keyboard', 'switch', 'unknown'];
@@ -154,11 +154,12 @@ describe('the input mode, from the session label in the public ledger', () => {
 
 describe('Conversation: the command strip and the turn', () => {
   test('the chips name the true input', () => {
-    const chips = (input: InputKind) => PERSON_COMMANDS.map((name) => commandChipLabel(name, input));
-    assert.deepEqual(chips('headset'), ['1, imagined left fist', '2, imagined right fist', '3, single jaw clench', '4, double jaw clench', 'STOP, long jaw clench']);
-    assert.deepEqual(chips('keyboard'), ['1, key 1', '2, key 2', '3, key 3', '4, key 4', 'STOP, key S']);
-    assert.deepEqual(chips('switch'), ['1, short switch press', '2, double switch press', '3, not on the switch', '4, not on the switch', 'STOP, long switch press']);
-    assert.deepEqual(chips('unknown'), ['1', '2', '3', '4', 'STOP']);
+    // The strip shows 1, 2, 3 and STOP: a double jaw clench means nothing (D21), so no gesture gives 4.
+    const chips = (input: InputKind) => SHOWN_COMMANDS.map((name) => commandChipLabel(name, input));
+    assert.deepEqual(chips('headset'), ['1, imagined left fist', '2, imagined right fist', '3, single jaw clench', 'STOP, held jaw clench']);
+    assert.deepEqual(chips('keyboard'), ['1, key 1', '2, key 2', '3, key 3', 'STOP, key S']);
+    assert.deepEqual(chips('switch'), ['1, short switch press', '2, double switch press', '3, not on the switch', 'STOP, long switch press']);
+    assert.deepEqual(chips('unknown'), ['1', '2', '3', 'STOP']);
   });
 
   test('a picked errand waits for the two-option confirm; the stopped cursor says Headset off only for the headset', () => {
@@ -282,7 +283,7 @@ describe('the header chip and the banner', () => {
 describe('Agents: what the person did, in the true input', () => {
   test('confirmed, sent, connected, the STOP that stopped it, the pause, and the empty state', () => {
     const phrase: Record<InputKind, string> = { headset: '1 (an imagined left fist)', keyboard: '1 (key 1)', switch: '1 (a short switch press)', unknown: '1' };
-    const stop: Record<InputKind, string> = { headset: 'STOP, a long jaw clench', keyboard: 'STOP, key S', switch: 'STOP, a long switch press', unknown: 'STOP' };
+    const stop: Record<InputKind, string> = { headset: 'STOP, a held jaw clench', keyboard: 'STOP, key S', switch: 'STOP, a long switch press', unknown: 'STOP' };
     for (const input of INPUTS) {
       const rows = boardRows(
         board(

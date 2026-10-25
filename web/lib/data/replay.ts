@@ -12,15 +12,16 @@
  *   2.4 s   Heard; Apify search, then Moss recall (one shared memory, one private), then Claude
  *           drafts four options in four tones, each with a short earpiece label
  *   5.3 s   the earpiece reads "One: cafeteria. Two: Thai place. Three: cafe on Bay. Four: too tired.", then
- *           waits for a pick
+ *           waits for a pick (silence never picks, D19)
  *  11.5 s   PICK_3 (a single jaw clench) picks option 3; it is said out loud at once (no veto in direct
  *           select); a repeat inside the refractory time is ignored
  *  16.5 s   Claude offers follow-up options; PICK_1 (the imagined left fist) picks the errand
  *  20.8 s   the errand: the form is filled, the values are read back off the page, the read-back plays
  *           with "One: send it. Two: cancel.", PICK_1 confirms, and the form is sent
- *  33.7 s   another follow-up; a PICK_4 is ignored (there is no option 4); PICK_1 picks the call; the
- *           script is read back, PICK_1 confirms, dialing, ringing, connected, transcript lines
- *  58.7 s   STOP (a long jaw clench) hangs up the call
+ *  33.7 s   another follow-up with two options; a stray PICK_3 (a single jaw clench) is ignored (there is no
+ *           option 3); PICK_1 picks the call; the script is read back, PICK_1 confirms, dialing, ringing,
+ *           connected, transcript lines
+ *  58.7 s   STOP (a held jaw clench, about 1 second) hangs up the call
  *  60.8 s   STOP while idle pauses; PICK_1 resumes
  *  64.4 s   the headset loses contact (HEADSET_OFF, a system event); PICK_1 resumes
  *  71.0 s   the loop starts again with a new question number
@@ -594,13 +595,14 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
   });
   event(sentAt, 'errand', 'ok', { errandId }, sentAt - errandAt);
 
-  // Another follow-up: the call, or nothing else. A PICK_4 finds no option 4; PICK_1 picks the call.
+  // Another follow-up: the call, or nothing else. A stray PICK_3 (a single jaw clench) finds no option 3 in this
+  // two-option list; PICK_1 picks the call.
   const callFollowUpAt = sentAt + 1_200;
   event(callFollowUpAt, 'plan', 'started', { label: 'claude' }, null);
   event(callFollowUpAt + 500, 'plan', 'ok', { label: 'claude', version: 3, optionCount: callOptions.length, followUp: true }, 500);
   publishOptions(callFollowUpAt + 500, 3, callOptions);
   const callListEnd = readList(callFollowUpAt + 600, 3, callOptions);
-  command(callListEnd + 600, 'PICK_4', {
+  command(callListEnd + 600, 'PICK_3', {
     accepted: false,
     ignoredReason: 'There is no option with that number',
     confidence: 0.9,
@@ -678,7 +680,7 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
     });
   });
 
-  // STOP, a long jaw clench, hangs up. During a call STOP does not pause (docs/spacetime.md 4.2): the
+  // STOP, a held jaw clench, hangs up. During a call STOP does not pause (docs/spacetime.md 4.2): the
   // module asks the call agent to hang up (`cancel_requested`), and the call ends once the line drops.
   const hangUpAt = connectedAt + 10_300;
   command(hangUpAt, 'STOP', { confidence: 0.97 }, (rows, id) => {

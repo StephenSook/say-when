@@ -167,22 +167,22 @@ describe('mode pill', () => {
 describe('words', () => {
   const marker = (over: Partial<VizMarker>): VizMarker => ({ type: 'viz.marker', t: 0, id: 'm', command: 'YES', confidence: 0.82, source: 'imagery', ...over });
 
-  test('direct select (D18): the left fist is 1 on C4, the right fist 2 on C3; the jaw lane is 3, 4 and STOP', () => {
+  test('direct select (D18): the left fist is 1 on C4, the right fist 2 on C3; the jaw lane is 3 and STOP (D21)', () => {
     assert.equal(LABELS.legendC4, '1: C4 left-fist imagery');
     assert.equal(LABELS.legendC3, '2: C3 right-fist imagery');
     assert.equal(LABELS.jawLane, 'Jaw muscle, not brain');
-    assert.equal(LABELS.jawLegend, '3 single / 4 double / long = STOP');
+    assert.equal(LABELS.jawLegend, '3 single clench, hold = STOP');
+    assert.doesNotMatch(LABELS.explain, /double|4 /, 'a double jaw clench means nothing, so no screen offers 4');
     assert.equal(pulseSide(marker({ command: 'PICK_1' })), 'c4');
     assert.equal(pulseSide(marker({ command: 'PICK_2' })), 'c3');
     assert.equal(pulseSide(marker({ command: 'PICK_3', source: 'jaw' })), null);
     assert.equal(pulseSide(marker({ command: 'PICK_1', source: 'jaw' })), null, 'the jaw-only fallback never pulses the brain');
     assert.equal(guessText(marker({ command: 'PICK_2' })), 'Guess 2 0.82');
     assert.equal(guessText(marker({ command: 'PICK_3', source: 'jaw', confidence: null })), 'Jaw 3');
-    assert.equal(guessText(marker({ command: 'PICK_4', source: 'jaw', confidence: null })), 'Jaw 4');
     assert.equal(guessText(marker({ command: 'STOP', source: 'jaw', confidence: null })), 'Jaw STOP');
     assert.equal(guessText(marker({ command: 'PICK_1', source: 'jaw', confidence: null })), 'Jaw 1');
     assert.equal(eventPillText(marker({ command: 'PICK_1', confidence: 0.7 })), '1 0.70');
-    assert.equal(eventPillText(marker({ command: 'PICK_4', source: 'jaw', confidence: null })), '4');
+    assert.equal(eventPillText(marker({ command: 'PICK_3', source: 'jaw', confidence: null })), '3');
     assert.equal(isJawMarker(marker({ command: 'PICK_3', source: 'jaw' })), true);
     assert.equal(isJawMarker(marker({ command: 'PICK_2' })), false);
   });

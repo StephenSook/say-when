@@ -17,9 +17,9 @@ import styles from './StationSetup.module.css';
 
 const MODE_NOTES: Readonly<Record<InputMode, string>> = {
   headset:
-    'Commands come from the decoder on this laptop (python live.py --mode direct): fists pick 1 and 2, jaw clenches 3, 4 and STOP. The fists are imagined; the jaw clench is a muscle signal.',
-  keyboard: 'A stand-in for tests: keys 1, 2, 3, 4, S and H. Sent as key presses, never as headset input.',
-  switch: 'One physical switch: a short press is 1, two presses 2, a 1 s hold STOP. Options 3 and 4 are not on the switch. Sent as switch presses.',
+    'Commands come from the decoder on this laptop (python live.py --mode direct): fists pick 1 and 2, a single jaw clench 3, a held clench (about 1 second) STOP; a double clench does nothing. The fists are imagined movements decoded from EEG; the jaw clench is a muscle signal.',
+  keyboard: 'A stand-in for tests: keys 1, 2, 3, S and H. Sent as key presses, never as headset input.',
+  switch: 'One physical switch: a short press is 1, two presses 2, a 1 s hold STOP. Option 3 is not on the switch. Sent as switch presses.',
 };
 
 export interface StationSetupProps {

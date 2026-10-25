@@ -4,8 +4,8 @@
   {"type": "health", "decoderHealthy"}
 
 command depends on the map (config.MODES, live.py --mode):
-  direct (D18, default): PICK_1, PICK_2, PICK_3, PICK_4, STOP or HEADSET_OFF
-  scan   (D11 + D17):    YES, NO, CONFIRM, STOP or HEADSET_OFF
+  direct (D18, default): PICK_1, PICK_2, PICK_3, STOP or HEADSET_OFF
+  scan   (D11 + D21):    YES, NO, CONFIRM, STOP or HEADSET_OFF
 Nothing here talks to SpacetimeDB: messages go to stdout (one JSON object per line), the 8765 server and optionally
 a .jsonl file.
 """
@@ -17,18 +17,22 @@ import uuid
 from eeg import config
 
 # Jaw clench -> command, per map. A clench is a muscle signal (EMG), never a brain signal.
+# PLAN D21, in both maps: a held clench (LONG_CLENCH_S) is STOP and a double clench sends nothing. A double has no
+# entry here, so from_jaw returns None for it. The detector still recognizes a double, so two quick clenches never
+# become two single-clench commands.
 JAW_COMMAND = {
-    # D18 direct select: single = option 3, double = option 4, a held clench (LONG_CLENCH_S) = STOP.
-    "direct": {"single": "PICK_3", "double": "PICK_4", "long": "STOP"},
-    # D17 scan: single = CONFIRM, double or held = STOP.
-    "scan": {"single": "CONFIRM", "double": "STOP", "long": "STOP"},
+    # D18 direct select: single = option 3, held = STOP.
+    "direct": {"single": "PICK_3", "long": "STOP"},
+    # Scan: single = CONFIRM (D17), held = STOP.
+    "scan": {"single": "CONFIRM", "long": "STOP"},
 }
 # Jaw-only fallback (docs/brain-mode-test.md), imagery off.
 JAW_ONLY_COMMAND = {
     # Direct: the jaw takes over the two fist picks, so every confirm ("One: send it. Two: cancel.") still works:
-    # single = PICK_1, double = PICK_2, held = STOP. Options 3 and 4 need the station keys 3 and 4.
+    # single = PICK_1, double = PICK_2, held = STOP. Option 3 needs the station key 3.
     "direct": {"single": "PICK_1", "double": "PICK_2", "long": "STOP"},
-    # Scan, unchanged since D16: single = YES, double = CONFIRM, silence = NO, no STOP gesture.
+    # Scan, unchanged by D17 and D21: single = YES, double = CONFIRM, silence = NO, and there is no STOP gesture (a
+    # teammate stops from the station keys).
     "scan": {"double": "CONFIRM", "single": "YES"},
 }
 
@@ -58,7 +62,8 @@ def from_hand(ev: dict, now: float = None, *, mode: str = config.DEFAULT_MODE) -
 
 
 def from_jaw(ev: dict, jaw_only: bool = False, now: float = None, *, mode: str = config.DEFAULT_MODE):
-    """A clench event (single / double / long) as a command, or None when the map has no command for it."""
+    """A clench event (single / double / long) as a command, or None when the map has no command for it: a double in
+    either main map (PLAN D21), and a held clench in the scan jaw-only fallback."""
     table = JAW_ONLY_COMMAND if jaw_only else JAW_COMMAND
     cmd = table[_mode(mode)].get(ev["kind"])
     conf = min(1.0, ev["strength"] / (2 * config.JAW_RATIO))

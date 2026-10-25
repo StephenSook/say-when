@@ -95,6 +95,16 @@ describe('events', () => {
         assert.equal(redact('Call me at 41:55:55:01:88 please'), 'Call me at ##:##:##:##:## please');
     });
 
+    it('keeps the product name only in "the Eleven app", and still masks a lone eleven', () => {
+        assert.equal(
+            redact('calling for Demo user through the Eleven app. This call is recorded.'),
+            'calling for Demo user through the Eleven app. This call is recorded.',
+        );
+        assert.equal(redact('My number is five one six eleven twelve'), 'My number is # # # # #');
+        assert.equal(redact('Eleven, eleven app, ELEVEN app'), '#, # app, # app');
+        assert.equal(redact('a \u{E000} slipped in through the Eleven app'), 'a  slipped in through the Eleven app');
+    });
+
     it('masks dates, times and prices too, and keeps the other words', () => {
         assert.equal(redact('Appointment on 10/24/2026, from 9:00-17:00.'), 'Appointment on ##/##/####, from #:##-##:##.');
         assert.equal(redact('Leon got it at 10:30 AM. One or two of them, said Zo\u{00EB}.'), 'Leon got it at ##:## AM. # or # of them, said Zo\u{00EB}.');

@@ -40,27 +40,35 @@ export const STAGES: readonly Stage[] = ['listen', 'search', 'retrieve', 'plan',
 export type PipelineStatus = 'started' | 'ok' | 'error';
 
 /**
- * Direct select command names (D18, docs/direct-select.md). The person gives five of them:
+ * Direct select command names (D18, docs/direct-select.md). The person's gestures give four of them:
  * - PICK_1 (imagine squeezing the left fist): pick option 1. In a confirm, "One: send it". While paused, resume.
  * - PICK_2 (imagine squeezing the right fist): pick option 2. In a confirm, "Two: cancel".
  * - PICK_3 (single jaw clench): pick option 3.
- * - PICK_4 (double jaw clench): pick option 4.
- * - STOP (long jaw clench, held about a second): cancel, hang up, pause.
+ * - STOP (held jaw clench, about 1 second, PLAN D21): cancel, none of these, hang up, pause.
+ * A double jaw clench means nothing (PLAN D21), so no gesture gives PICK_4; it stays a command because the module
+ * takes up to 4 options and key 4 picks option 4 in a keyboard test.
  * Nothing leaves the room (a request, a call, a web search) without a read-back and a fresh PICK_1.
  * HEADSET_OFF is a system event, not a command: the headset lost contact. Like the 2-minute idle
- * auto-pause, it cancels anything pending. The scan words (YES, NO, CONFIRM) live on `main` only.
+ * auto-pause, it cancels anything pending. The scan words (YES, NO, CONFIRM; PLAN D11, D17, D21) are main's map for
+ * the `say-when-demo` database; the station and the screens here speak direct select.
  */
 export type PickCommand = 'PICK_1' | 'PICK_2' | 'PICK_3' | 'PICK_4';
 export type CommandName = PickCommand | 'STOP' | 'HEADSET_OFF';
 
-/** The five commands a person gives on purpose. */
+/** The five commands a person can give on purpose (PICK_4 only by key 4 in a keyboard test). */
 export type PersonCommand = Exclude<CommandName, 'HEADSET_OFF'>;
 
 /** The four picks, in rank order. */
 export const PICK_COMMANDS: readonly PickCommand[] = ['PICK_1', 'PICK_2', 'PICK_3', 'PICK_4'];
 
-/** The person's five commands, in the order the gesture legend shows them. */
+/** The person's five commands, in rank order, STOP last. */
 export const PERSON_COMMANDS: readonly PersonCommand[] = [...PICK_COMMANDS, 'STOP'];
+
+/** The highest option number a gesture picks: 3, since a double jaw clench means nothing (PLAN D21). */
+export const GESTURE_PICKS = 3;
+
+/** The commands the screens present, in the order the gesture legend and the command strip show them: 1, 2, 3, STOP. */
+export const SHOWN_COMMANDS: readonly PersonCommand[] = [...PICK_COMMANDS.slice(0, GESTURE_PICKS), 'STOP'];
 
 /** Every command event name, the system's HEADSET_OFF included. */
 export const COMMANDS: readonly CommandName[] = [...PERSON_COMMANDS, 'HEADSET_OFF'];
@@ -499,7 +507,7 @@ export interface CommandEvent {
  * - 'idle': nothing is being read (before a question, after a scan ends, after a reply is released).
  * - 'preparing': the options are being drafted or their clips made.
  * - 'reading': the option under the cursor is playing in the earpiece.
- * - 'window': its audio ended and the response window is open: YES picks, NO skips, silence moves on.
+ * - 'window': its audio ended and the response window is open: YES picks, NO skips, silence reads it again (D19).
  * - 'veto': YES picked a reply; for a moment (about 0.7 s) NO or STOP can still cancel it before it is said out loud.
  * - 'paused': STOP while idle, HEADSET_OFF, the idle auto-pause or the operator. YES resumes.
  */
@@ -517,8 +525,8 @@ export type ScanOutcome = 'picked' | 'none' | 'no_pick' | 'stopped' | 'cancelled
 
 /**
  * The scan clock (docs/ui.md gap 4, PLAN D12, docs/spacetime.md `scan_state`): which option is in the
- * earpiece and how long is left. NO skips the option under the cursor, and silence moves on when the
- * window closes. Neither ends the scan.
+ * earpiece and how long is left. NO skips the option under the cursor, and silence reads it again when the
+ * window closes (D19). Neither ends the scan.
  */
 export interface ScanState {
   questionId: string;

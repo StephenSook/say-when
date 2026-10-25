@@ -9,6 +9,7 @@
 import { ConnectionId, TimeDuration, Timestamp, type Identity } from 'spacetimedb';
 import type { InferSchema } from 'spacetimedb/server';
 import { createModuleTestHarness, TestAuth, type ModuleTestHarness } from 'spacetimedb/server/test-utils';
+import { scanPolicy } from '../clock';
 import type { Ctx } from '../ctx';
 import * as m from '../index';
 import spacetimedb, { type AnswerOption, type GestureLog, type OptionInput, type Question, type ScanState, type ScanTimer } from '../schema';
@@ -87,9 +88,11 @@ export function micros(ts: Timestamp | undefined): bigint {
 
 /**
  * A fresh database after `init`, published by OWNER. A new database answers by direct select (D18); the suites
- * written for the scanning cursor ask for `scan`, so they run exactly as before.
+ * written for the scanning cursor ask for `scan`, so they run exactly as before. Those run the D11 timed scan
+ * (silence moves on); the D19 tests (paced.test.ts) turn `scanPolicy.silenceRepeats` back on.
  */
 export function emptyDb(mode: 'scan' | 'direct' = 'scan'): Test {
+  scanPolicy.silenceRepeats = false;
   const test = createModuleTestHarness(spacetimedb, m);
   test.clock.set(new Timestamp(NOW_MICROS));
   as(test, OWNER, (ctx) => m.init(ctx, {}));

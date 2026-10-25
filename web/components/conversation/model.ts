@@ -19,20 +19,21 @@
  */
 import { CONFIRM_SHORT, offWord } from '../../lib/commands';
 import { latestOfStage, latestQuestion, optionUnderCursor, pickedOption, wordIndexAt } from '../../lib/data/derive';
-import type {
-  AnswerOption,
-  CallRequest,
-  Errand,
-  InputKind,
-  OptionKind,
-  PipelineEvent,
-  Question,
-  SafetyState,
-  ScanOutcome,
-  ScanPhase,
-  ScanState,
-  StageError,
-  WordTiming,
+import {
+  GESTURE_PICKS,
+  type AnswerOption,
+  type CallRequest,
+  type Errand,
+  type InputKind,
+  type OptionKind,
+  type PipelineEvent,
+  type Question,
+  type SafetyState,
+  type ScanOutcome,
+  type ScanPhase,
+  type ScanState,
+  type StageError,
+  type WordTiming,
 } from '../../lib/data/types';
 import { maskPhoneNumbers } from '../../lib/format';
 import { callStatusWord, statusFromCall, statusFromErrand, type RunStatus } from '../../lib/status';
@@ -107,7 +108,7 @@ export type CursorPhase = 'reading' | 'window' | 'stopped';
 export interface CursorView {
   /** The option under the cursor, or null for the yes or no prompt and for the wait for a pick after the list. */
   optionId: string | null;
-  /** Direct select: the list was read and waits for a pick, "1 to 4". null otherwise. */
+  /** Direct select: the list was read and waits for a pick, "1 to 3". null otherwise. */
   waitingFor?: string | null;
   phase: CursorPhase;
   /** When the current scan phase started and when it is planned to end, for the word mark and the time left. */
@@ -383,11 +384,11 @@ function cursorFor(
   return { optionId: option.id, phase, words: wordsFor(events, option.id), ...timing };
 }
 
-/** "1 to 4", "1 or 2", "1": the numbers a list of this many options is picked by. */
+/** "1 to 3", "1 or 2", "1": the numbers a gesture picks in a list of this many options (no gesture gives 4). */
 export function pickRangeWords(count: number): string {
   if (count <= 1) return '1';
   if (count === 2) return '1 or 2';
-  return `1 to ${Math.min(4, count)}`;
+  return `1 to ${Math.min(GESTURE_PICKS, count)}`;
 }
 
 /** Everything the screen draws for one question. */

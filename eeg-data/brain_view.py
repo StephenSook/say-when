@@ -60,7 +60,9 @@ class DemoEngine:
         window = {"0.05-5": slow, "8-12": mu, "12-16": beta, "16-20": beta, "20-26": beta, "26-30": 0.6 * beta,
                   config.COV_BAND: mu + beta}
         raw = mu + beta + slow + (jaw / 4.0) * self.rng.normal(0, 1, (8, self.n))
-        target = {"rest": [0.1, 0.1, 0.8], "left": [0.8, 0.1, 0.1], "right": [0.1, 0.8, 0.1], "clench": [0.3, 0.3, 0.4]}
+        # Imagery phases sit above the at-once thresholds (PLAN D21: right fist 0.90, left fist 0.96, in both maps).
+        target = {"rest": [0.1, 0.1, 0.8], "left": [0.97, 0.015, 0.015], "right": [0.035, 0.93, 0.035],
+                  "clench": [0.3, 0.3, 0.4]}
         p = np.clip(np.array(target[phase]) + self.rng.normal(0, 0.05, 3), 0.01, None)
         p /= p.sum()
         self.total_samples += int(self.step * self.fs)
@@ -68,8 +70,9 @@ class DemoEngine:
         n_phase = int(el // 5)
         if phase in ("left", "right") and el % 5 >= 1.5 and self._sent_phase != n_phase:
             self._sent_phase = n_phase  # one fake command per imagery phase, like the real decoder
-            commands.append(messages.from_hand({"hand": phase, "onset": time.time() - 1.0, "confidence": 0.8},
-                                               mode=self.mode))
+            # right: PICK_2 (scan: YES) at 0.93, left: PICK_1 (scan: NO) at 0.97, both above their at-once thresholds
+            commands.append(messages.from_hand({"hand": phase, "onset": time.time() - 1.0,
+                                                "confidence": 0.93 if phase == "right" else 0.97}, mode=self.mode))
         if phase == "clench" and el % 5 >= 1.0 and self._sent_phase != n_phase:
             self._sent_phase = n_phase
             # one single clench: PICK_3 in the direct map, CONFIRM in the scan map

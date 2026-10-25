@@ -9,9 +9,10 @@ Written and committed before any measurement, so the bar cannot move after we se
 | Imagine squeezing your right fist | YES: pick this one. While nothing is happening, it opens the person's own menu. |
 | Imagine squeezing your left fist | NO: skip, or answer no. |
 | Single jaw clench | CONFIRM: the only way anything leaves the room (a form or a call). |
-| Double jaw clench | STOP: cancel, none of these, hang up, pause. |
+| Held jaw clench (about 1 second) | STOP: cancel, none of these, hang up, pause. |
+| Double jaw clench | Nothing: the decoder sends no command for it. |
 
-The brain makes the choices and the jaw commits or stops. The jaw clench is a muscle signal (EMG), not a brain signal, and we say so. Nothing leaves the room without a fresh single clench after the spoken read-back. (PLAN D17 swapped the jaw map on Oct 24; until then a double was CONFIRM and a single was STOP. The pass bar below did not change.)
+The brain makes the choices and the jaw commits or stops. The jaw clench is a muscle signal (EMG), not a brain signal, and we say so. Nothing leaves the room without a fresh single clench after the spoken read-back. (PLAN D17 swapped the jaw map on Oct 24; until then a double was CONFIRM and a single was STOP. PLAN D21, later on Oct 24, made STOP a held clench only, so a double now means nothing, and changed how the decoder sends an imagined YES or NO (at once at 0.90 for YES and 0.96 for NO, or a 10 s fallback; it was 0.6 held for 1 s). The pass bar below did not change.)
 
 ## The rule
 
@@ -32,8 +33,8 @@ If any condition fails, the hands are not used today, and the fallback below run
 
 - YES: a single jaw clench.
 - NO: silence. The option times out and the next one plays.
-- CONFIRM: a double clench. A single clench is YES in this mode, so the fallback keeps the old double-clench CONFIRM; in the main map (PLAN D17) a double is STOP.
-- STOP: the decoder cannot tell a held clench (PLAN D16), and in this mode a single clench is YES, so there is no STOP gesture unless the decoder adds a triple clench. Nothing leaves the room without a CONFIRM, and a teammate can STOP from the station keys.
+- CONFIRM: a double clench. A single clench is YES in this mode, so the fallback keeps the old double-clench CONFIRM; in the main map (PLAN D21) a double sends nothing.
+- STOP: none in this mode. When D16 set this fallback the decoder could not tell a held clench, and D21 left the fallback as it was, so the held clench (STOP in the main map) sends nothing here. Nothing leaves the room without a CONFIRM, and a teammate can STOP from the station keys.
 
 ## What a pass means
 

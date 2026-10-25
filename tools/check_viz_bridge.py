@@ -44,9 +44,9 @@ OPTIONAL_KEYS = {"viz.meta": {"filterBank"}, "viz.mi": {"fb"}}
 EXPECTED_HZ = {"viz.mi": 10.0, "viz.spec": 10.0, "viz.quality": 2.0}
 CONTACT_VALUES = {"good", "fair", "poor", "off"}
 # Direct select (D18) words and the scan (D11 + D17) words: both decoder maps (eeg-data live.py --mode).
-COMMANDS = {"PICK_1", "PICK_2", "PICK_3", "PICK_4", "YES", "NO", "CONFIRM", "STOP", "HEADSET_OFF"}
+COMMANDS = {"PICK_1", "PICK_2", "PICK_3", "YES", "NO", "CONFIRM", "STOP", "HEADSET_OFF"}
 FIST_COMMANDS = {"PICK_1", "PICK_2", "YES", "NO"}  # imagery, or the jaw in the jaw-only fallback
-JAW_COMMANDS = {"PICK_3", "PICK_4", "CONFIRM", "STOP"}  # always the jaw
+JAW_COMMANDS = {"PICK_3", "CONFIRM", "STOP"}  # always the jaw
 SOURCE_RE = re.compile(r"^[a-z_]{1,16}$")
 SPEC_FREQS = list(range(1, 41))
 ERD_MIN, ERD_MAX = -100.0, 1000.0

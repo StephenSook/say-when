@@ -114,6 +114,7 @@ describe('the planner reply', () => {
         ['three options in yes_no', { answer_mode: 'yes_no', options: fourOptions().options.slice(0, 3) }, 'yes_no_needs_two'],
         ['five options', { answer_mode: 'pick', options: [...fourOptions().options, reply({ text: 'Fifth.', tone: 'sad' })] }, 'option_count'],
         ['no options', { answer_mode: 'pick', options: [] }, 'option_count'],
+        ['a single answer (PLAN D22)', { answer_mode: 'pick', options: [reply({ text: 'The museum is open.', tone: 'calm' })] }, 'option_count'],
         ['two options with one tone', { answer_mode: 'pick', options: [reply({ text: 'A.', tone: 'warm' }), reply({ text: 'B.', tone: 'warm' })] }, 'duplicate_tone'],
         ['a source that was never given', fourOptions([['w9'], [], [], []]), 'unknown_source'],
         ['the same text twice', { answer_mode: 'pick', options: [reply({ text: 'Sure.', tone: 'warm' }), reply({ text: ' sure. ', tone: 'calm' })] }, 'duplicate_text'],

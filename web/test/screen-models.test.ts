@@ -112,7 +112,7 @@ describe('screen models over the sample replay', () => {
     assert.deepEqual(reading.pass, { pass: 1, max: 1 });
     const wait = conversationAt(at(10));
     assert.equal(wait.cursor?.optionId, null);
-    assert.equal(wait.cursor?.waitingFor, '1 to 4');
+    assert.equal(wait.cursor?.waitingFor, '1 to 3', 'four options, but no gesture gives 4 (D21)');
     assert.equal(wait.cursor?.phase, 'window');
     const picked = conversationAt(at(12));
     assert.equal(picked.vetoing, false, 'no veto in direct select');

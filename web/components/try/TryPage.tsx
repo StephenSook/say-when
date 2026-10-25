@@ -23,12 +23,14 @@ const STEP_STATUS: Record<StepStatus, { status: RunStatus; word: string }> = {
   failed: { status: 'failed', word: 'Failed' },
 };
 
-/** Direct select (D18): one button per pick and STOP, labeled from the one legend (lib/commands.ts). */
+/**
+ * Direct select (D18): one button per gesture, 1, 2, 3 and STOP, labeled from the one legend (lib/commands.ts). A
+ * double jaw clench means nothing (PLAN D21), so the headset has no 4 and neither do these stand-ins.
+ */
 const BUTTONS: ReadonlyArray<{ command: StationCommand; word: string; hint: string; tone: 'pick' | 'stop' | null }> = [
   { command: 'PICK_1', word: commandLabel('PICK_1'), hint: 'option 1, or send it', tone: 'pick' },
   { command: 'PICK_2', word: commandLabel('PICK_2'), hint: 'option 2, or cancel', tone: null },
   { command: 'PICK_3', word: commandLabel('PICK_3'), hint: 'option 3', tone: null },
-  { command: 'PICK_4', word: commandLabel('PICK_4'), hint: 'option 4', tone: null },
   { command: 'STOP', word: commandLabel('STOP'), hint: 'cancel, hang up', tone: 'stop' },
 ];
 

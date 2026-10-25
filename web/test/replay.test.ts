@@ -160,7 +160,9 @@ describe('replay script (direct select, D18)', () => {
   test('only direct select command names appear: no scan word and no retired name anywhere', () => {
     const names = new Set<CommandName>(commands.map((c) => c.command));
     for (const name of names) assert.ok(COMMANDS.includes(name), name);
-    for (const name of ['PICK_1', 'PICK_3', 'PICK_4', 'STOP', 'HEADSET_OFF'] as const) assert.ok(names.has(name), name);
+    for (const name of ['PICK_1', 'PICK_3', 'STOP', 'HEADSET_OFF'] as const) assert.ok(names.has(name), name);
+    // A headset sample: no gesture gives 4 (a double jaw clench means nothing, PLAN D21), so no PICK_4 appears.
+    assert.equal(names.has('PICK_4'), false);
     assert.doesNotMatch(JSON.stringify(loopEnd), /"(SELECT|ERRAND|CALL|PAUSE|YES|NO|CONFIRM)"/);
   });
 
@@ -170,7 +172,7 @@ describe('replay script (direct select, D18)', () => {
       ignored.map((c) => [c.command, c.ignoredReason]),
       [
         ['PICK_3', 'Repeat inside the refractory time'],
-        ['PICK_4', 'There is no option with that number'],
+        ['PICK_3', 'There is no option with that number'],
       ],
     );
   });

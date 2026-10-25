@@ -306,6 +306,30 @@ function switchPending(ctx: Ctx, s: ScanState, q: Question): ScanState {
   return enterPreparing(ctx, s, switched);
 }
 
+/**
+ * D19: silence at the end of a response window reads the same option again instead of moving on. `false` is the D11
+ * timed scan (silence moves to the next option and the passes end in No pick); the tests of that scan set it.
+ */
+export const PACED_SCAN = true;
+export const scanPolicy = { silenceRepeats: PACED_SCAN };
+
+/**
+ * Silence at the end of a response window reads the same option (or the yes or no prompt) again (D19). The scan is
+ * paced by the person: only NO moves on and only YES picks, and the session's idle pause caps the wait. The option
+ * stays current from its first read (`optionStartSeq` and `optionStartedAt` are kept, and so is the grace candidate
+ * before it), so a YES or NO given while hearing any read of it lands on it.
+ */
+export function repeatOption(ctx: Ctx, s: ScanState): ScanState {
+  const next = enterReading(ctx, s, s.cursor, { freshOption: true });
+  return saveScan(ctx, {
+    ...next,
+    prevCursor: s.prevCursor,
+    prevOptionStartSeq: s.prevOptionStartSeq,
+    optionStartSeq: s.optionStartSeq,
+    optionStartedAt: s.optionStartedAt,
+  });
+}
+
 /** The silent response window after an option. */
 export function enterWindow(ctx: Ctx, s: ScanState): ScanState {
   const cfg = getConfig(ctx.db);

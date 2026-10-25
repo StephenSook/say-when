@@ -4,16 +4,17 @@ One page for the judging morning. Judging is 10:30 AM to 12:30 PM PDT at our tab
 
 Everything below runs against the demo database `say-when-demo`, the one https://eleven-calhacks.vercel.app reads. Commands run from the repo root on Stephen's Mac, which holds the Keychain keys and the owner's `spacetime` login.
 
-## Words we use (PLAN D17)
+## Words we use (PLAN D17, D21)
 
 | Command | Headset signal | Keyboard stand-in |
 |---|---|---|
 | YES | imagine squeezing the right fist | key Y |
 | NO | imagine squeezing the left fist | key N |
 | CONFIRM | single jaw clench | key C |
-| STOP | double jaw clench | key S |
+| STOP | held jaw clench (hold about 1 second) | key S |
 
-- Since D17 (Oct 24) a single clench is CONFIRM and a double is STOP; a held clench is also STOP. A CONFIRM only counts inside the confirm window after a full read-back, so a stray clench anywhere else does nothing. The earpiece says "To send it, clench once."
+- Since D21 (Oct 24, about 9:40 PM) a single clench is CONFIRM (D17), a held clench (about 1 second; the decoder fires at 0.8 s) is STOP, and a double clench means nothing: the decoder sends no command for it. A CONFIRM only counts inside the confirm window after a full read-back, so a stray clench anywhere else does nothing. The earpiece says "To send it, clench once."
+- Decoder settings (EEG laptop, `python live.py --window` in `eeg-data/`; it prints them at startup, and the window shows the fallback counts): a right fist is YES at once at 0.90 confidence (`--yes-threshold 0.90`) and a left fist is NO at once at 0.96 (`--no-threshold 0.96`). Otherwise, after 10 s with no command (`--fallback-s 10`), the hand with more predictions at 0.65 or more (`--fallback-threshold 0.65`) is sent if it has at least 3 (`--fallback-min 3`); a tie sends nothing. The window starts again after every command and after HEADSET_OFF. The old `--threshold`, `--margin`, `--dwell` and `--rearm` flags are gone, so an old launch line with them fails at startup. Trade-off: fewer false picks at once, but the wearer has to squeeze harder or longer, and the fallback can turn steady noise into a pick about 10 s after the last command (the minimum of 3 limits it). A pick never sends anything without CONFIRM. If a setting is changed on the day, say so; never present a changed run as the default settings.
 - The jaw clench is a muscle signal. The imagined squeeze counts as a brain command only if the wearer passed `docs/brain-mode-test.md` today; otherwise say it is the experiment.
 - In a keyboard session say "key Y", never "brain" or "thought". The board already says "Keyboard input" for a `keyboard-` session.
 - Nothing reads thoughts. Nothing leaves the room without a read-back and a fresh CONFIRM.
@@ -46,7 +47,7 @@ scripts/demo-up.sh --db say-when-demo --calls
 ```
 
 - It reads the keys from the Keychain (never printed), starts the sidecar with `caffeinate` so the Mac does not sleep, waits until `/healthz` on `127.0.0.1:8791` says connected and paired, then warms the form-errand Actor, Moss and one voice token. Each warm line should say `ok`.
-- `--calls` turns calls on only when the private consent file and call settings exist and `cartesia` `call:check` passes with no contact refused. Calls go only to the consented contact, only 9 AM to 9 PM. If it refuses, it says why and starts nothing; run it again without `--calls` and the demo skips the call.
+- `--calls` turns calls on only when the private consent file and call settings exist and `cartesia` `call:check` passes with no contact refused. Calls go only to the consented contact, at any hour (PLAN D20 removed the 9 AM to 9 PM rule), still with the AI disclosure, the read-back and a fresh CONFIRM. If it refuses, it says why and starts nothing; run it again without `--calls` and the demo skips the call.
 - Check it: `scripts/demo-up.sh --db say-when-demo status`. Log: `~/.config/say-when/demo-up/say-when-demo.log`.
 
 **9:10. Pair the three pages** (about 2 s each once the code shows).

@@ -1,22 +1,30 @@
 /**
- * The direct select gesture legend (D18, docs/direct-select.md), the one source of truth for every screen: four
- * gestures pick four options, a long jaw clench is STOP.
+ * The direct select gesture legend (D18, docs/direct-select.md), the one source of truth for every screen. Three
+ * gestures pick three options and a held jaw clench is STOP:
  *
  *   1      imagined left fist      PICK_1   pick option 1; in a confirm "One: send it"; while paused, resume
  *   2      imagined right fist     PICK_2   pick option 2; in a confirm "Two: cancel"
  *   3      single jaw clench       PICK_3   pick option 3
- *   4      double jaw clench       PICK_4   pick option 4
- *   STOP   long jaw clench         STOP     cancel, hang up, pause
+ *   STOP   held jaw clench         STOP     cancel, none of these, hang up, pause (hold about 1 second)
+ *   none   double jaw clench       nothing  the decoder sends no command for it (PLAN D21)
+ *
+ * Since a double jaw clench means nothing in either input mode, no gesture gives option 4. PICK_4 stays a command name
+ * (the module takes up to 4 options, and key 4 still picks option 4 in a keyboard test), but the legend, the command
+ * strip and every "waiting for a pick" line present 1 to 3 (SHOWN_COMMANDS and GESTURE_PICKS in data/types.ts).
+ *
+ * The scan map (PLAN D11 with D17 and D21, the `say-when-demo` database) is imagined right fist YES, imagined left
+ * fist NO, single jaw clench CONFIRM, held jaw clench STOP, and a double jaw clench nothing. In this web the station and
+ * the screens speak direct select; /brain reads both maps (lib/brain/protocol.ts).
  *
  * Use these strings for the gesture legend, the command strip, option badges and the event feed, so every screen says
- * the same thing. Honest wording: the jaw clench is a muscle signal ("Jaw muscle, not brain") and the imagined squeeze
- * is the brain part. Never claim more than those two signals.
+ * the same thing. Honest wording: the fists are imagined movements decoded from EEG (the brain part), and the jaw
+ * clench is a muscle signal ("Jaw muscle, not brain"). Never claim more than those two signals.
  *
  * If the imagined squeezes fail the pre-registered test (PLAN D9, docs/brain-mode-test.md), the decoder runs
- * `--jaw-only`: a single clench is 1, a double clench is 2, a long clench is STOP, and 3 and 4 come from the station
- * keys. Change `signal` and `short` here only.
+ * `--jaw-only` (its map is in eeg-data/README.md) and the station keys stand in for the rest. Change `signal` and
+ * `short` here only.
  */
-import { pickRank, PERSON_COMMANDS, type CommandName, type InputKind, type PersonCommand, type SafetyState } from './data/types';
+import { pickRank, SHOWN_COMMANDS, type CommandName, type InputKind, type PersonCommand, type SafetyState } from './data/types';
 
 export interface CommandInfo {
   name: CommandName;
@@ -28,8 +36,11 @@ export interface CommandInfo {
   short: string;
   /** What it means, in plain words. */
   meaning: string;
-  /** 'imagined': an imagined hand squeeze. 'jaw': a jaw clench, a muscle signal. 'system': not given by the person. */
-  kind: 'imagined' | 'jaw' | 'system';
+  /**
+   * 'imagined': an imagined hand squeeze. 'jaw': a jaw clench, a muscle signal. 'none': no gesture gives it (PICK_4,
+   * only key 4 in a keyboard test). 'system': not given by the person.
+   */
+  kind: 'imagined' | 'jaw' | 'none' | 'system';
 }
 
 export const COMMAND_INFO: Readonly<Record<CommandName, CommandInfo>> = {
@@ -60,17 +71,17 @@ export const COMMAND_INFO: Readonly<Record<CommandName, CommandInfo>> = {
   PICK_4: {
     name: 'PICK_4',
     label: '4',
-    signal: 'Double jaw clench',
-    short: 'double jaw clench',
-    meaning: 'Pick option 4.',
-    kind: 'jaw',
+    signal: 'No gesture (key 4 in a keyboard test)',
+    short: 'no gesture',
+    meaning: 'Pick option 4. No gesture gives it, since a double jaw clench means nothing; key 4 does in a keyboard test.',
+    kind: 'none',
   },
   STOP: {
     name: 'STOP',
     label: 'STOP',
-    signal: 'Long jaw clench, held about a second',
-    short: 'long jaw clench',
-    meaning: 'Cancel whatever is pending, hang up, pause.',
+    signal: 'Hold a jaw clench (about 1 second)',
+    short: 'held jaw clench',
+    meaning: 'Cancel, none of these, hang up, pause.',
     kind: 'jaw',
   },
   HEADSET_OFF: {
@@ -91,15 +102,18 @@ export interface LegendRow {
   kind: CommandInfo['kind'];
 }
 
-/** The gesture legend in order, for the input the session uses (key and switch sessions show their own signals). */
+/**
+ * The gesture legend in order, 1, 2, 3 and STOP, for the input the session uses (key and switch sessions show their
+ * own signals). Option 4 has no gesture, so it is never in the legend.
+ */
 export function gestureLegend(input: InputKind = 'headset'): LegendRow[] {
-  return PERSON_COMMANDS.map((name) => {
+  return SHOWN_COMMANDS.map((name) => {
     const info = COMMAND_INFO[name];
     return { name, label: info.label, signal: commandSignal(name, input) ?? info.short, kind: info.kind };
   });
 }
 
-/** The legend in one line: "1 = imagined left fist · 2 = imagined right fist · ... · STOP = long jaw clench". */
+/** The legend in one line: "1 = imagined left fist · 2 = imagined right fist · 3 = single jaw clench · STOP = held jaw clench". */
 export function legendLine(input: InputKind = 'headset'): string {
   return gestureLegend(input)
     .filter((row) => input !== 'switch' || SWITCH_PRESSES[row.name] !== null)
@@ -107,8 +121,8 @@ export function legendLine(input: InputKind = 'headset'): string {
     .join(' · ');
 }
 
-/** The jaw lane on /brain: "3 single / 4 double / long = STOP". */
-export const JAW_LANE_LEGEND = '3 single / 4 double / long = STOP';
+/** The jaw lane on /brain, after "Jaw muscle, not brain": "3 single clench, hold = STOP" (a double clench sends nothing). */
+export const JAW_LANE_LEGEND = '3 single clench, hold = STOP';
 
 /** The honesty label every jaw lane and legend carries. */
 export const JAW_HONESTY = 'Jaw muscle, not brain';
@@ -148,9 +162,9 @@ export function optionLabel(option: { label?: string | null; text: string }): st
 
 // ---------------------------------------------------------------------------------------------
 // The true input (docs/station.md 2.3 and 2.5, request W1). The headset words above hold only for a headset session.
-// A keyboard session's commands are key presses (1, 2, 3, 4, S), and a switch session's are presses of one switch (a
-// short press is 1, two presses 2, a 1 s hold STOP; 3 and 4 are not on the switch). When the input is unknown, no
-// screen names a brain or jaw signal.
+// A keyboard session's commands are key presses (1, 2, 3, S; key 4 also picks option 4, as a test key), and a switch
+// session's are presses of one switch (a short press is 1, two presses 2, a 1 s hold STOP; 3 is not on the switch).
+// When the input is unknown, no screen names a brain or jaw signal.
 
 const KEYS: Readonly<Record<PersonCommand, string>> = {
   PICK_1: 'key 1',
@@ -168,11 +182,14 @@ const SWITCH_PRESSES: Readonly<Record<PersonCommand, string | null>> = {
   STOP: 'long switch press',
 };
 
-/** What the person did for a command in this input, short: "imagined left fist", "key 1", "double switch press". null when unknown. */
+/**
+ * What the person did for a command in this input, short: "imagined left fist", "key 1", "double switch press". null
+ * when unknown, and for 4 on the headset, which no gesture gives.
+ */
 export function commandSignal(name: PersonCommand, input: InputKind): string | null {
   switch (input) {
     case 'headset':
-      return COMMAND_INFO[name].short;
+      return COMMAND_INFO[name].kind === 'none' ? null : COMMAND_INFO[name].short;
     case 'keyboard':
       return KEYS[name];
     case 'switch':
@@ -189,7 +206,7 @@ export function signalPhrase(name: PersonCommand, input: InputKind): string | nu
   return `${/^[aeiou]/i.test(signal) ? 'an' : 'a'} ${signal}`;
 }
 
-/** "1, a single jaw clench" style: "STOP, a long jaw clench", "1, key 1", or "1" alone when the input is unknown. */
+/** "1, a single jaw clench" style: "STOP, a held jaw clench", "1, key 1", or "1" alone when the input is unknown. */
 export function withSignal(name: PersonCommand, input: InputKind): string {
   const phrase = signalPhrase(name, input);
   const label = COMMAND_INFO[name].label;

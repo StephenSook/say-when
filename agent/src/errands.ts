@@ -2,7 +2,7 @@
 //
 // A form leaves the room only like this:
 // 1. The module shows the errand Confirmed in `errand_queue`: the person heard the read-back and gave a fresh
-//    CONFIRM (double jaw clench) carrying its digest, inside the window.
+//    CONFIRM (single jaw clench) carrying its digest, inside the window.
 // 2. This sidecar previewed that errand itself and the confirmed digest, form address and fields are exactly the
 //    ones it previewed. A different digest is refused: claimed, then completed as `refused`, nothing sent.
 //    An errand this sidecar did not preview is left alone.

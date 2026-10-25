@@ -3,11 +3,13 @@
 Streaming: 30-55 Hz power averaged over channels, smoothed, compared with the wearer's resting
 baseline. A burst starts at JAW_RATIO x baseline and ends below JAW_RATIO * JAW_RELEASE x baseline.
 
-  long burst (>= LONG_CLENCH_S)              -> "long"    STOP, fired as soon as it gets that long
-  two short bursts within DOUBLE_GAP_S       -> "double"  direct (D18): PICK_4; scan (D17): STOP
+  long burst (>= LONG_CLENCH_S)              -> "long"    STOP in both maps (PLAN D21), fired once it gets that long
+  two short bursts within DOUBLE_GAP_S       -> "double"  no command in either map (PLAN D21)
   one short burst, nothing within the gap    -> "single"  direct (D18): PICK_3; scan (D17): CONFIRM
 
-The words per map, and the jaw-only fallback's, are in messages.JAW_COMMAND and messages.JAW_ONLY_COMMAND.
+The words per map, and the jaw-only fallback's (where a double does send a command), are in messages.JAW_COMMAND and
+messages.JAW_ONLY_COMMAND. The double is still detected even though the main maps send nothing for it: otherwise two
+quick clenches would be reported as two singles (two PICK_3s, or two CONFIRMs).
 """
 import math
 from typing import List, Optional

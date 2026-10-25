@@ -122,12 +122,11 @@ describe('brain slot', () => {
 describe('decoder panel words', () => {
   const now = START + 10_000;
 
-  test('a headset session: 1 and 2 are imagined fists with a hand mark; the jaw commands (3, 4, STOP) have none', () => {
+  test('a headset session: 1 and 2 are imagined fists with a hand mark; the jaw commands (3, STOP) have none', () => {
     const view = buildDecoderView(
       [
         command('c1', 'STOP', START + 1_000),
         command('c2', 'PICK_3', START + 2_000),
-        command('c5', 'PICK_4', START + 2_500),
         command('c3', 'PICK_1', START + 3_000, { confidence: 0.84 }),
         command('c4', 'PICK_2', START + 9_000),
       ],
@@ -135,7 +134,8 @@ describe('decoder panel words', () => {
       now,
     );
     assert.equal(view.title, 'Headset');
-    assert.match(view.how ?? '', /Imagined fists pick 1 and 2\. Jaw clenches pick 3 and 4; a long clench is STOP\./);
+    assert.match(view.how ?? '', /Imagined fists pick 1 and 2\. A single jaw clench picks 3; a held clench \(about 1 second\) is STOP\./);
+    assert.doesNotMatch(view.how ?? '', /double|4/);
     assert.deepEqual(view.last, {
       id: 'c4',
       word: '2',
@@ -149,8 +149,8 @@ describe('decoder panel words', () => {
       view.earlier.map((line) => [line.word, line.signal, line.hand]),
       [
         ['1', 'imagined left fist', 'no'],
-        ['4', 'double jaw clench', null],
         ['3', 'single jaw clench', null],
+        ['STOP', 'held jaw clench', null],
       ],
     );
     assert.equal(view.earlier[0]?.ago, '7 s ago');
@@ -160,7 +160,7 @@ describe('decoder panel words', () => {
     const commands = (['PICK_1', 'PICK_2', 'PICK_3', 'STOP', 'HEADSET_OFF'] as const).map((name, i) => command(`k${i}`, name, START + i * 1_000));
     const view = buildDecoderView(commands, 'keyboard', now);
     assert.equal(view.title, 'Keyboard test');
-    assert.equal(view.how, 'Keys 1, 2, 3, 4 and S.');
+    assert.equal(view.how, 'Keys 1, 2, 3 and S.');
     assert.equal(view.last?.word, 'Input off');
     assert.deepEqual(
       view.earlier.map((line) => line.signal),
@@ -196,7 +196,7 @@ describe('decoder panel words', () => {
   test('an ignored command says why it did not count; a headset off is a system event with no hand', () => {
     const ignored = decoderLine(command('i1', 'PICK_2', START, { accepted: false, ignoredReason: 'Repeat inside the refractory time' }), 'headset', now);
     assert.equal(ignored.ignored, 'Repeat inside the refractory time');
-    assert.equal(decoderLine(command('i2', 'PICK_4', START, { accepted: false, ignoredReason: null }), 'headset', now).ignored, 'Did not count');
+    assert.equal(decoderLine(command('i2', 'PICK_3', START, { accepted: false, ignoredReason: null }), 'headset', now).ignored, 'Did not count');
     const off = decoderLine(command('h1', 'HEADSET_OFF', START), 'headset', now);
     assert.deepEqual([off.word, off.signal, off.hand, off.confidence], ['Headset off', null, null, null]);
   });
@@ -230,7 +230,7 @@ describe('decoder panel words', () => {
   test('no command yet, the newest first, at most a few earlier ones, and no time text before the clock runs', () => {
     assert.deepEqual(buildDecoderView([], 'headset', now), {
       title: 'Headset',
-      how: 'Imagined fists pick 1 and 2. Jaw clenches pick 3 and 4; a long clench is STOP.',
+      how: 'Imagined fists pick 1 and 2. A single jaw clench picks 3; a held clench (about 1 second) is STOP.',
       last: null,
       none: NO_COMMAND_YET,
       earlier: [],

@@ -250,7 +250,8 @@ describe('the Suggested replies tree on the live board', () => {
     assert.equal(pickPhrase('switch', 1), 'Picked with 1, a short switch press');
     assert.equal(pickPhrase('switch', 3), 'Picked with 3', '3 is not on the switch: no signal named');
     assert.equal(pickPhrase('unknown', 2), 'Picked with 2');
-    assert.equal(pickPhrase('headset', 4), 'Picked with 4, a double jaw clench');
+    assert.equal(pickPhrase('headset', 3), 'Picked with 3, a single jaw clench');
+    assert.equal(pickPhrase('headset', 4), 'Picked with 4', 'no gesture gives 4 (a double jaw clench means nothing): no signal named');
   });
 
   test('an errand option picked: steps appear only once its errand row exists, with the true input for CONFIRM', () => {

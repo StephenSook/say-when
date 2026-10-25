@@ -5,7 +5,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { ApifyHttpError } from '@say-when/apify-client';
 
 import { DETAIL_PATTERN } from '../src/contract.js';
-import { placeQuery } from '../src/retrieval.js';
+import { DEFAULT_PLACE_QUERY, placeQuery } from '../src/retrieval.js';
 import { fourOptions, harness, LEON, memoryHit, placeRow, SECRET, settle, waitFor, webRow, yesNo, type Harness } from './helpers.js';
 
 let open: Harness | null = null;
@@ -317,7 +317,7 @@ describe('the Options job', () => {
         assert.equal(h.dialer.prepared.length, 0);
     });
 
-    it('drops a call option the Dialer refuses, and keeps the replies', async () => {
+    it('drops a call option the Dialer refuses, keeps the replies, and fills back up to two choices', async () => {
         const h = start(harness({ contacts: [LEON] }));
         h.dialer.refusePrepare = true;
         h.api.reply({
@@ -329,9 +329,13 @@ describe('the Options job', () => {
         });
         const jobId = h.db.addOptionsJob({ questionText: 'Call', origin: 'menu', menuItem: 'call', recentErrandTitle: 'Care team request', recentErrandSentAtMs: Date.now() - 60_000 });
         await waitFor(() => h.db.job(jobId)?.status === 'done');
+        // Never a single answer (PLAN D22): a stock reply in a tone not already used takes the call's place.
         assert.deepEqual(
-            finalPublish(h)?.options.map((o) => o.kind),
-            ['reply'],
+            finalPublish(h)?.options.map((o) => [o.kind, o.text, o.tone, o.provenance]),
+            [
+                ['reply', 'Not now.', 'calm', 'model'],
+                ['reply', 'Ask me again later.', 'neutral', 'stock'],
+            ],
         );
         assert.equal(JSON.parse(h.db.events.find((e) => e.detail === 'claude' && e.status === 'ok')?.countsJson ?? '{}').droppedCalls, 1);
     });
@@ -766,7 +770,23 @@ describe('place queries', () => {
         assert.equal(placeQuery('Is the pharmacy on Bancroft still open?'), 'pharmacy');
         assert.equal(placeQuery('Want to grab lunch nearby?'), 'lunch');
         assert.equal(placeQuery('Where is the nearest bus stop?'), 'bus stop');
-        assert.equal(placeQuery('Is Target still open?'), 'Is Target still open?');
+        assert.equal(placeQuery('Is Target still open?'), 'Target');
+    });
+
+    it('never sends the whole spoken sentence to Maps (it times out on one)', () => {
+        assert.equal(
+            placeQuery('All right, uh, call me later, all right? So, you can remind me to go to Palace of Fine Arts.'),
+            'Palace of Fine Arts',
+        );
+        assert.equal(
+            placeQuery("Oh, but I'm kind of think of like uh nature or something. You have anything like in particular? like nearby that you want to try out?"),
+            'park',
+        );
+        // A place after "near" is where to look (Maps searches around it), so it is not the query.
+        assert.equal(placeQuery('Where should we go near the Palace of Fine Arts?'), DEFAULT_PLACE_QUERY);
+        assert.equal(placeQuery('Anything outdoors near the Palace of Fine Arts?'), 'park');
+        assert.equal(placeQuery('Anywhere fun nearby you want to try?'), DEFAULT_PLACE_QUERY);
+        assert.equal(placeQuery('Somewhere with a nice view?'), 'scenic viewpoint');
     });
 });
 

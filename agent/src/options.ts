@@ -7,6 +7,7 @@ import type { CandidateOption, Recall } from '@say-when/moss';
 
 import { DIRECT, LIMITS } from './contract.js';
 import type { MemoryContext, Plan, PlannedOption, WebContext } from './planner/types.js';
+import { MIN_PICK_OPTIONS } from './planner/validate.js';
 import type { CallContact, OptionInput, Provenance, SourceRef, Tone } from './types.js';
 
 /** Module limits on an option's sources (spacetime/src/agent.ts checkOption). */
@@ -26,7 +27,7 @@ export interface BuiltOptions {
     options: OptionInput[];
     /** For moss rankOptions: the same ids as `options` (`o1`..), with the best cited web score as support. */
     candidates: CandidateOption[];
-    /** Call options the Dialer refused to prepare (consent, calling hours, a stale errand). */
+    /** Call options the Dialer refused to prepare (consent, do-not-call, a hold, a stale errand). */
     droppedCalls: number;
 }
 
@@ -102,8 +103,25 @@ export function buildOptions(plan: Plan, memory: readonly MemoryContext[], web: 
         });
         candidates.push({ id, text: planned.text, support });
     });
+    // A refused call can leave a single option. The person still gets a choice, never one answer (PLAN D22).
+    if (plan.answerMode === 'pick') {
+        for (const pad of PAD_REPLIES) {
+            if (options.length >= MIN_PICK_OPTIONS) break;
+            if (options.some((o) => o.tone === pad.tone || o.text.toLowerCase() === pad.text.toLowerCase())) continue;
+            candidates.push({ id: `o${options.length + 1}`, text: pad.text, support: 0 });
+            options.push({ kind: 'reply', label: pad.label, text: pad.text, tone: pad.tone, laugh: false, provenance: 'stock', sources: [], memoryRefs: [], actionJson: '' });
+        }
+    }
     return { options, candidates, droppedCalls };
 }
+
+/** Stock replies that fill a pick question back up to two options, each in its own tone, with an earpiece label. */
+const PAD_REPLIES: readonly { label: string; text: string; tone: Tone }[] = [
+    { label: 'Not now', text: 'Not now.', tone: 'calm' },
+    { label: 'Ask later', text: 'Ask me again later.', tone: 'neutral' },
+    { label: 'Let me think', text: 'Let me think about it.', tone: 'warm' },
+    { label: 'No thanks', text: 'No, thank you.', tone: 'firm' },
+];
 
 /** Reorders options by a moss ordering of their candidate ids (`o1`, `o2`, ...). Unknown ids keep their place. */
 export function applyOrder(options: readonly OptionInput[], orderIds: readonly string[]): OptionInput[] {

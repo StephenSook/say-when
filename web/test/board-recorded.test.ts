@@ -111,7 +111,7 @@ describe('boardRows over rows recorded from say-when-dev', () => {
     const { conversation, partner, live } = views(rows);
     // These rows were recorded on the scan database; this branch reads a Window as direct select's wait for a pick.
     assert.equal(conversation.cursor?.optionId, null);
-    assert.equal(conversation.cursor?.waitingFor, '1 to 4');
+    assert.equal(conversation.cursor?.waitingFor, '1 to 3', 'no gesture gives 4 (D21)');
     assert.equal(conversation.cursor?.phase, 'window');
     assert.equal(partner.status.text, 'They are choosing from 4 options.');
     assert.equal(live.firstOption?.kind, 'final');

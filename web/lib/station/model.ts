@@ -17,7 +17,7 @@ import { decoderUrl, type DecoderHealthWord } from './decoder';
 import { KEYBOARD_LEGEND } from './keys';
 import { optionEarText } from './phrases';
 import { commandSignal, CONFIRM_SHORT, legendLine, optionBadge } from '../commands';
-import { pickCommand } from '../data/types';
+import { GESTURE_PICKS, pickCommand } from '../data/types';
 import type { PauseReasonWord, StationSnapshot } from './snapshot';
 
 export const MODE_WORDS: Readonly<Record<InputMode, string>> = {
@@ -42,7 +42,7 @@ export function keyboardLegend(s: Pick<StationSnapshot, 'setup'>): string | null
 
 /**
  * The gesture legend for the session's input (D18, lib/commands.ts): "1 = imagined left fist · 2 = imagined right fist
- * · 3 = single jaw clench · 4 = double jaw clench · STOP = long jaw clench". The keyboard shows its keys instead.
+ * · 3 = single jaw clench · STOP = held jaw clench". The keyboard shows its keys instead.
  */
 export function gestureLegendLine(s: Pick<StationSnapshot, 'setup'>): string | null {
   switch (s.setup.mode) {
@@ -51,7 +51,7 @@ export function gestureLegendLine(s: Pick<StationSnapshot, 'setup'>): string | n
     case 'keyboard':
       return KEYBOARD_LEGEND;
     case 'switch':
-      return `${legendLine('switch')} · 3 and 4 are not on the switch`;
+      return `${legendLine('switch')} · 3 is not on the switch`;
     default:
       return null;
   }
@@ -266,7 +266,8 @@ export function bigStatus(s: StationSnapshot, now: number): BigStatus {
     case 'reading':
       return status('working', scan.answerMode === 'yes_no' ? 'Reading: Yes or no?' : `Reading ${item} ${scan.cursor}${of}`, 'Any number picks it, any time.');
     case 'window':
-      // Direct select (D18): the list was read once; the wait lasts until a pick or the idle pause.
+      // Direct select (D18): the list was read once; the wait lasts until a pick or the idle pause (silence never
+      // picks, D19).
       return status('working', 'Waiting for a pick', `${pickRange(scan.optionCount)} picks. Silence picks nothing.`);
     case 'veto': {
       const left = Math.max(0, scan.stepMs - (now - scan.arrivedWall));
@@ -283,11 +284,11 @@ export function bigStatus(s: StationSnapshot, now: number): BigStatus {
   }
 }
 
-/** "1 to 4", "1 or 2", "1": the numbers the live list can be picked by. */
+/** "1 to 3", "1 or 2", "1": the numbers a gesture can pick in the live list (no gesture gives 4, GESTURE_PICKS). */
 export function pickRange(count: number): string {
   if (count <= 1) return '1';
   if (count === 2) return '1 or 2';
-  return `1 to ${Math.min(4, count)}`;
+  return `1 to ${Math.min(GESTURE_PICKS, count)}`;
 }
 
 /** The newest errand or call that finished, as one line under the status, or null. */

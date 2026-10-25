@@ -151,7 +151,7 @@ describe('the try view model', () => {
   test('the notices say when the agent is offline and when voice is off, in plain words', () => {
     const v = tryView(input({ agentOnline: false, voice: 'off' }));
     assert.deepEqual(v.notices, [TRY_WORDS.agentOff, TRY_WORDS.voiceOff]);
-    assert.match(TRY_WORDS.honesty, /On-screen buttons stand in for the headset's four picks \(1 to 4\) and STOP/);
+    assert.match(TRY_WORDS.honesty, /On-screen buttons stand in for the headset's three picks \(1 to 3\) and STOP/);
   });
 
   test('settings default to the try database, never the demo, and /try is a role page with no demo board source', () => {

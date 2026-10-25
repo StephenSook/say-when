@@ -58,8 +58,9 @@ const TITLES: Readonly<Record<InputKind, string>> = {
 };
 
 const HOW: Readonly<Record<InputKind, string | null>> = {
-  headset: 'Imagined fists pick 1 and 2. Jaw clenches pick 3 and 4; a long clench is STOP.',
-  keyboard: 'Keys 1, 2, 3, 4 and S.',
+  // A double jaw clench means nothing (PLAN D21), so no gesture picks 4; key 4 still works in a keyboard test.
+  headset: 'Imagined fists pick 1 and 2. A single jaw clench picks 3; a held clench (about 1 second) is STOP.',
+  keyboard: 'Keys 1, 2, 3 and S.',
   switch: 'One switch: short press 1, double press 2, long press STOP.',
   unknown: null,
 };

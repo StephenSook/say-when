@@ -2,18 +2,18 @@
 
 Turns the 8-channel headset into Eleven's commands and sends them to the station page on `ws://127.0.0.1:8765`.
 
-Two command maps, chosen with `live.py --mode`. **Direct select is the default** (D18, [docs/direct-select.md](../docs/direct-select.md)): four gestures pick four options.
+Two command maps, chosen with `live.py --mode`. **Direct select is the default** (D18, [docs/direct-select.md](../docs/direct-select.md)): up to three options, each picked with its own gesture, and STOP.
 
 | Signal | `--mode direct` (default) | `--mode scan` (say-when-demo) | How it is read |
 |---|---|---|---|
-| Imagine squeezing your LEFT fist | PICK_1 | NO | Imagery classifier over C3/C4 and neighbours (brain signal) |
-| Imagine squeezing your RIGHT fist | PICK_2 | YES | same |
-| Single jaw clench | PICK_3 | CONFIRM | Jaw-muscle (EMG) bursts, 30-55 Hz, a muscle signal |
-| Double jaw clench | PICK_4 | STOP | same |
-| Long jaw clench (held 0.8 s, `LONG_CLENCH_S`) | STOP | STOP | same |
+| Imagine squeezing your LEFT fist | PICK_1 | NO | Imagery classifier over C3/C4 and neighbours (brain signal): at once at 0.96 confidence or more, or the 10 s fallback (PLAN D21) |
+| Imagine squeezing your RIGHT fist | PICK_2 | YES | same, at once at 0.90 or more, or the 10 s fallback |
+| Single jaw clench | PICK_3 | CONFIRM | Jaw-muscle (EMG) bursts, 30-55 Hz, a muscle signal (scan: PLAN D17) |
+| Held jaw clench (about 1 s; it fires at 0.8 s, `LONG_CLENCH_S`) | STOP | STOP | same (PLAN D21) |
+| Double jaw clench | nothing | nothing | detected, but sends no command (PLAN D21) |
 | No packets for 0.5 s | HEADSET_OFF | HEADSET_OFF | watchdog |
 
-In direct select the earpiece reads the options once, numbered ("One: good. Two: not great. ..."), and the person picks any of them with its gesture. A pick that sends something out of the room (a request, a call, a web search) is read back first and then asks again: "One: send it. Two: cancel." (PICK_1 confirms, PICK_2 cancels, STOP cancels).
+In direct select the earpiece reads the options once, numbered ("One: good. Two: not great. Three: ..."), and the person picks any of them with its gesture. A pick that sends something out of the room (a request, a call, a web search) is read back first and then asks again: "One: send it. Two: cancel." (PICK_1 confirms, PICK_2 cancels, STOP cancels).
 
 Imagery is ignored during a jaw clench and for 1 s after it, so a clench is never read as a fist.
 
@@ -23,11 +23,27 @@ Imagery is ignored during a jaw clench and for 1 s after it, so a clench is neve
 |---|---|---|
 | Single | PICK_1 | YES |
 | Double | PICK_2 | CONFIRM |
-| Long (held 0.8 s) | STOP | nothing (silence is NO, no STOP gesture) |
+| Held (0.8 s) | STOP | nothing (silence is NO, no STOP gesture) |
 
-The direct fallback gives the jaw the two fist picks, so every confirm ("One: send it. Two: cancel.") still works with the jaw alone. Options 3 and 4 then need the station keys 3 and 4.
+The direct fallback gives the jaw the two fist picks, so every confirm ("One: send it. Two: cancel.") still works with the jaw alone. Option 3 then needs the station key 3. The scan fallback map did not change with D17 or D21.
 
-A single clench is only reported once 0.7 s pass with no second clench, so PICK_3 (scan: CONFIRM) lands about 0.7 s after the clench ends. A clench held for 0.8 s is STOP the moment it reaches 0.8 s, whatever came before it, so hold it firmly and do not clench twice. **In direct select a stray single clench (swallowing, shifting) is a real pick of option 3**, and a reply is said out loud at once with no confirm, so raise `JAW_RATIO` in `eeg/config.py` to about 30 before a live run. In the scan map a stray CONFIRM outside the confirm window did nothing.
+Imagery rules (PLAN D21, `eeg/hands.py`), the same in both maps, all on the smoothed model probabilities. The at-once thresholds are per hand: the right fist uses `--yes-threshold` and the left fist `--no-threshold`, whatever word the hand sends in the map. Every number is a `live.py` flag, and `live.py` prints them at startup:
+
+| Rule | Default | Flag |
+|---|---|---|
+| A right fist (scan YES, direct PICK_2) at or above this is sent at once | 0.90 | `--yes-threshold` |
+| A left fist (scan NO, direct PICK_1) at or above this is sent at once | 0.96 | `--no-threshold` |
+| Fallback window: with no command for this long, the hand with more confident moments is sent | 10 s | `--fallback-s` (0 turns it off) |
+| A prediction at or above this counts as a confident moment for its hand | 0.65 | `--fallback-threshold` |
+| The winning hand needs at least this many; a tie or zero sends nothing | 3 | `--fallback-min` |
+
+The fallback window starts with the first prediction and starts again after every command the decoder sends (a fist or jaw command in either map) and after HEADSET_OFF, and also when it ends with nothing sent. After a hand fires, nothing fires or counts for `--refractory` (2 s), and that hand cannot fire at once again until it drops below its threshold, so one long squeeze is one command. A fallback fist command carries the mean of its counted moments as its confidence (0.65 or more) and the last counted moment as its onset. The `--threshold`, `--margin`, `--dwell` and `--rearm` flags are gone (the old rule was a single threshold held for a 1 s dwell).
+
+Trade-off: the at-once thresholds mean fewer false picks but a stronger or longer imagined squeeze. The 10 s fallback can turn sustained noise into a pick; the minimum of 3 confident moments limits that but does not remove it (a 10 s window holds about 100 predictions).
+
+The detector still recognizes a double clench, so two quick clenches are never reported as two singles (two PICK_3s, or two CONFIRMs); they send nothing. A STOP is sent as soon as a clench has been held for 0.8 s (`LONG_CLENCH_S`), while it is still held, whatever came before it, so hold it firmly.
+
+A single clench is only reported once 0.7 s pass with no second clench, so PICK_3 (scan: CONFIRM) lands about 0.7 s after the clench ends. **In direct select a stray single clench (swallowing, shifting) is a real pick of option 3**, and a reply is said out loud at once with no confirm. In the scan map a CONFIRM only counts inside the confirm window after a full read-back; a stray one anywhere else does nothing. Raising `JAW_RATIO` in `eeg/config.py` (20 now) to about 30 makes a stray clench less likely to count.
 
 ## Setup (Windows, Python 3.11 or 3.12)
 
@@ -78,7 +94,7 @@ A model is marked usable only if its cross-validated trial accuracy is at least 
 
 Current model (wearer S01, 8 sessions, 337 trials, Oct 22 and 24): on 67 held-out trials 50 right: left 21 of 29, right 19 of 23, rest 10 of 15 (chance 1 in 3), with 7 left/right swaps. These are offline numbers on recorded trials, not the brain-mode test, which needs the headset taken off and put back on, fresh cued trials and a control block.
 
-Jaw check on the recorded clench session (measured with the D17 scan map): all 20 clench trials were caught, and no jaw command fired during any of the 60 imagery trials. Single clenches also showed up between trials (swallowing, shifting). In direct select a single clench is PICK_3, a real pick, which is why `JAW_RATIO` should go to about 30. The long clench (STOP in direct select) has not been measured on recordings yet.
+Jaw check on the recorded clench session (measured with the D17 scan map): all 20 clench trials were caught, and no jaw command fired during any of the 60 imagery trials. Single clenches also showed up between trials (swallowing, shifting). In direct select a single clench is PICK_3, a real pick, which is why `JAW_RATIO` should go to about 30. The held clench (STOP in both maps) has not been measured on recordings yet.
 
 ## Brain view
 
@@ -121,11 +137,11 @@ Keys are read from the repo's gitignored `.env.local`, or from the environment: 
 One JSON object per line, in the shape PLAN.md agrees with the station page:
 
 ```json
-{"type": "gesture", "id": "6f1c...", "command": "PICK_2", "onsetAgeMs": 1180, "confidence": 0.83, "source": "imagery"}
+{"type": "gesture", "id": "6f1c...", "command": "PICK_2", "onsetAgeMs": 1180, "confidence": 0.93, "source": "imagery"}
 {"type": "health", "decoderHealthy": true}
 ```
 
-`command` is PICK_1, PICK_2, PICK_3, PICK_4, STOP or HEADSET_OFF in direct select, and YES, NO, CONFIRM, STOP or HEADSET_OFF with `--mode scan`. `source` is imagery, jaw or watchdog. A health message goes out about every 200 ms. `--log file.jsonl` also appends to a file.
+`command` is PICK_1, PICK_2, PICK_3, STOP or HEADSET_OFF in direct select, and YES, NO, CONFIRM, STOP or HEADSET_OFF with `--mode scan`. `source` is imagery, jaw or watchdog. A health message goes out about every 200 ms. `--log file.jsonl` also appends to a file.
 
 `live.py` also serves two local WebSocket channels, both on 127.0.0.1 only and only to the web app's origins (`localhost:3000` and the Vercel site, plus any `--allow-origin`):
 
@@ -149,8 +165,8 @@ eeg/
   sessions.py   recording files, trials -> 2 s windows
   models.py     filter-bank CSP + LDA, Riemannian tangent space + logistic regression
   evaluate.py   held-out test, grouped cross-validation, per-class counts
-  hands.py      probabilities -> one debounced LEFT/RIGHT per imagery
-  jaw.py        streaming single / double / long clench detector
+  hands.py      probabilities -> LEFT/RIGHT events: at-once thresholds and the 10 s fallback (PLAN D21)
+  jaw.py        streaming single / double / long (held) clench detector
   messages.py   gesture and health messages, the jaw maps per mode
   engine.py     live loop: headset -> filters -> model + jaw -> messages, watchdog
   store.py      save / load models with montage checks

@@ -17,7 +17,7 @@ const key = (k: string, patch: Partial<{ repeat: boolean; metaKey: boolean; ctrl
 });
 
 describe('keyboard test keys', () => {
-  test('1 2 3 4 pick options 1 to 4, S is STOP and H the headset-off test (direct select, D18)', () => {
+  test('1 2 3 pick options 1 to 3 (key 4 stays a test key), S is STOP and H the headset-off test (direct select, D18)', () => {
     assert.equal(keyboardCommand(key('1')), 'PICK_1');
     assert.equal(keyboardCommand(key('2')), 'PICK_2');
     assert.equal(keyboardCommand(key('3')), 'PICK_3');
@@ -25,7 +25,7 @@ describe('keyboard test keys', () => {
     assert.equal(keyboardCommand(key('s')), 'STOP');
     assert.equal(keyboardCommand(key('S')), 'STOP');
     assert.equal(keyboardCommand(key('h')), 'HEADSET_OFF');
-    assert.match(KEYBOARD_LEGEND, /1 2 3 4 = pick that option/);
+    assert.match(KEYBOARD_LEGEND, /^1 2 3 = pick that option/, 'the legend offers 1 to 3 like every screen');
     assert.match(KEYBOARD_LEGEND, /1 = send it, 2 = cancel/);
     assert.equal(isPickKey('4'), true);
     assert.equal(isPickKey('5'), false);

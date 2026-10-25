@@ -56,8 +56,10 @@ def test_markers_carry_the_direct_words_and_the_jaw_source():
     sent = []
     b._broadcast_now = lambda msg, stream: sent.append(msg)
     b.marker(messages.from_hand({"hand": "left", "onset": 1.0, "confidence": .8}, now=2.0))
-    b.marker(messages.from_jaw({"kind": "double", "onset": 1.0, "t": 1.5, "strength": 50.0}, now=2.0))
+    # A double clench sends nothing (PLAN D21), so it never reaches a marker.
+    assert messages.from_jaw({"kind": "double", "onset": 1.0, "t": 1.5, "strength": 50.0}, now=2.0) is None
+    b.marker(messages.from_jaw({"kind": "single", "onset": 1.0, "t": 1.5, "strength": 50.0}, now=2.0))
     b.marker(messages.from_jaw({"kind": "long", "onset": 1.0, "t": 1.8, "strength": 50.0}, now=2.0))
     b.marker(messages.from_jaw({"kind": "single", "onset": 1.0, "t": 1.5, "strength": 50.0}, jaw_only=True, now=2.0))
     got = [(m["command"], m["source"], m["confidence"]) for m in sent]
-    assert got == [("PICK_1", "imagery", 0.8), ("PICK_4", "jaw", None), ("STOP", "jaw", None), ("PICK_1", "jaw", None)]
+    assert got == [("PICK_1", "imagery", 0.8), ("PICK_3", "jaw", None), ("STOP", "jaw", None), ("PICK_1", "jaw", None)]

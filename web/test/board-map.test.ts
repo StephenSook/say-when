@@ -131,7 +131,7 @@ describe('boardRows: the live SpacetimeDB board as the dashboard rows', () => {
     assert.equal(view.options.length, 4);
     // Direct select (D18): the Window after the list is the wait for any number, not one option's window.
     assert.equal(view.cursor?.optionId, null);
-    assert.equal(view.cursor?.waitingFor, '1 to 4');
+    assert.equal(view.cursor?.waitingFor, '1 to 3', 'no gesture gives 4 (D21)');
     assert.equal(view.cursor?.phase, 'window');
     assert.equal(view.legend, PICK_LEGEND);
     assert.deepEqual(view.pass, { pass: 1, max: 2 });

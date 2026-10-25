@@ -83,20 +83,20 @@ describe('honest input labels', () => {
     assert.match(inputBanner(base({ setup: { ...base().setup, mode: 'keyboard', silent: true } })) ?? '', /Silent test: options are not voiced\.$/);
     assert.equal(
       keyboardLegend(base({ setup: { ...base().setup, mode: 'keyboard' } })),
-      '1 2 3 4 = pick that option (in a confirm: 1 = send it, 2 = cancel)   S = STOP   H = headset off (test)',
+      '1 2 3 = pick that option (in a confirm: 1 = send it, 2 = cancel)   S = STOP   H = headset off (test)',
     );
     assert.equal(keyboardLegend(base()), null);
   });
 
-  test('the gesture legend follows the input, from the one legend in lib/commands.ts (D18)', () => {
+  test('the gesture legend follows the input, from the one legend in lib/commands.ts (D18, D21: no 4)', () => {
     assert.equal(
       gestureLegendLine(base()),
-      '1 = imagined left fist · 2 = imagined right fist · 3 = single jaw clench · 4 = double jaw clench · STOP = long jaw clench',
+      '1 = imagined left fist · 2 = imagined right fist · 3 = single jaw clench · STOP = held jaw clench',
     );
-    assert.match(gestureLegendLine(base({ setup: { ...base().setup, mode: 'keyboard' } })) ?? '', /^1 2 3 4 = pick that option/);
+    assert.match(gestureLegendLine(base({ setup: { ...base().setup, mode: 'keyboard' } })) ?? '', /^1 2 3 = pick that option/);
     assert.equal(
       gestureLegendLine(base({ setup: { ...base().setup, mode: 'switch' } })),
-      '1 = short switch press · 2 = double switch press · STOP = long switch press · 3 and 4 are not on the switch',
+      '1 = short switch press · 2 = double switch press · STOP = long switch press · 3 is not on the switch',
     );
     assert.equal(gestureLegendLine(base({ setup: { ...base().setup, mode: null } })), null);
   });

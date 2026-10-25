@@ -33,7 +33,9 @@ import { replayRowsAt } from '../lib/data/replay';
 import { isCommand, parseDetail, timestampToMillis, withoutMemoryText } from '../lib/data/spacetime-map';
 import {
   COMMANDS,
+  GESTURE_PICKS,
   PERSON_COMMANDS,
+  SHOWN_COMMANDS,
   pickCommand,
   pickRank,
   type AnswerOption,
@@ -181,36 +183,40 @@ describe('command echo', () => {
   });
 });
 
-describe('the direct select command map (D18)', () => {
-  test('the person gives four picks and STOP; HEADSET_OFF is a system event', () => {
+describe('the direct select command map (D18, with D21: a double jaw clench means nothing)', () => {
+  test('the gestures give 1, 2, 3 and STOP; 4 has no gesture; HEADSET_OFF is a system event', () => {
     assert.deepEqual(PERSON_COMMANDS, ['PICK_1', 'PICK_2', 'PICK_3', 'PICK_4', 'STOP']);
+    assert.deepEqual(SHOWN_COMMANDS, ['PICK_1', 'PICK_2', 'PICK_3', 'STOP']);
+    assert.equal(GESTURE_PICKS, 3);
     assert.deepEqual(COMMANDS, ['PICK_1', 'PICK_2', 'PICK_3', 'PICK_4', 'STOP', 'HEADSET_OFF']);
     assert.equal(COMMAND_INFO.HEADSET_OFF.kind, 'system');
     assert.equal(COMMAND_INFO.PICK_1.kind, 'imagined');
     assert.equal(COMMAND_INFO.PICK_2.kind, 'imagined');
     assert.equal(COMMAND_INFO.PICK_3.kind, 'jaw');
-    assert.equal(COMMAND_INFO.PICK_4.kind, 'jaw');
+    assert.equal(COMMAND_INFO.PICK_4.kind, 'none');
     assert.equal(COMMAND_INFO.STOP.kind, 'jaw');
     assert.deepEqual([pickRank('PICK_3'), pickRank('STOP'), pickCommand(4), pickCommand(5)], [3, null, 'PICK_4', null]);
   });
 
   test('chip labels and feed words: one legend for every screen', () => {
-    assert.deepEqual(PERSON_COMMANDS.map((name) => commandChipLabel(name, 'headset')), [
+    assert.deepEqual(SHOWN_COMMANDS.map((name) => commandChipLabel(name, 'headset')), [
       '1, imagined left fist',
       '2, imagined right fist',
       '3, single jaw clench',
-      '4, double jaw clench',
-      'STOP, long jaw clench',
+      'STOP, held jaw clench',
     ]);
+    // No gesture gives 4, so the headset names no signal for it; key 4 is a keyboard test key.
+    assert.equal(commandChipLabel('PICK_4', 'headset'), '4');
+    assert.equal(commandChipLabel('PICK_4', 'keyboard'), '4, key 4');
     assert.deepEqual(gestureLegend('headset').map((row) => `${row.label} = ${row.signal}`), [
       '1 = imagined left fist',
       '2 = imagined right fist',
       '3 = single jaw clench',
-      '4 = double jaw clench',
-      'STOP = long jaw clench',
+      'STOP = held jaw clench',
     ]);
-    assert.equal(legendLine('keyboard'), '1 = key 1 · 2 = key 2 · 3 = key 3 · 4 = key 4 · STOP = key S');
-    assert.equal(JAW_LANE_LEGEND, '3 single / 4 double / long = STOP');
+    assert.equal(legendLine('keyboard'), '1 = key 1 · 2 = key 2 · 3 = key 3 · STOP = key S');
+    assert.equal(JAW_LANE_LEGEND, '3 single clench, hold = STOP');
+    assert.doesNotMatch(legendLine('headset'), /double|4/);
     assert.equal(CONFIRM_PROMPT, 'One: send it. Two: cancel.');
     assert.equal(CONFIRM_SHORT, '1 to send, 2 to cancel');
     assert.equal(confirmPick('headset'), '1 (an imagined left fist)');

@@ -3,8 +3,8 @@
 // - A call option was prepared by the Dialer when the planner offered it, so its read-back and digest exist.
 // - The module shows the call Confirmed in `call_queue` after the read-back and a fresh CONFIRM, with the CONFIRM's
 //   time (`confirmed_at`, module v2). The sidecar claims it with the digest, then calls
-//   `dialer.place(requestId, digest, confirmedAtMs)`. The Dialer re-checks consent, the do-not-call list and calling
-//   hours before it dials.
+//   `dialer.place(requestId, digest, confirmedAtMs)`. The Dialer re-checks consent, the do-not-call list and the
+//   holds before it dials. There is no calling-hours limit (PLAN D20).
 // - Freshness, in three places:
 //   1. The module: `claim_call` refuses a CONFIRM CALL_CLAIM_MS (12 s) old or older with `confirm expired`, and its
 //      ConfirmWindow timer then stops the call itself (`confirm_expired`). That refusal is final here: the call is

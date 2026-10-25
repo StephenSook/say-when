@@ -465,7 +465,14 @@ describe('the category search job (after a Category pick)', () => {
     it('searches the web for a question that is not about places, with words for a category it never offered', async () => {
         const h = start(harness({ direct: true, placesNear: true }));
         h.search.rows = [webRow(1)];
-        h.api.reply({ answer_mode: 'pick', options: [reply({ label: 'Giants won', text: 'I heard the Giants won.', sources: ['w1'], tone: 'warm' })] });
+        // Two options: a single answer is refused (PLAN D22).
+        h.api.reply({
+            answer_mode: 'pick',
+            options: [
+                reply({ label: 'Giants won', text: 'I heard the Giants won.', sources: ['w1'], tone: 'warm' }),
+                reply({ label: 'Not sure', text: 'Not sure, can we check?', tone: 'calm' }),
+            ],
+        });
         const question = 'Who won the World Series game last night?';
         const jobId = h.db.addFollowUpJob({ kind: 'category_search', questionText: question, category: 'Latest news' });
         await waitFor(() => h.db.job(jobId)?.status === 'done');

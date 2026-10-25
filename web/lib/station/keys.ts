@@ -23,8 +23,11 @@ export const KEYBOARD_MAP: Readonly<Record<string, StationCommand>> = {
   h: 'HEADSET_OFF',
 };
 
-/** The legend shown in keyboard mode. */
-export const KEYBOARD_LEGEND = '1 2 3 4 = pick that option (in a confirm: 1 = send it, 2 = cancel)   S = STOP   H = headset off (test)';
+/**
+ * The legend shown in keyboard mode: 1 to 3, like every screen (no gesture gives 4, since a double jaw clench means
+ * nothing, PLAN D21). Key 4 still picks option 4, as a harmless test key, but the legend does not offer it.
+ */
+export const KEYBOARD_LEGEND = '1 2 3 = pick that option (in a confirm: 1 = send it, 2 = cancel)   S = STOP   H = headset off (test)';
 
 /** Digits the station takes as picks while a session runs; the dashboard's screen keys must not fire then. */
 export function isPickKey(key: string): boolean {

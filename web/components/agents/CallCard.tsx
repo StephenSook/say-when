@@ -7,7 +7,7 @@
  * 1 Prepared and read back the call script plays in the earpiece; its digest is in the tooltip only
  * 2 Confirm                the confirm window, "1 to send, 2 to cancel"; only a fresh 1 places the call
  * 3 Ringing                Dialing, then Ringing with a ring timer (our own events: Cartesia has no ringing)
- * 4 Connected              the live duration; STOP hangs up (a double jaw clench with the headset)
+ * 4 Connected              the live duration; STOP hangs up (a held jaw clench with the headset)
  * 5 Ended                  with the reason in plain words
  *
  * The contact shows by name only. Never a phone number.

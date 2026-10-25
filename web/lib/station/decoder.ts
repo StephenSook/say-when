@@ -4,7 +4,8 @@
  *
  * Contract (PLAN Shared Contracts, docs/spacetime.md Appendix A, direct select D18):
  *   { "type": "gesture", "id": "<uuid>", "command": "PICK_2", "onsetAgeMs": 840, "confidence": 0.82, "source": "imagery" }
- *   command: PICK_1 (left fist), PICK_2 (right fist), PICK_3 (single jaw clench), PICK_4 (double), STOP (long), HEADSET_OFF
+ *   command: PICK_1 (left fist), PICK_2 (right fist), PICK_3 (single jaw clench), STOP (held clench), HEADSET_OFF;
+ *   a double clench sends nothing (PLAN D21). PICK_4 is still accepted on the wire, but no gesture sends it.
  *   { "type": "health", "decoderHealthy": true }       at least every 250 ms
  *
  * - Open in headset mode only, as soon as the page is paired, so health shows before Start session.

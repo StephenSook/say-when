@@ -1,6 +1,7 @@
 """Live decoding loop: headset -> filters -> imagery model + jaw detector -> commands.
 
-The command words follow `mode` (config.MODES): direct sends PICK_1..PICK_4 and STOP, scan sends YES/NO/CONFIRM/STOP.
+The command words follow `mode` (config.MODES): direct sends PICK_1..PICK_3 and STOP, scan sends YES/NO/CONFIRM/STOP.
+The imagery rules (PLAN D21, eeg/hands.py) are the same in both: each hand's at-once threshold and the fallback window.
 
 Used by live.py (headless or with a window) and quiz.py. Call start() once, then poll() in a loop;
 each poll returns an Update with the latest probabilities and any new command messages.
@@ -27,6 +28,7 @@ class Update:
     jaw_level: float = 0.0
     commands: List[dict] = field(default_factory=list)
     jaw_events: List[dict] = field(default_factory=list)   # raw single / double / long clenches
+    votes: Dict[str, int] = field(default_factory=dict)     # the fallback window's confident moments per hand
     window: Optional[Dict[str, np.ndarray]] = None          # latest filtered 2 s window per band (for displays)
     raw: Optional[np.ndarray] = None                         # latest raw samples, a copy (for the viz spectrum)
     samples: int = 0
@@ -103,6 +105,7 @@ class Engine:
             if self.last_packet and not self.healthy() and not self.headset_off_sent:
                 self.headset_off_sent = True  # watchdog: no packets for WATCHDOG_S
                 up.commands.append(messages.gesture("HEADSET_OFF", self.last_packet, 1.0, "watchdog", now))
+                self.hands.restart()  # the imagery fallback window starts again with the next prediction
             time.sleep(0.003)
             return up
         self.last_packet, self.headset_off_sent = now, False
@@ -116,6 +119,7 @@ class Engine:
                 msg = messages.from_jaw(ev, self.jaw_only, now, mode=self.mode)
                 if msg:
                     up.commands.append(msg)
+                    self.hands.restart(float(ev["t"]))  # any command restarts the imagery fallback window
             up.jaw_level = self.jaw.level
             t_last = float(ts[-1])
             if t_last < self.jaw.holdoff_until(t_last):  # a jaw clench must never be read as a fist
@@ -129,6 +133,10 @@ class Engine:
             up.proba = {c: float(v) for c, v in zip(self.classes, p)}
             ev = self.hands.update(float(ts[-1]), up.proba)
             if ev:
-                up.commands.append(messages.from_hand(ev, now, mode=self.mode))
+                msg = messages.from_hand(ev, now, mode=self.mode)
+                up.commands.append(msg)
+                how = f"fallback, counts {ev['counts']}" if ev["how"] == "fallback" else "at once"
+                self.log(f"{msg['command']} from {ev['hand']} fist imagery, {how}, confidence {ev['confidence']:.2f}")
         up.smoothed, up.status = dict(self.hands.smoothed), self.hands.status
+        up.votes = dict(self.hands.counts)
         return up

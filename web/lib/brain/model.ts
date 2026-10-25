@@ -3,7 +3,7 @@
  * check them. The brain glows only from measured numbers (the 8-12 Hz mu change at C3 and C4 against the wearer's
  * rest baseline). The decoder's guess is a separate event, and the jaw clench is a muscle signal that never touches
  * the brain. The brain has no "option 1" area: direct select (D18) chose left fist = 1, right fist = 2; a single jaw
- * clench is 3, a double is 4, a long clench is STOP (lib/commands.ts).
+ * clench is 3, a held clench (about 1 second) is STOP, and a double clench means nothing (PLAN D21, lib/commands.ts).
  */
 import { JAW_LANE_LEGEND } from '../commands';
 import { glowErd, type BaselineState, type Contact, type DecoderCommand, type VizMarker, type VizMeta, type VizMi } from './protocol';
@@ -127,7 +127,7 @@ export const LABELS = {
   legendC4: '1: C4 left-fist imagery',
   /** The full honest legend, in the info dialog. */
   explain:
-    'Amber: left-fist imagery, option 1. Cyan: right-fist imagery, option 2. Glow = 8-12 Hz rhythm quieting vs rest. No option area in the brain. Jaw lane = muscle, not brain: 3 single, 4 double, long = STOP.',
+    'Amber: left-fist imagery, option 1. Cyan: right-fist imagery, option 2. Glow = 8-12 Hz rhythm quieting vs rest. No option area in the brain. Jaw lane = muscle, not brain: 3 single clench, hold = STOP.',
   jawLane: 'Jaw muscle, not brain',
   /** The jaw lane's gestures (D18), from the one legend in lib/commands.ts. */
   jawLegend: JAW_LANE_LEGEND,

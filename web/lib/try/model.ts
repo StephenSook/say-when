@@ -2,7 +2,7 @@
  * The judge try page (/try, PLAN 5.11): what to show, from plain values. Pure, so every rule here runs in a test.
  *
  * The page runs Eleven on the `say-when-try` database with one identity, a Station: it asks the question, plays the
- * options, takes the judge's on-screen 1, 2, 3, 4 and STOP (D18 direct select; recorded with source `button`, never as a headset
+ * options, takes the judge's on-screen 1, 2, 3 and STOP (D18 direct select; recorded with source `button`, never as a headset
  * signal), and says the picked reply aloud. The module's try sandbox ties the try to that station alone
  * (spacetime/src/sandbox.ts). What it shows comes from the board rows of that database, whose text is shared on
  * purpose: the judge typed it.
@@ -23,7 +23,7 @@ export function trySettings(host: string | undefined, db: string | undefined): S
 }
 
 export const TRY_WORDS = {
-  honesty: "On-screen buttons stand in for the headset's four picks (1 to 4) and STOP.",
+  honesty: "On-screen buttons stand in for the headset's three picks (1 to 3) and STOP.",
   shared: "What you type shows on this sandbox's public board.",
   busy: 'Someone else is trying Eleven right now. Try again in a minute.',
   agentOff: "Eleven's agent is offline right now, so no options will come.",

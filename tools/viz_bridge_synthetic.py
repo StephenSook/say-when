@@ -91,20 +91,20 @@ MAX_INCOMING = 4096  # bytes; client messages are tiny
 CYCLE_S = 24.0
 RAMP_S = 0.5  # rise and fall of the imagery suppression
 IMAGERY = ((4.0, 7.0, 0), (11.0, 14.0, 1))  # (start, end, contralateral channel index)
-CLENCHES = ((18.0, 0.2), (18.4, 0.2), (21.8, 0.3))  # (onset, length): double, then single
+CLENCHES = ((18.0, 1.0), (21.8, 0.3))  # (onset, length): held (STOP, PLAN D21), then single
 CLENCH_EDGE_S = 0.04
 # The words follow the decoder's map (eeg-data live.py --mode, docs/direct-select.md): direct is the default.
 MARKERS_BY_MODE = {
     "direct": (
         (6.4, "PICK_2", "imagery"),  # right fist = option 2 (D18)
         (13.4, "PICK_1", "imagery"),  # left fist = option 1
-        (18.8, "PICK_4", "jaw"),  # the double clench = option 4
+        (18.8, "STOP", "jaw"),  # the held clench, 0.8 s in, while still held (PLAN D21)
         (22.3, "PICK_3", "jaw"),  # the single clench = option 3
     ),
     "scan": (
         (6.4, "YES", "imagery"),
         (13.4, "NO", "imagery"),
-        (18.8, "STOP", "jaw"),  # the double clench (PLAN D17)
+        (18.8, "STOP", "jaw"),  # the held clench, 0.8 s in, while still held (PLAN D21)
         (22.3, "CONFIRM", "jaw"),  # the single clench
     ),
 }
@@ -289,8 +289,11 @@ class Script:
             return []
         return [(command, source) for _, command, source in crossed]
 
-    def confidence(self) -> float:
-        return round(min(0.95, max(0.5, 0.8 + self.rng.uniform(-0.05, 0.05))), 2)
+    def confidence(self, command: str) -> float:
+        # At-once picks (PLAN D21), per hand in both maps: the right fist (YES, PICK_2) at 0.90 or more, the left
+        # fist (NO, PICK_1) at 0.96 or more.
+        lo, hi = (0.90, 0.97) if command in ("YES", "PICK_2") else (0.96, 0.99)
+        return round(self.rng.uniform(lo, hi), 2)
 
 
 class Bridge:
@@ -508,7 +511,7 @@ class Bridge:
                     "t": round(time.time(), 3),
                     "id": str(uuid.uuid4()),
                     "command": command,
-                    "confidence": self.script.confidence() if source == "imagery" else None,
+                    "confidence": self.script.confidence(command) if source == "imagery" else None,
                     "source": source,
                 }, essential=True)
         else:
@@ -610,7 +613,7 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     ap.add_argument("--no-script", action="store_true", help="no scripted cycle: raw synthetic ERD noise only")
     ap.add_argument("--no-contact-blips", action="store_true", help="no scripted 2 s 'C4 poor' blip per cycle")
     ap.add_argument("--mode", choices=sorted(MARKERS_BY_MODE), default="direct",
-                    help="marker words: direct (PICK_1..PICK_4, the default) or scan (YES, NO, CONFIRM, STOP)")
+                    help="marker words: direct (PICK_1..PICK_3 and STOP, the default) or scan (YES, NO, CONFIRM, STOP)")
     ap.add_argument(
         "--origin",
         action="append",
