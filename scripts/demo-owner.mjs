@@ -85,22 +85,31 @@ export function devicesToRevoke(deviceRows) {
 export const AUTO_ROLES = ['station', 'speaker', 'partner'];
 export const AUTO_MAX_MINUTES = 30;
 
+/** A request made a little before the run still counts: the Mac's clock and the server's may differ by a few seconds. */
+export const AUTO_CLOCK_SLACK_MS = 5_000;
+
 /**
- * The pending pairing requests to approve now: at most one per wanted role not yet paired in this run, oldest code
- * first within a role. Rows are `pairing_request` rows as parseSqlTable returns them.
+ * The pending pairing requests to approve now. Rows are `pairing_request` rows as parseSqlTable returns them. Only
+ * requests made after the run started count (`sinceMs`), so a page left open earlier, possibly by a stranger, is never
+ * paired. A role with exactly one such request is picked; a role with two or more is a conflict and is never picked,
+ * because the owner cannot tell which page is theirs: they approve the right one by its code instead.
  */
-export function pickApprovals(rows, wantedRoles, doneRoles) {
-    const picked = [];
+export function pickApprovals(rows, wantedRoles, doneRoles, sinceMs = 0) {
     const taken = new Set(doneRoles);
-    const pending = rows
-        .filter((row) => /^[1-9][0-9]{5}$/.test(row.code ?? '') && wantedRoles.includes(row.role) && !taken.has(row.role))
-        .sort((a, b) => String(a.expires_at).localeCompare(String(b.expires_at)));
-    for (const row of pending) {
-        if (taken.has(row.role)) continue;
-        taken.add(row.role);
-        picked.push({ code: row.code, role: row.role, label: row.label ?? '' });
+    const byRole = new Map();
+    for (const row of rows) {
+        if (!/^[1-9][0-9]{5}$/.test(row.code ?? '') || !wantedRoles.includes(row.role) || taken.has(row.role)) continue;
+        const requestedAt = Date.parse(row.requested_at ?? '');
+        if (!Number.isFinite(requestedAt) || requestedAt < sinceMs - AUTO_CLOCK_SLACK_MS) continue;
+        byRole.set(row.role, [...(byRole.get(row.role) ?? []), row]);
     }
-    return picked;
+    const picks = [];
+    const conflicts = [];
+    for (const [role, list] of byRole) {
+        if (list.length === 1) picks.push({ code: list[0].code, role, label: list[0].label ?? '' });
+        else conflicts.push({ role, count: list.length });
+    }
+    return { picks, conflicts };
 }
 
 /** Blocks for `ms` milliseconds (the owner CLI is synchronous). */
@@ -205,11 +214,19 @@ export function run(
             }
             const wanted = [...new Set(args.roles)];
             const done = [];
-            const deadline = now() + args.minutes * 60_000;
-            out(`auto-approve on ${args.db} for up to ${args.minutes} min: open the ${wanted.join(', ')} page(s) now; each pairs by itself.`);
+            const startedAt = now();
+            const deadline = startedAt + args.minutes * 60_000;
+            const warned = new Set();
+            out(`auto-approve on ${args.db} for up to ${args.minutes} min: open (or reload) the ${wanted.join(', ')} page(s) now; each pairs by itself.`);
             while (done.length < wanted.length && now() < deadline) {
-                const rows = sql('SELECT code, role, label, expires_at FROM pairing_request');
-                for (const pick of pickApprovals(rows, wanted, done)) {
+                const rows = sql('SELECT code, role, label, requested_at FROM pairing_request');
+                const { picks, conflicts } = pickApprovals(rows, wanted, done, startedAt);
+                for (const c of conflicts) {
+                    if (warned.has(c.role)) continue;
+                    warned.add(c.role);
+                    out(`${c.count} ${c.role} pages are asking at once, so none is paired automatically: approve yours by its code (approve <code>).`);
+                }
+                for (const pick of picks) {
                     try {
                         call('approve_pairing', pick.code, 'false');
                         done.push(pick.role);
