@@ -149,7 +149,7 @@ describe('decoder panel words', () => {
       [
         ['NO', 'imagined left fist', 'no'],
         ['CONFIRM', 'single jaw clench', null],
-        ['STOP', 'double jaw clench', null],
+        ['STOP', 'held jaw clench', null],
       ],
     );
     assert.equal(view.earlier[0]?.ago, '7 s ago');

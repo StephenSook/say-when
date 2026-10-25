@@ -4,13 +4,30 @@ Turns the 8-channel headset into Eleven's four commands. It is not connected to 
 
 | Signal | Command | How it is read |
 |---|---|---|
-| Imagine squeezing your right fist | YES | Imagery classifier over C3/C4 and neighbours (brain signal) |
-| Imagine squeezing your left fist | NO | same |
+| Imagine squeezing your right fist | YES | Imagery classifier over C3/C4 and neighbours (brain signal): at once at 0.90 confidence or more, or the 10 s fallback (PLAN D21) |
+| Imagine squeezing your left fist | NO | same, at once at 0.96 or more, or the 10 s fallback |
 | Single jaw clench | CONFIRM | Jaw-muscle (EMG) bursts, 30-55 Hz (PLAN D17) |
-| Double jaw clench | STOP | same (a held clench, about 0.8 s, also counts) |
+| Held jaw clench (about 1 s; it fires at 0.8 s) | STOP | same (PLAN D21) |
+| Double jaw clench | nothing | detected, but sends no command (PLAN D21) |
 | No packets for 0.5 s | HEADSET_OFF | watchdog |
 
-Imagery is ignored during a jaw clench and for 1 s after it, so a clench is never read as a fist. With `--jaw-only` (the fallback in [docs/brain-mode-test.md](../docs/brain-mode-test.md)), a single clench is YES, a double is CONFIRM, silence is NO and there is no STOP gesture (this fallback map did not change with D17).
+Imagery is ignored during a jaw clench and for 1 s after it, so a clench is never read as a fist. With `--jaw-only` (the fallback in [docs/brain-mode-test.md](../docs/brain-mode-test.md)), a single clench is YES, a double is CONFIRM, silence is NO and there is no STOP gesture (this fallback map did not change with D17 or D21).
+
+Imagery rules (PLAN D21, `eeg/hands.py`), all on the smoothed model probabilities. Every number is a `live.py` flag, and `live.py` prints them at startup:
+
+| Rule | Default | Flag |
+|---|---|---|
+| A right fist at or above this is YES at once | 0.90 | `--yes-threshold` |
+| A left fist at or above this is NO at once | 0.96 | `--no-threshold` |
+| Fallback window: with no command for this long, the hand with more confident moments is sent | 10 s | `--fallback-s` (0 turns it off) |
+| A prediction at or above this counts as a confident moment for its hand | 0.65 | `--fallback-threshold` |
+| The winning hand needs at least this many; a tie or zero sends nothing | 3 | `--fallback-min` |
+
+The fallback window starts with the first prediction and starts again after every command the decoder sends (YES, NO, CONFIRM, STOP) and after HEADSET_OFF, and also when it ends with nothing sent. After a hand fires, nothing fires or counts for `--refractory` (2 s), and that hand cannot fire at once again until it drops below its threshold, so one long squeeze is one YES. A fallback YES or NO carries the mean of its counted moments as its confidence (0.65 or more) and the last counted moment as its onset. The `--threshold`, `--margin`, `--dwell` and `--rearm` flags are gone (the old rule was a single threshold held for a 1 s dwell).
+
+Trade-off: the at-once thresholds mean fewer false picks but a stronger or longer imagined squeeze. The 10 s fallback can turn sustained noise into a pick; the minimum of 3 confident moments limits that but does not remove it (a 10 s window holds about 100 predictions).
+
+The detector still recognizes a double clench, so two quick clenches are never reported as two singles (two CONFIRMs); they send nothing. A STOP is sent as soon as a clench has been held for 0.8 s (`LONG_CLENCH_S`), while it is still held.
 
 A single clench is only reported once 0.7 s pass with no second clench, so a CONFIRM lands about 0.7 s after the clench ends. The CONFIRM only counts inside the confirm window after a full read-back; a stray one anywhere else does nothing. Raising `JAW_RATIO` in `eeg/config.py` to about 30 makes a stray clench (swallowing, shifting) less likely to count.
 
@@ -105,7 +122,7 @@ Keys are read from the repo's gitignored `.env.local`, or from the environment: 
 One JSON object per line, in the shape PLAN.md agrees with the station page:
 
 ```json
-{"type": "gesture", "id": "6f1c...", "command": "YES", "onsetAgeMs": 1180, "confidence": 0.83, "source": "imagery"}
+{"type": "gesture", "id": "6f1c...", "command": "YES", "onsetAgeMs": 1180, "confidence": 0.93, "source": "imagery"}
 {"type": "health", "decoderHealthy": true}
 ```
 
@@ -133,8 +150,8 @@ eeg/
   sessions.py   recording files, trials -> 2 s windows
   models.py     filter-bank CSP + LDA, Riemannian tangent space + logistic regression
   evaluate.py   held-out test, grouped cross-validation, per-class counts
-  hands.py      probabilities -> one debounced LEFT/RIGHT per imagery
-  jaw.py        streaming single / double / long clench detector
+  hands.py      probabilities -> LEFT/RIGHT events: at-once thresholds and the 10 s fallback (PLAN D21)
+  jaw.py        streaming single / double / long (held) clench detector
   messages.py   gesture and health messages
   engine.py     live loop: headset -> filters -> model + jaw -> messages, watchdog
   store.py      save / load models with montage checks

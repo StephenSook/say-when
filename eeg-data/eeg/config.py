@@ -32,6 +32,12 @@ CUES = {
 # The brain chooses, the jaw commits or stops.
 HAND_COMMAND = {"right": "YES", "left": "NO"}
 COMMANDS = ("YES", "NO", "CONFIRM", "STOP", "HEADSET_OFF")
+# PLAN D21 imagery rules, on the smoothed probabilities (eeg/hands.py). Each is a live.py flag.
+YES_THRESHOLD = 0.90         # --yes-threshold: an imagined RIGHT fist at or above this is YES at once
+NO_THRESHOLD = 0.96          # --no-threshold: an imagined LEFT fist at or above this is NO at once
+FALLBACK_S = 10.0            # --fallback-s: with no command for this long, the hand with more confident moments wins
+FALLBACK_THRESHOLD = 0.65    # --fallback-threshold: a prediction at or above this is a confident moment for its hand
+FALLBACK_MIN = 3             # --fallback-min: the winning hand needs at least this many (one noisy frame never picks)
 
 # ---------------------------------------------------------------- signal processing
 FS_NOMINAL = 125.0
@@ -71,8 +77,8 @@ JAW_RELEASE = 0.5                        # burst ends when power falls below JAW
 JAW_SMOOTH_S = 0.05                      # envelope smoothing (fast enough to see the gap in a double clench)
 MIN_BURST_S = 0.08                       # shorter bursts are blips and are ignored
 JAW_SLICE_S = 0.25                       # slice for "strongest spike" checks in recordings
-LONG_CLENCH_S = 0.8                      # a burst this long is a long clench (STOP)
-DOUBLE_GAP_S = 0.7                       # a second short burst starting within this gap = double (CONFIRM)
+LONG_CLENCH_S = 0.8                      # a burst this long is a held clench (STOP, PLAN D21)
+DOUBLE_GAP_S = 0.7                       # a second short burst within this gap = double (no command; CONFIRM in --jaw-only)
 JAW_HOLDOFF_S = 1.0                      # no YES/NO from imagery during a clench and for this long after
 
 # ---------------------------------------------------------------- formats

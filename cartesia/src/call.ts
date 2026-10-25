@@ -1,5 +1,5 @@
 // Server side, CALL stretch: one consented outbound call through a Cartesia Managed Agent, after a read-back and a
-// fresh CONFIRM (double jaw clench), the only command that releases the dial. STOP (single jaw clench), HEADSET-OFF and
+// fresh CONFIRM (single jaw clench), the only command that releases the dial. STOP (held jaw clench), HEADSET-OFF and
 // the idle auto-pause cancel or hang up. The model never dials. Numbers come only from a private consent list and
 // never reach events, errors or logs.
 
@@ -511,7 +511,7 @@ interface Prepared extends PreparedCall {
 
 export type CallPhase = 'checking' | 'dialing' | 'ringing' | 'connected' | 'ended';
 export type CallResult = 'answered' | 'no_answer' | 'busy' | 'voicemail' | 'cancelled' | 'failed' | 'refused' | 'unknown';
-/** STOP (single jaw clench), HEADSET-OFF, the 2-minute idle auto-pause, or a teammate at the dashboard. */
+/** STOP (held jaw clench), HEADSET-OFF, the 2-minute idle auto-pause, or a teammate at the dashboard. */
 export type CancelReason = 'stop' | 'headset_off' | 'auto_pause' | 'operator';
 
 export interface CallOutcome {

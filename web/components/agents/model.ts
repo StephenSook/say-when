@@ -349,7 +349,7 @@ export function callPlan(call: CallRequest): CallPlan {
  * Reasons in plain words
  * ---------------------------------------------------------------------------------------------- */
 
-/** "STOP, a double jaw clench, hangs up.", "STOP, key S, hangs up.", or "STOP hangs up." when the input is unknown. */
+/** "STOP, a held jaw clench, hangs up.", "STOP, key S, hangs up.", or "STOP hangs up." when the input is unknown. */
 export function stopHangsUp(input: InputKind): string {
   const phrase = signalPhrase('STOP', input);
   return phrase ? `STOP, ${phrase}, hangs up.` : 'STOP hangs up.';

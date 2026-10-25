@@ -44,7 +44,7 @@ const EXPECTED = [
   '01-rest',
   '02-right-fist-yes',
   '03-left-fist-no',
-  '04-double-clench-stop',
+  '04-held-clench-stop',
   '05-single-clench-confirm',
   '06-headset-off',
   '07-baseline-flow',
@@ -287,7 +287,8 @@ const CHECKS: Record<string, (r: Run) => void> = {
     assert.ok(plateau.every((s) => (s.mi as VizMi).laterality > 20), 'laterality about +27');
     const yes = onlyMarker(r, 'YES', 'imagery');
     assert.equal(pulseSide(yes), 'c3', 'the YES would pulse the C3 ring');
-    assert.ok(yes.confidence !== null && yes.confidence >= 0.75 && yes.confidence <= 0.87);
+    // PLAN D21: an at-once YES is 0.90 or more.
+    assert.ok(yes.confidence !== null && yes.confidence >= 0.9 && yes.confidence <= 0.97);
     assert.match(guessText(yes), /^Guess YES 0\.\d\d$/);
     assert.ok(snapAt(r, 5.4).markers.includes(yes), 'the YES lands at 5.4 s, during the glow');
   },
@@ -298,15 +299,16 @@ const CHECKS: Record<string, (r: Run) => void> = {
     checkRestDark(between(r, 6.1, 10), r.name);
     assert.ok(between(r, 3.5, 5.5).every((s) => (s.mi as VizMi).laterality < -20), 'laterality about -27');
     const no = onlyMarker(r, 'NO', 'imagery');
+    assert.ok(no.confidence !== null && no.confidence >= 0.96, 'an at-once NO is 0.96 or more (PLAN D21)');
     assert.equal(pulseSide(no), 'c4');
     assert.match(guessText(no), /^Guess NO 0\.\d\d$/);
   },
 
-  // PLAN D17: a double clench is STOP and a single clench is CONFIRM.
-  '04-double-clench-stop': (r) => {
-    checkGate(r, [4, 4.1, 4.4, 4.5]);
-    for (const at of [3.9, 4.2, 4.3, 4.6]) {
-      // The frames just before and after each clench: some muscle in the upper bands, under the gate. The glow
+  // PLAN D21: a held clench is STOP (a double clench sends nothing), and a single clench is CONFIRM (D17).
+  '04-held-clench-stop': (r) => {
+    checkGate(r, [4, 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8]);
+    for (const at of [3.9, 4.9]) {
+      // The frames just before and after the clench: some muscle in the upper bands, under the gate. The glow
       // reads 8-12 Hz, which a clench does not touch, so nothing lights up.
       const s = snapAt(r, at);
       assert.equal(s.view.state, 'measuring', `at ${at}`);
@@ -319,6 +321,7 @@ const CHECKS: Record<string, (r: Run) => void> = {
     assert.equal(pulseSide(stop), null, 'no ring pulse for a jaw command');
     assert.equal(eventPillText(stop), 'STOP');
     assert.equal(guessText(stop), 'Jaw STOP');
+    assert.ok(snapAt(r, 4.8).markers.includes(stop), 'STOP lands at 4.8 s, while the clench is still held');
   },
 
   '05-single-clench-confirm': (r) => {
@@ -509,14 +512,14 @@ const CHECKS: Record<string, (r: Run) => void> = {
     checkImagery(r, 8.5, 10.5, 'c3');
     checkImagery(r, 20.5, 22.5, 'c4');
     checkRestDark([...between(r, 0, 7.9), ...between(r, 11.1, 19.9), ...between(r, 23.1, 60)], r.name);
-    checkGate(r, [33, 33.1, 33.4, 33.5, 45, 45.1, 45.2]);
+    checkGate(r, [33, 33.1, 33.2, 33.3, 33.4, 33.5, 33.6, 33.7, 33.8, 45, 45.1, 45.2]);
     const all = markersOf(r);
     assert.deepEqual(
       all.map((m) => [m.command, m.source]),
       [
         ['YES', 'imagery'],
         ['NO', 'imagery'],
-        ['STOP', 'jaw'], // the double clench at 33 s (PLAN D17)
+        ['STOP', 'jaw'], // the held clench from 33 s (PLAN D21)
         ['CONFIRM', 'jaw'], // the single clench at 45 s
       ],
     );
@@ -525,7 +528,7 @@ const CHECKS: Record<string, (r: Run) => void> = {
       ['c3', 'c4', null, null],
     );
     const markerAt = r.lines.filter((l) => l.frame?.type === 'viz.marker').map((l) => l.at);
-    assert.deepEqual(markerAt, [10.4, 22.4, 33.9, 45.8]);
+    assert.deepEqual(markerAt, [10.4, 22.4, 33.8, 45.8]);
   },
 
   '90-live-label-test': (r) => {
@@ -635,7 +638,8 @@ describe('every scenario through the page logic', () => {
           assert.match(id, UUID4);
           assert.ok(!ids.has(id), 'marker ids are unique');
           ids.add(id);
-          if (f.source === 'imagery') assert.ok(typeof f.confidence === 'number' && f.confidence >= 0 && f.confidence <= 1);
+          // PLAN D21: the lowest an imagery YES or NO can carry is the 10 s fallback's 0.65.
+          if (f.source === 'imagery') assert.ok(typeof f.confidence === 'number' && f.confidence >= 0.65 && f.confidence <= 1);
           if (f.source === 'jaw') {
             assert.ok(f.command === 'CONFIRM' || f.command === 'STOP');
             assert.equal(f.confidence, null);

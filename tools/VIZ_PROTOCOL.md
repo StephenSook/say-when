@@ -151,7 +151,7 @@ The synthetic tool uses a Welch PSD over the last 2 s (1 s Hann segments, so 1 H
 |---|---|
 | `id` | a UUID4 string, unique per marker. From the real decoder: the same id as the matching 8765 `gesture`. |
 | `command` | `"YES"`, `"NO"`, `"CONFIRM"`, `"STOP"` or `"HEADSET_OFF"` (the same five words as 8765) |
-| `confidence` | `YES` and `NO`: a number from 0 to 1. `CONFIRM` and `STOP`: `null`. `HEADSET_OFF`: `null` or 0 to 1. |
+| `confidence` | `YES` and `NO`: a number from 0 to 1 (the real decoder: at once at 0.90 or more for YES and 0.96 or more for NO, or 0.65 or more from its 10 s fallback, PLAN D21). `CONFIRM` and `STOP`: `null`. `HEADSET_OFF`: `null` or 0 to 1. |
 | `source` | `YES` and `NO`: `"imagery"`. `CONFIRM` and `STOP`: `"jaw"`. `HEADSET_OFF`: whatever source the decoder put on 8765 (a short lowercase word matching `^[a-z_]{1,16}$`). |
 
 A marker is display only. The station acts on 8765, never on 8766.
@@ -181,14 +181,14 @@ A 24 s loop, starting when the baseline is set (seconds from the start of the lo
 |---|---|---|
 | 0 to 4 | rest | ERD near 0 in every band |
 | 4 to 7 | right-fist imagery, 0.5 s smooth rise and fall | C3 `b8_12` (and `mu`) to about -30, the other C3 bands as in the table below, C4 near 0 in every band (within about 5), laterality about +25 |
-| 6.4 | `viz.marker` `YES`, `imagery`, confidence about 0.8 | |
+| 6.4 | `viz.marker` `YES`, `imagery`, confidence 0.90 to 0.97 (an at-once YES, PLAN D21) | |
 | 7 to 11 | rest | |
 | 11 to 14 | left-fist imagery | the mirror image: C4 `b8_12` about -30, C3 near 0, laterality about -25 |
-| 13.4 | `viz.marker` `NO`, `imagery` | |
+| 13.4 | `viz.marker` `NO`, `imagery`, confidence 0.96 to 0.99 (an at-once NO, PLAN D21) | |
 | 14 to 18 | rest; C4 contact `poor` from 15 to 17 | |
-| 18.0 and 18.4 | double jaw clench, two EMG spikes of 80 to 150 uV RMS | `emgGate` true for 1 or 2 frames per spike; in those frames `b20_26` and `b26_30` jump by +150 to +300 on both sides and `b16_20` by about +25 to +45 (so `beta` reads about +100 to +150) |
-| 18.8 | `viz.marker` `STOP`, `jaw`, confidence `null` (a double clench is STOP, PLAN D17) | |
-| 18.8 to 21.8 | rest | |
+| 18.0 to 19.0 | held jaw clench, one EMG burst of 80 to 150 uV RMS for 1 s | `emgGate` true for about 10 frames; in those frames `b20_26` and `b26_30` jump by +150 to +300 on both sides and `b16_20` by about +25 to +45 (so `beta` reads about +100 to +150) |
+| 18.8 | `viz.marker` `STOP`, `jaw`, confidence `null`, while the clench is still held (a held clench is STOP, PLAN D21; a double clench sends nothing) | |
+| 19.0 to 21.8 | rest | |
 | 21.8 to 22.1 | single jaw clench | `emgGate` true for 2 or 3 frames, with the same band jump |
 | 22.3 | `viz.marker` `CONFIRM`, `jaw`, confidence `null` (a single clench is CONFIRM, PLAN D17) | |
 | 22.3 to 24 | rest, then the loop repeats | |

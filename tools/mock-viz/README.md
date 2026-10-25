@@ -11,9 +11,9 @@ The numbers follow the synthetic bridge (`VIZ_PROTOCOL.md` section 5): the same 
 | Scenario | What it plays | What the screen should show |
 |---|---|---|
 | `01-rest` | 10 s of rest, baseline set, every band within about 4 points of 0 | Pill "Synthetic test signal", no state line, both patches dark, strip lines on the dashed rest line |
-| `02-right-fist-yes` | right fist 3 to 6 s: C3 8-12 Hz about -30, slow potential about +25, C4 near 0; YES (imagery, 0.85) at 5.4 s | C3 glows cyan, C4 dark; at 5.4 s the cyan pill "Guess YES 0.85", a cyan ring on C3, "YES 0.85" on the guesses lane |
-| `03-left-fist-no` | the mirror: C4 about -30, C3 near 0; NO (imagery) at 5.4 s | C4 glows amber, amber pill "Guess NO 0.8x", amber ring on C4 |
-| `04-double-clench-stop` | clenches at 4.0 and 4.4 s, `emgGate` true for 2 frames each, EMG about 100 to 140 uV; STOP (jaw) at 4.9 s (a double clench is STOP, PLAN D17) | "Muscle detected. Brain readings paused." during each clench, both sides "no reading", shaded moments on every row; "STOP" on the jaw lane; no guess pill, no ring |
+| `02-right-fist-yes` | right fist 3 to 6 s: C3 8-12 Hz about -30, slow potential about +25, C4 near 0; YES (imagery, 0.96; an at-once YES is 0.90 or more, PLAN D21) at 5.4 s | C3 glows cyan, C4 dark; at 5.4 s the cyan pill "Guess YES 0.96", a cyan ring on C3, "YES 0.96" on the guesses lane |
+| `03-left-fist-no` | the mirror: C4 about -30, C3 near 0; NO (imagery, 0.96; an at-once NO is 0.96 or more, PLAN D21) at 5.4 s | C4 glows amber, amber pill "Guess NO 0.96", amber ring on C4 |
+| `04-held-clench-stop` | one clench held from 4.0 to 4.8 s, `emgGate` true for 9 frames, EMG about 100 to 140 uV; STOP (jaw) at 4.8 s, while still held (a held clench is STOP, PLAN D21; a double clench sends nothing) | "Muscle detected. Brain readings paused." for about 0.9 s, both sides "no reading", shaded moments on every row; "STOP" on the jaw lane; no guess pill, no ring |
 | `05-single-clench-confirm` | one clench at 4.0 s, `emgGate` true for 3 frames; CONFIRM (jaw) at 4.8 s (a single clench is CONFIRM, PLAN D17) | the muscle line for about 0.3 s, then "CONFIRM" on the jaw lane |
 | `06-headset-off` | rest; contact poor at 4.5 s, off at 5.0 s; HEADSET_OFF (source `contact`) at 5.05 s; then no frames at all | "No signal" about 0.5 to 0.6 s after the last frame, both sides "no reading", legend "C3 no contact", "C4 no contact"; the pill stays (the socket is open) |
 | `07-baseline-flow` | baseline none 0 to 2 s, recording 2 to 7 s, set at 7 s; every ERD field 0 until set; right fist 11 to 14 s, YES at 13.4 s | "No rest baseline" with a Record link, then "Recording rest baseline" (band lines hidden), then no state line; C3 glows from about 11.5 s |
@@ -23,7 +23,7 @@ The numbers follow the synthetic bridge (`VIZ_PROTOCOL.md` section 5): the same 
 | `11-legacy-bridge` | an older bridge: no `filterBank`, no `fb`, bands 8-13 and 13-30; right fist and YES | Two strip rows, "Mu 8-13 Hz" and "Beta 13-30 Hz"; C3 glows from `mu` |
 | `12-malformed` | 02's trial moved to 6 to 9 s, with 41 bad lines between the frames: cut-off JSON, non-objects, unknown types, 8765 messages, NaN, Infinity, 1e999, bad and oversized `fb`, ERD out of range, 300 bins, 65 channels, bad metas, MAYBE, confidence 1.5, a repeated marker id, a 64 KB frame, two binary frames, an empty frame | Looks like 02 at 6 s: one "Guess YES", no MAYBE, no second NO, no console errors; a short gap in the band rows where the one frame with a 5-entry `fb` arrived (the page drops that `fb` and keeps the frame) |
 | `13-key-press` | rest; YES at 2.5 s and NO at 6.0 s from source `key`, confidence null | Neutral pill (plain border, no cyan or amber) "YES, key press", then "NO, key press"; no ring; gray-bordered pills on the guesses lane |
-| `20-demo-run` | 60 s labeled `replay`: rest, right fist and YES (10.4 s), rest, left fist and NO (22.4 s), rest, double clench and STOP (33.9 s), rest, single clench and CONFIRM (45.8 s), rest | Pill "Replay" the whole time (never "Live"); cyan glow and YES, amber glow and NO, the muscle line twice, STOP and CONFIRM on the jaw lane; "No signal" after 60 s |
+| `20-demo-run` | 60 s labeled `replay`: rest, right fist and YES (10.4 s), rest, left fist and NO (22.4 s), rest, held clench and STOP (33.8 s), rest, single clench and CONFIRM (45.8 s), rest | Pill "Replay" the whole time (never "Live"); cyan glow and YES, amber glow and NO, the muscle line twice, STOP and CONFIRM on the jaw lane; "No signal" after 60 s |
 | `90-live-label-test` | 8 s of rest labeled `live` | Pill "Live headset". **Test fixture only.** The replay tool refuses it without `--allow-live-label` and prints a warning with it; `--all` skips it |
 
 `20-demo-run` says `replay` with `recordedAt` null, so the pill reads "Replay" without a time: nothing was recorded, and the page must never say Live for a file. Only `90-live-label-test` says `"source":"live"`, and the test fails if any other file does.
@@ -81,7 +81,8 @@ The test reads every file here, feeds each line through `applyFrame` in time ord
    - rest for 10 s: like `01-rest`. No state line, both patches mostly dark.
    - imagine squeezing the right fist: like `02-right-fist-yes`. C3 cyan, then "Guess YES" and a cyan ring.
    - imagine squeezing the left fist: like `03-left-fist-no`. C4 amber, "Guess NO", amber ring.
-   - double jaw clench: like `04-double-clench-stop`. The muscle line while clenching, both sides "no reading", STOP on the jaw lane.
+   - held jaw clench (about 1 s): like `04-held-clench-stop`. The muscle line while clenching, both sides "no reading", STOP on the jaw lane.
+   - double jaw clench: the muscle line twice, and nothing on the jaw lane (PLAN D21: a double sends no command).
    - single jaw clench: like `05-single-clench-confirm`. CONFIRM on the jaw lane.
    - unplug the headset or stop the decoder: like `06-headset-off`. No signal within about 0.6 s.
    - the Record button: like `07-baseline-flow`, if Stephen agreed the bridge honors `viz.cmd` baseline (`VIZ_PROTOCOL.md` section 6, step 7).

@@ -44,7 +44,7 @@ export type PipelineStatus = 'started' | 'ok' | 'error';
  * - YES (imagine squeezing the right fist): pick this option, or answer yes. While idle, it opens the person's menu.
  * - NO (imagine squeezing the left fist): skip this option, or answer no.
  * - CONFIRM (single jaw clench, PLAN D17): the only way anything leaves the room, after the read-back.
- * - STOP (double jaw clench, PLAN D17): cancel, none of these, hang up, pause.
+ * - STOP (held jaw clench, PLAN D21; a double clench means nothing): cancel, none of these, hang up, pause.
  * HEADSET_OFF is a system event, not a command: the headset lost contact. Like the 2-minute idle
  * auto-pause, it cancels anything pending.
  */

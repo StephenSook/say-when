@@ -11,8 +11,16 @@ and the /eeg page of the web app (--no-serve turns the server off):
   {"type": "health", "decoderHealthy"}   every 250 ms
   {"type": "eeg", ...}                   about 10 per second, server only: per-electrode change, model bars, jaw
 
-Right fist imagined = YES, left = NO, single jaw clench = CONFIRM, double (or held) jaw clench = STOP
-(PLAN D17), no packets for 0.5 s = HEADSET_OFF. Imagery is ignored during a clench and for 1 s after it.
+Right fist imagined = YES, left = NO, single jaw clench = CONFIRM, held jaw clench (LONG_CLENCH_S, about 0.8 s)
+= STOP, a double jaw clench = nothing, no packets for 0.5 s = HEADSET_OFF (PLAN D21). Imagery is ignored during a
+clench and for 1 s after it.
+
+Imagery rules (PLAN D21, eeg/hands.py), on the smoothed model probabilities, each a flag:
+  --yes-threshold 0.90        a right fist at or above this is YES at once
+  --no-threshold 0.96         a left fist at or above this is NO at once
+  --fallback-s 10             otherwise, after this long with no command (imagery, jaw or HEADSET_OFF) ...
+  --fallback-threshold 0.65   ... the hand with more predictions at or above this wins (a tie sends nothing) ...
+  --fallback-min 3            ... if it has at least this many; then the window starts again
 """
 import argparse
 import os
@@ -36,6 +44,17 @@ def log(*a):
 def _jaw_base(engine):
     jaw = getattr(engine, "jaw", None)
     return getattr(jaw, "baseline", None)
+
+
+def imagery_settings(cfg: HandConfig, jaw_only: bool = False) -> str:
+    """The imagery rules in one line, printed at startup so the run's settings are on record."""
+    if jaw_only:
+        return "Imagery: off (--jaw-only)"
+    fallback = (f"fallback every {cfg.fallback_s:g} s with no command: the hand with more predictions >= "
+                f"{cfg.fallback_threshold:.2f} wins, at least {cfg.fallback_min}, a tie sends nothing"
+                if cfg.fallback_s > 0 else "fallback off")
+    return (f"Imagery: YES at once at >= {cfg.yes_threshold:.2f} (right fist), NO at once at >= "
+            f"{cfg.no_threshold:.2f} (left fist); {fallback}; ema {cfg.ema:g}, refractory {cfg.refractory_s:g} s")
 
 
 def make_viz(args, fs: float, source: str):
@@ -80,7 +99,8 @@ def windowed(engine: Engine, out: messages.Output, title: str):
     head = QtWidgets.QLabel("connecting ...")
     head.setStyleSheet("font-size: 26px; font-weight: bold;")
     lay.addWidget(head)
-    bars = {c: Bar(c, engine.hands.cfg.threshold) for c in engine.classes}
+    cfg = engine.hands.cfg
+    bars = {c: Bar(c, cfg.instant(c) if c in config.HAND_COMMAND else None) for c in engine.classes}
     jaw = Bar("jaw", 1.0, "jaw")
     for b in list(bars.values()) + [jaw]:
         lay.addWidget(b)
@@ -99,7 +119,8 @@ def windowed(engine: Engine, out: messages.Output, title: str):
         for c, b in bars.items():
             b.set(up.smoothed.get(c, 0.0))
         jaw.set(min(up.jaw_level / config.JAW_RATIO, 1.0), f" ({up.jaw_level:.0f}x)")
-        head.setText(f"now: {up.status}")
+        votes = up.votes or {}
+        head.setText(f"now: {up.status}    fallback: LEFT {votes.get('left', 0)} : {votes.get('right', 0)} RIGHT")
         for msg in up.commands:
             out.send(msg)
             seen.insert(0, f"{time.strftime('%H:%M:%S')}  {msg['command']}  ({msg['source']}, {msg['confidence']:.2f})")
@@ -132,12 +153,18 @@ def main():
     ap.add_argument("--allow-origin", action="append", default=[],
                     help="another web origin allowed to connect (default: localhost:3000 and the Vercel site)")
     ap.add_argument("--step", type=float, default=0.1, help="seconds between imagery predictions")
-    ap.add_argument("--threshold", type=float, default=0.6)
-    ap.add_argument("--margin", type=float, default=0.15)
-    ap.add_argument("--ema", type=float, default=0.5)
-    ap.add_argument("--dwell", type=float, default=1.0)
-    ap.add_argument("--refractory", type=float, default=2.0)
-    ap.add_argument("--rearm", type=float, default=0.5)
+    ap.add_argument("--yes-threshold", type=float, default=config.YES_THRESHOLD,
+                    help="right fist: YES at once at or above this smoothed confidence (default 0.90)")
+    ap.add_argument("--no-threshold", type=float, default=config.NO_THRESHOLD,
+                    help="left fist: NO at once at or above this smoothed confidence (default 0.96)")
+    ap.add_argument("--fallback-s", type=float, default=config.FALLBACK_S,
+                    help="seconds with no command before the fallback picks a hand; 0 turns it off (default 10)")
+    ap.add_argument("--fallback-threshold", type=float, default=config.FALLBACK_THRESHOLD,
+                    help="a prediction at or above this counts for its hand in the fallback (default 0.65)")
+    ap.add_argument("--fallback-min", type=int, default=config.FALLBACK_MIN,
+                    help="the fallback's winning hand needs at least this many counts (default 3)")
+    ap.add_argument("--ema", type=float, default=0.5, help="smoothing: weight of the previous value")
+    ap.add_argument("--refractory", type=float, default=2.0, help="seconds with no imagery after a YES or NO")
     ap.add_argument("--allow-unusable", action="store_true", help="run a model that failed the chance check")
     ap.add_argument("--demo", action="store_true", help="no headset: fake signals and commands, to try the web page")
     args = ap.parse_args()
@@ -156,7 +183,10 @@ def main():
         f"held-out {meta['test_correct']} right, usable={meta['deployable']}")
     if not meta["deployable"] and not (args.allow_unusable or args.jaw_only):
         sys.exit("This model did not beat chance. Use --jaw-only (the fallback) or --allow-unusable for testing.")
-    hand_cfg = HandConfig(args.threshold, args.margin, args.ema, args.dwell, args.refractory, args.rearm)
+    hand_cfg = HandConfig(yes_threshold=args.yes_threshold, no_threshold=args.no_threshold,
+                          fallback_s=args.fallback_s, fallback_threshold=args.fallback_threshold,
+                          fallback_min=args.fallback_min, ema=args.ema, refractory_s=args.refractory)
+    log(imagery_settings(hand_cfg, args.jaw_only))
     engine = Engine(model, meta, hand_cfg, step_s=args.step, port=args.port, board_id=args.board_id,
                     use_jaw=not args.no_jaw, jaw_only=args.jaw_only, log=log)
     server = None if args.no_serve else DecoderServer(origins=ALLOWED_ORIGINS + args.allow_origin, log=log).start()

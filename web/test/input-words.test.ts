@@ -152,7 +152,7 @@ describe('the input mode, from the session label in the public ledger', () => {
 describe('Conversation: the command strip and the turn', () => {
   test('the chips name the true input', () => {
     const chips = (input: InputKind) => PERSON_COMMANDS.map((name) => commandChipLabel(name, input));
-    assert.deepEqual(chips('headset'), ['YES, imagined right fist', 'NO, imagined left fist', 'CONFIRM, single jaw clench', 'STOP, double jaw clench']);
+    assert.deepEqual(chips('headset'), ['YES, imagined right fist', 'NO, imagined left fist', 'CONFIRM, single jaw clench', 'STOP, held jaw clench']);
     assert.deepEqual(chips('keyboard'), ['YES, key Y', 'NO, key N', 'CONFIRM, key C', 'STOP, key S']);
     assert.deepEqual(chips('switch'), ['YES, short switch press', 'NO, not on the switch', 'CONFIRM, double switch press', 'STOP, long switch press']);
     assert.deepEqual(chips('unknown'), ['YES', 'NO', 'CONFIRM', 'STOP']);
@@ -290,7 +290,7 @@ describe('the header chip and the banner', () => {
 describe('Agents: what the person did, in the true input', () => {
   test('confirmed, sent, connected, the STOP that stopped it, the pause, and the empty state', () => {
     const phrase: Record<InputKind, string | null> = { headset: 'a single jaw clench', keyboard: 'key C', switch: 'a double switch press', unknown: null };
-    const stop: Record<InputKind, string> = { headset: 'STOP, a double jaw clench', keyboard: 'STOP, key S', switch: 'STOP, a long switch press', unknown: 'STOP' };
+    const stop: Record<InputKind, string> = { headset: 'STOP, a held jaw clench', keyboard: 'STOP, key S', switch: 'STOP, a long switch press', unknown: 'STOP' };
     for (const input of INPUTS) {
       const rows = boardRows(
         board(
