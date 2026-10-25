@@ -109,14 +109,14 @@ function reply(id: number, text: string): SpeakerReply {
 describe('mirror the earpiece', () => {
   test('on: read-backs one at a time and in order', async () => {
     const r = room();
-    r.mirror.offer(line('readback', 7, 'Send a request for tea. One: send it. Two: cancel.'));
-    r.mirror.offer(line('readback', 7, 'Search the web for tea? One: yes. Two: cancel.'));
-    assert.deepEqual(r.texts(), ['line:Send a request for tea. One: send it. Two: cancel.'], 'never talks over itself');
+    r.mirror.offer(line('readback', 7, 'Send a request for tea. Clench your jaw to send it.'));
+    r.mirror.offer(line('readback', 7, 'Search the web for tea? Clench your jaw to search.'));
+    assert.deepEqual(r.texts(), ['line:Send a request for tea. Clench your jaw to send it.'], 'never talks over itself');
     assert.equal(r.mirror.getState().phase, 'speaking');
     assert.equal(r.mirror.getState().queued, 1);
     await r.finish();
     await r.finish();
-    assert.deepEqual(r.texts(), ['line:Send a request for tea. One: send it. Two: cancel.', 'line:Search the web for tea? One: yes. Two: cancel.']);
+    assert.deepEqual(r.texts(), ['line:Send a request for tea. Clench your jaw to send it.', 'line:Search the web for tea? Clench your jaw to search.']);
     assert.equal(r.mirror.getState().phase, 'idle');
   });
 
@@ -268,10 +268,10 @@ describe('mirror the earpiece', () => {
     r.mirror.offer(line('question', 7, 'Question: Tea?'));
     assert.equal(buildMirrorView(r.mirror.getState(), false).line.text, MIRROR_TEXT.waitingAudio);
     const s = room();
-    s.mirror.offer(line('readback', 7, 'Send a request. One: send it. Two: cancel.'));
+    s.mirror.offer(line('readback', 7, 'Send a request. Clench your jaw to send it.'));
     const speaking = buildMirrorView(s.mirror.getState(), true);
     assert.equal(speaking.line.text, MIRROR_TEXT.readback);
-    assert.equal(speaking.words, '"Send a request. One: send it. Two: cancel."');
+    assert.equal(speaking.words, '"Send a request. Clench your jaw to send it."');
     assert.equal(buildMirrorView(room({ on: false }).mirror.getState(), true).line.text, MIRROR_TEXT.off);
     assert.equal(buildMirrorView(room({ sharing: false }).mirror.getState(), true).line.text, MIRROR_TEXT.noSharing);
   });
@@ -281,9 +281,9 @@ describe('mirror the earpiece', () => {
     assert.equal(roomSafeText('use sk_car_abcdef123456 now'), 'use a code now');
     assert.equal(
       mirrorReadbackText('errand', 'Text the care team at (510) 555 0100 for a ride.'),
-      'Text the care team at a number for a ride. One: send it. Two: cancel.',
+      'Text the care team at a number for a ride. Clench your jaw to send it.',
     );
-    assert.equal(mirrorReadbackText('search', 'Search the web for ideas? One: yes. Two: cancel.'), 'Search the web for ideas? One: yes. Two: cancel.');
+    assert.equal(mirrorReadbackText('search', 'Search the web for ideas? Clench your jaw to search.'), 'Search the web for ideas? Clench your jaw to search.');
   });
 });
 
@@ -420,8 +420,8 @@ describe('the rows the mirror reads', () => {
     h.t.publicBoard.rows = [QUESTION_7];
     fire(h.t.scanState, 'update', LIVE, null, scanRow({ cursor: 1, stepSeq: 2n }));
     fire(h.t.scanState, 'update', LIVE, null, scanRow({ cursor: 2, stepSeq: 3n }));
-    fire(h.t.boardSearches, 'insert', LIVE, { searchId: 6n, questionId: 7n, status: { tag: 'Prepared' }, readBackText: 'Search the web for tea? One: yes. Two: cancel.', digest: 'fedcba9876543210' });
-    assert.deepEqual(h.texts(), ['Search the web for tea? One: yes. Two: cancel.']);
+    fire(h.t.boardSearches, 'insert', LIVE, { searchId: 6n, questionId: 7n, status: { tag: 'Prepared' }, readBackText: 'Search the web for tea? Clench your jaw to search.', digest: 'fedcba9876543210' });
+    assert.deepEqual(h.texts(), ['Search the web for tea? Clench your jaw to search.']);
     assert.ok(h.offered.every((o) => o.kind === 'readback'));
   });
 
@@ -465,12 +465,12 @@ describe('the rows the mirror reads', () => {
     fire(h.t.boardErrands, 'update', LIVE, errand, errand);
     const call = { callId: 4n, questionId: 9n, status: { tag: 'Prepared' }, textShared: true, readBackText: 'Call Stephen to say the request was sent.', scriptDigest: 'd1' };
     fire(h.t.boardCalls, 'insert', LIVE, call);
-    const search = { searchId: 6n, questionId: 10n, status: { tag: 'Prepared' }, readBackText: 'Search the web for ideas? One: yes. Two: cancel.', digest: 'fedcba9876543210' };
+    const search = { searchId: 6n, questionId: 10n, status: { tag: 'Prepared' }, readBackText: 'Search the web for ideas? Clench your jaw to search.', digest: 'fedcba9876543210' };
     fire(h.t.boardSearches, 'insert', LIVE, search);
     assert.deepEqual(h.texts(), [
-      'Ask the care team for a ride at 1 PM. One: send it. Two: cancel.',
-      'Call Stephen to say the request was sent. One: send it. Two: cancel.',
-      'Search the web for ideas? One: yes. Two: cancel.',
+      'Ask the care team for a ride at 1 PM. Clench your jaw to send it.',
+      'Call Stephen to say the request was sent. Clench your jaw to send it.',
+      'Search the web for ideas? Clench your jaw to search.',
     ]);
     assert.ok(h.offered.every((o) => o.kind === 'readback' && o.voice === 'assistant'));
     assert.equal(h.offered[0]!.questionId, 8n);

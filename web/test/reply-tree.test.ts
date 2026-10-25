@@ -152,7 +152,7 @@ describe('the Suggested replies tree over the sample replay', () => {
     assert.equal(node(filling, 'r2:e2'), undefined);
     const waiting = treeAt(29);
     assert.equal(node(waiting, 'r2:e2')?.word, 'Waiting');
-    assert.equal(node(waiting, 'r2:e2')?.kind === 'step' && (node(waiting, 'r2:e2') as { meta: string }).meta, 'Waiting for 1 to send, 2 to cancel.');
+    assert.equal(node(waiting, 'r2:e2')?.kind === 'step' && (node(waiting, 'r2:e2') as { meta: string }).meta, 'Waiting for 3 to send.');
     assert.equal(node(waiting, 'r2:e3'), undefined);
     const sent = treeAt(33);
     assert.equal(node(sent, 'r2:e2')?.word, 'Confirmed');
@@ -264,7 +264,7 @@ describe('the Suggested replies tree on the live board', () => {
     const waiting = deriveReplyTree(boardRows(midScan({ ...pickedErrand, errands: [errand({ optionId: 103n })] })));
     const steps = waiting.nodes.filter((n) => n.kind === 'step');
     assert.deepEqual(steps.map((n) => n.word), ['Done', 'Waiting']);
-    assert.equal(steps[1]?.kind === 'step' && steps[1].meta, 'Waiting for 1 to send, 2 to cancel.');
+    assert.equal(steps[1]?.kind === 'step' && steps[1].meta, 'Waiting for 3 to send.');
     assert.equal(steps[1]?.kind === 'step' && steps[1].until !== null, true, 'the confirm window counts down to its close');
   });
 

@@ -2,9 +2,9 @@
  * The direct select gesture legend (D18, docs/direct-select.md), the one source of truth for every screen. Three
  * gestures pick three options and a held jaw clench is STOP:
  *
- *   1      imagined left fist      PICK_1   pick option 1; in a confirm "One: send it"; while paused, resume
- *   2      imagined right fist     PICK_2   pick option 2; in a confirm "Two: cancel"
- *   3      single jaw clench       PICK_3   pick option 3
+ *   1      imagined left fist      PICK_1   pick option 1; while paused, resume; ignored in a read-back (D29)
+ *   2      imagined right fist     PICK_2   pick option 2; ignored in a read-back (D29)
+ *   3      single jaw clench       PICK_3   pick option 3; after a read-back, send it ("Clench your jaw to send it.")
  *   STOP   held jaw clench         STOP     cancel, none of these, hang up, pause (hold about 1 second)
  *   none   double jaw clench       nothing  the decoder sends no command for it (PLAN D21)
  *
@@ -49,7 +49,7 @@ export const COMMAND_INFO: Readonly<Record<CommandName, CommandInfo>> = {
     label: '1',
     signal: 'Imagine squeezing the left fist',
     short: 'imagined left fist',
-    meaning: 'Pick option 1. In a confirm: send it. While paused: resume.',
+    meaning: 'Pick option 1. While paused: resume.',
     kind: 'imagined',
   },
   PICK_2: {
@@ -57,7 +57,7 @@ export const COMMAND_INFO: Readonly<Record<CommandName, CommandInfo>> = {
     label: '2',
     signal: 'Imagine squeezing the right fist',
     short: 'imagined right fist',
-    meaning: 'Pick option 2. In a confirm: cancel.',
+    meaning: 'Pick option 2.',
     kind: 'imagined',
   },
   PICK_3: {
@@ -65,7 +65,7 @@ export const COMMAND_INFO: Readonly<Record<CommandName, CommandInfo>> = {
     label: '3',
     signal: 'Single jaw clench',
     short: 'single jaw clench',
-    meaning: 'Pick option 3.',
+    meaning: 'Pick option 3. After a read-back: send it.',
     kind: 'jaw',
   },
   PICK_4: {
@@ -127,21 +127,25 @@ export const JAW_LANE_LEGEND = '3 single clench, hold = STOP';
 /** The honesty label every jaw lane and legend carries. */
 export const JAW_HONESTY = 'Jaw muscle, not brain';
 
-/** The two-option confirm, as the earpiece says it after every read-back (and the agent and errand cards show). */
-export const CONFIRM_PROMPT = 'One: send it. Two: cancel.';
-/** The confirm in screen words: "1 to send, 2 to cancel". */
-export const CONFIRM_SHORT = '1 to send, 2 to cancel';
+/**
+ * The confirm, as the earpiece says it after every read-back (D29, Stephen Oct 25 3:05 AM): a single jaw clench
+ * (PICK_3) sends it; 1 and 2 are ignored during a read-back and its window; no answer means not sent; STOP cancels.
+ */
+export const CONFIRM_PROMPT = 'Clench your jaw to send it.';
+/** The confirm in screen words, after "Waiting for": "3 to send" (3 is the single jaw clench in the legend). */
+export const CONFIRM_SHORT = '3 to send';
 
-/** The confirm pick in a sentence: "1 (an imagined left fist)", "1 (key 1)", or "1" when the input is unknown. */
+/** The confirm in a sentence: "a jaw clench" on the headset, "3 (key 3)" on the keys, or "3" when the input is unknown. */
 export function confirmPick(input: InputKind): string {
-  const phrase = signalPhrase('PICK_1', input);
-  return phrase === null ? '1' : `1 (${phrase})`;
+  if (input === 'headset') return 'a jaw clench';
+  const phrase = signalPhrase('PICK_3', input);
+  return phrase === null ? '3' : `3 (${phrase})`;
 }
 
-/** The cancel pick in a sentence: "2 (an imagined right fist)", "2 (key 2)", or "2". */
+/** The cancel in a sentence (D29: only STOP cancels a read-back): "STOP (a held jaw clench)", "STOP (key S)", or "STOP". */
 export function cancelPick(input: InputKind): string {
-  const phrase = signalPhrase('PICK_2', input);
-  return phrase === null ? '2' : `2 (${phrase})`;
+  const phrase = signalPhrase('STOP', input);
+  return phrase === null ? 'STOP' : `STOP (${phrase})`;
 }
 
 /** "1" for PICK_1, "STOP" for STOP, "Headset off" for HEADSET_OFF. */

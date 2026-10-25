@@ -366,6 +366,7 @@ const IGNORED_REASONS: ReadonlyMap<string, string> = new Map([
   ['no_list', 'No options were live to pick from'],
   ['stale_question', 'Picked from a list that had already moved on'],
   ['rank_out_of_range', 'There is no option with that number'],
+  ['readback_jaw_only', 'Only a jaw clench confirms a read-back (D29)'],
   ['direct_mode', 'A scan word: this database picks by number'],
   ['scan_mode', 'A pick by number: this database scans'],
   ['not_allowed', 'Not allowed'],

@@ -155,7 +155,8 @@ describe('replay script (direct select, D18)', () => {
 
   test('the story runs in direct select order, and the tail pauses and resumes', () => {
     const accepted = commands.filter((c) => c.accepted).map((c) => c.command);
-    assert.deepEqual(accepted, ['PICK_3', 'PICK_1', 'PICK_1', 'PICK_1', 'PICK_1', 'STOP', 'STOP', 'PICK_1', 'HEADSET_OFF', 'PICK_1']);
+    // D29: the errand and the call are confirmed with a jaw clench (PICK_3), not a fist.
+    assert.deepEqual(accepted, ['PICK_3', 'PICK_1', 'PICK_3', 'PICK_1', 'PICK_3', 'STOP', 'STOP', 'PICK_1', 'HEADSET_OFF', 'PICK_1']);
   });
 
   test('only direct select command names appear: no scan word and no retired name anywhere', () => {
@@ -201,14 +202,14 @@ describe('replay script (direct select, D18)', () => {
     for (const option of loopEnd.options) assert.ok((option.label ?? '').split(/\s+/).length <= 3, `${option.id}: a 1 to 3 word label`);
   });
 
-  test('the errand waits for a fresh PICK_1 after its read-back, then is sent with the confirmation text', () => {
+  test('the errand waits for a fresh PICK_3 (a jaw clench) after its read-back, then is sent with the confirmation text', () => {
     const statuses = sequence<ErrandStatus>(samples, (rows) => rows.errands.find((e) => e.id === 'err-0')?.status);
     assert.deepEqual(statuses, ['preparing', 'previewed', 'reading_back', 'awaiting_confirm', 'confirmed', 'submitting', 'sent']);
     for (const rows of samples) {
       const errand = rows.errands.find((e) => e.id === 'err-0');
       if (errand?.status !== 'awaiting_confirm') continue;
       assert.ok(errand.previewDigest && /^[0-9a-f]{16}$/.test(errand.previewDigest), 'a 16 hex digest');
-      assert.ok(errand.readBackText?.endsWith('One: send it. Two: cancel.'), 'read back, ending with the two-option confirm');
+      assert.ok(errand.readBackText?.endsWith('Clench your jaw to send it.'), 'read back, ending with the jaw clench confirm');
       assert.ok(errand.screenshotUrl?.startsWith('data:image/svg+xml'), 'a preview picture');
       assert.equal(errand.confirmClosesAt, (errand.readAloudAt ?? 0) + CONFIRM_WINDOW_MS);
       assert.equal(errand.sentAt, null, 'nothing sent while waiting');
@@ -216,17 +217,17 @@ describe('replay script (direct select, D18)', () => {
     const sent = loopEnd.errands.find((e) => e.id === 'err-0');
     assert.equal(sent?.confirmationText, 'Your response has been recorded.');
     const confirm = commands.find((c) => c.id === sent?.confirmCommandId);
-    assert.equal(confirm?.command, 'PICK_1', 'One: send it');
+    assert.equal(confirm?.command, 'PICK_3', 'a jaw clench sends it (D29)');
     assert.ok((confirm?.at ?? 0) > (sent?.readAloudAt ?? Infinity), 'the confirm comes after the read-back');
     assert.ok((sent?.confirmedAt ?? Infinity) <= (sent?.confirmClosesAt ?? 0), 'confirmed inside the window');
     assert.equal(sent?.stopCommandId, null);
   });
 
-  test('the call reads back, waits for a fresh PICK_1, rings, connects, shows a transcript, and STOP hangs it up', () => {
+  test('the call reads back, waits for a fresh PICK_3, rings, connects, shows a transcript, and STOP hangs it up', () => {
     const statuses = sequence<CallStatus>(samples, (rows) => rows.calls.find((c) => c.id === 'call-0')?.status);
     assert.deepEqual(statuses, ['prepared', 'awaiting_confirm', 'confirmed', 'dialing', 'ringing', 'connected', 'ended']);
     const call = loopEnd.calls.find((c) => c.id === 'call-0')!;
-    assert.equal(commands.find((c) => c.id === call.confirmCommandId)?.command, 'PICK_1');
+    assert.equal(commands.find((c) => c.id === call.confirmCommandId)?.command, 'PICK_3');
     assert.equal(commands.find((c) => c.id === call.stopCommandId)?.command, 'STOP');
     assert.ok((call.dialedAt ?? 0) > (call.confirmedAt ?? Infinity), 'dialed only after the confirm');
     assert.ok((call.confirmedAt ?? Infinity) <= (call.confirmClosesAt ?? 0), 'confirmed inside the window');

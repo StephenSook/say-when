@@ -39,8 +39,8 @@ describe('gesture arguments', () => {
       assert.equal(args.source, 'key');
       assert.equal(args.confidence, 1);
       assert.equal(args.onsetAgeMs, 340);
-      // PICK_1 is the confirm ("One: send it"), so it carries the read-back digest.
-      assert.equal(args.heardDigest, command === 'PICK_1' ? 'abcd1234abcd1234' : '');
+      // D29: PICK_3, a single jaw clench, is the confirm after a read-back, so it carries the read-back digest.
+      assert.equal(args.heardDigest, command === 'PICK_3' ? 'abcd1234abcd1234' : '');
     }
   });
 
@@ -65,7 +65,7 @@ describe('gesture arguments', () => {
   });
 });
 
-describe('the confirm digest (PICK_1 in a confirm)', () => {
+describe('the confirm digest (PICK_3 in a confirm, D29)', () => {
   const played = new Map([
     [readbackKey('errand', 7n), 'e1e1e1e1e1e1e1e1'],
     [readbackKey('call', 9n), 'c9c9c9c9c9c9c9c9'],
@@ -254,15 +254,15 @@ describe('the command sender', () => {
     assert.equal(h.sent[0]!.gestureId, 'dec-1');
   });
 
-  test('PICK_1 carries the digest (in a confirm it is "One: send it"); other commands carry none', () => {
+  test('PICK_3 carries the digest (D29: a jaw clench is the confirm after a read-back); other commands carry none', () => {
     const h = harness();
     h.sender.relay(input({ command: 'PICK_1' }));
     h.sender.relay(input({ command: 'PICK_2' }));
     h.sender.relay(input({ command: 'PICK_3' }));
     h.sender.relay(input({ command: 'STOP' }));
-    assert.equal(h.sent[0]!.heardDigest, 'e1e1e1e1e1e1e1e1');
+    assert.equal(h.sent[0]!.heardDigest, '');
     assert.equal(h.sent[1]!.heardDigest, '');
-    assert.equal(h.sent[2]!.heardDigest, '');
+    assert.equal(h.sent[2]!.heardDigest, 'e1e1e1e1e1e1e1e1');
     assert.equal(h.sent[3]!.heardDigest, '');
     assert.equal(h.sender.entries()[1]!.words, 'Sending');
   });

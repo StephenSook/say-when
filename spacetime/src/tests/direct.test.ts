@@ -1,6 +1,7 @@
 // Direct select (D18, docs/direct-select.md): four gestures pick four options. The list is read once in rank
 // order, then the clock waits for a pick; a reply is said at once; a Search, an errand and a call get a read-back
-// and a two-option confirm (PICK_1 confirms, PICK_2 cancels); a Category starts its search with no confirm.
+// and a confirm (since D29 a single jaw clench, PICK_3, confirms; 1 and 2 are ignored; no answer means not sent; STOP
+// cancels); a Category starts its search with no confirm.
 import { expect, test } from 'vitest';
 import * as m from '../index';
 import {
@@ -334,10 +335,13 @@ test('set_input_mode switches between scan and direct, owner only, only while no
   expect(() => as(db, STATION, (ctx) => m.setInputMode(ctx, { mode: 'direct' }))).toThrow();
 });
 
-// ---------- Errands and calls: the read-back, then PICK_1 confirms and PICK_2 cancels ----------
+// ---------- Errands and calls (D29): the read-back, then a jaw clench (PICK_3) confirms; 1 and 2 do nothing ----------
 
-/** Picks the errand (rank 1) and attaches the Actor's preview and the station's read-back: AwaitingConfirm. */
-function errandAwaiting(db: Test) {
+/**
+ * Picks the errand (rank 1) and attaches the Actor's preview and the station's read-back: AwaitingConfirm.
+ * `duringReadback` runs while the read-back is still playing (Previewed, before `report_readback_done`).
+ */
+function errandAwaiting(db: Test, duringReadback?: (db: Test) => void) {
   grantConsent(db, 'errand', FORM_KEY);
   const q = listening(db, [errandOption(), reply('Nothing else')]);
   live(db, 200);
@@ -361,43 +365,83 @@ function errandAwaiting(db: Test) {
   );
   settle(db);
   beat(db);
-  expect(gesture(db, 'PICK_1', { heardDigest: DIGEST }).outcome).toBe('ignored:readback_not_done');
+  expect(gesture(db, 'PICK_3', { heardDigest: DIGEST }).outcome).toBe('ignored:readback_not_done');
+  duringReadback?.(db);
   const id = errandOf(db).id; // read before the transaction: `db.db` inside one deadlocks the test datastore
   as(db, STATION, (ctx) => m.reportReadbackDone(ctx, { kind: 'errand', id, digest: DIGEST }));
   return errandOf(db);
 }
 
-test('an errand pick reads back, and PICK_1 with the heard digest confirms it once', () => {
+test('an errand pick reads back, and PICK_3 (a jaw clench) with the heard digest confirms it once', () => {
   const db = newDb('direct');
   const e = errandAwaiting(db);
   expect(e.status.tag).toBe('AwaitingConfirm');
   live(db, 1500);
-  expect(gesture(db, 'PICK_3', { heardDigest: DIGEST }).outcome).toBe('ignored:rank_out_of_range');
-  expect(gesture(db, 'PICK_1', { heardDigest: 'ffffffffffffffff' }).outcome).toBe('ignored:digest_mismatch');
-  const g = gesture(db, 'PICK_1', { heardDigest: DIGEST, gestureId: 'pick-confirm-1' });
+  expect(gesture(db, 'PICK_4', { heardDigest: DIGEST }).outcome).toBe('ignored:readback_jaw_only');
+  expect(gesture(db, 'PICK_3', { heardDigest: 'ffffffffffffffff' }).outcome).toBe('ignored:digest_mismatch');
+  const g = gesture(db, 'PICK_3', { heardDigest: DIGEST, gestureId: 'pick-confirm-1' });
   expect(g.outcome).toBe('accepted:confirm');
   expect([errandOf(db).status.tag, errandOf(db).confirmGestureId, errandOf(db).confirmedDigest]).toEqual(['Confirmed', 'pick-confirm-1', DIGEST]);
   as(db, AGENT, (ctx) => m.claimErrand(ctx, { errandId: e.id, digest: DIGEST }));
   expect(errandOf(db).status.tag).toBe('Submitting');
 });
 
-test('PICK_1 inside the quiet hold restarts it, as CONFIRM does', () => {
+test('PICK_3 inside the quiet hold restarts it, as CONFIRM does', () => {
   const db = newDb('direct');
   const e = errandAwaiting(db);
   advance(db, 1200);
   beat(db);
-  expect(gesture(db, 'PICK_1', { heardDigest: DIGEST, onsetAgeMs: 900 }).outcome).toBe('ignored:quiet_hold');
+  expect(gesture(db, 'PICK_3', { heardDigest: DIGEST, onsetAgeMs: 900 }).outcome).toBe('ignored:quiet_hold');
   expect(errandOf(db).windowSeq).toBe(e.windowSeq + 1);
 });
 
-test('PICK_2 cancels an errand, during the read-back or in the confirm window', () => {
+test('D29: 1 and 2 are ignored during the errand read-back and its confirm window; a jaw clench still sends it', () => {
   const db = newDb('direct');
-  errandAwaiting(db);
+  const e = errandAwaiting(db, (d) => {
+    for (const word of ['PICK_1', 'PICK_2'] as const) {
+      const g = gesture(d, word, { heardDigest: DIGEST });
+      expect([g.outcome, g.reason, g.errandId]).toEqual(['ignored:readback_jaw_only', 'readback_jaw_only', errandOf(d).id]);
+    }
+    expect(errandOf(d).status.tag).toBe('Previewed');
+  });
+  expect(e.status.tag).toBe('AwaitingConfirm');
   live(db, 1500);
-  expect(gesture(db, 'PICK_2').outcome).toBe('accepted:stop_errand');
-  expect([errandOf(db).status.tag, errandOf(db).reasonCode]).toEqual(['Stopped', 'no']);
+  // Stray fists in the confirm window, as on Oct 25 (two right fists about 5.7 s apart): the errand stays, unconfirmed.
+  expect(gesture(db, 'PICK_2').outcome).toBe('ignored:readback_jaw_only');
+  expect(gesture(db, 'PICK_1', { heardDigest: DIGEST }).outcome).toBe('ignored:readback_jaw_only');
+  expect(gesture(db, 'PICK_2').outcome).toBe('ignored:readback_jaw_only');
+  expect([errandOf(db).status.tag, errandOf(db).windowSeq, errandOf(db).confirmGestureId]).toEqual(['AwaitingConfirm', e.windowSeq, '']);
+  expect(gesture(db, 'PICK_3', { heardDigest: DIGEST, gestureId: 'pick-confirm-2' }).outcome).toBe('accepted:confirm');
+  expect([errandOf(db).status.tag, errandOf(db).confirmGestureId]).toEqual(['Confirmed', 'pick-confirm-2']);
+  // Confirmed and not yet claimed: 1 and 2 still do nothing; STOP is the only cancel.
   live(db, 1100);
-  expect(gesture(db, 'PICK_1', { heardDigest: DIGEST }).outcome).toBe('ignored:no_list');
+  expect(gesture(db, 'PICK_2').outcome).toBe('ignored:readback_jaw_only');
+  expect(errandOf(db).status.tag).toBe('Confirmed');
+});
+
+test('D29: no answer through the errand confirm window means not sent ("No answer. Nothing was sent.")', () => {
+  const db = newDb('direct');
+  const e = errandAwaiting(db);
+  const window = [...db.db.errandLease.errandId.filter(e.id)].find((t) => t.kind.tag === 'ConfirmWindow')!;
+  expect(micros(timerAt(window))).toBe(micros(e.confirmClosesAt!));
+  live(db, 1500);
+  expect(gesture(db, 'PICK_2').outcome).toBe('ignored:readback_jaw_only');
+  live(db, 8000);
+  expect(gesture(db, 'PICK_3', { heardDigest: DIGEST }).outcome).toBe('ignored:window_closed');
+  internal(db, (ctx) => m.errandTimeout(ctx, { job: window }));
+  const after = errandOf(db);
+  expect([after.status.tag, after.reasonCode, after.reason, after.confirmGestureId]).toEqual(['Stopped', 'window_closed', 'No answer. Nothing was sent.', '']);
+});
+
+test('D29: STOP during the errand read-back cancels it at once, and its read-back never opens a window', () => {
+  const db = newDb('direct');
+  const stopDuringReadback = () =>
+    errandAwaiting(db, (d) => {
+      expect(gesture(d, 'STOP').outcome).toBe('accepted:stop_errand');
+      expect([errandOf(d).status.tag, errandOf(d).reasonCode]).toEqual(['Stopped', 'stop']);
+    });
+  expect(failure(stopDuringReadback)).toBe('errand is not waiting for a read-back');
+  expect(errandOf(db).status.tag).toBe('Stopped');
 });
 
 test('STOP during the errand confirm cancels it', () => {
@@ -408,16 +452,25 @@ test('STOP during the errand confirm cancels it', () => {
   expect([errandOf(db).status.tag, errandOf(db).reasonCode]).toEqual(['Stopped', 'stop']);
 });
 
-test('a call pick reads back, PICK_1 confirms it, and PICK_2 would cancel it', () => {
+test('a call pick reads back, 1 and 2 are ignored in its read-back and confirm (D29), PICK_3 confirms, STOP cancels', () => {
   const db = newDb('direct');
   grantConsent(db, 'call', 'leon');
   listening(db, [callOption(db, 'call-a'), reply('Yes, agree'), reply('No need')]);
   live(db, 200);
   expect(gesture(db, 'PICK_1').outcome).toBe('accepted:pick_call');
+  live(db, 1100);
+  const during = gesture(db, 'PICK_2');
+  expect([during.outcome, during.callId]).toEqual(['ignored:readback_jaw_only', callOf(db).id]);
+  expect(gesture(db, 'PICK_1', { heardDigest: CALL_DIGEST }).outcome).toBe('ignored:readback_jaw_only');
+  expect(callOf(db).status.tag).toBe('Prepared');
+  expect(gesture(db, 'PICK_3', { heardDigest: CALL_DIGEST }).outcome).toBe('ignored:readback_not_done');
   const callId = callOf(db).id;
   as(db, STATION, (ctx) => m.reportReadbackDone(ctx, { kind: 'call', id: callId, digest: CALL_DIGEST }));
   live(db, 1500);
-  expect(gesture(db, 'PICK_1', { heardDigest: CALL_DIGEST }).outcome).toBe('accepted:confirm');
+  expect(gesture(db, 'PICK_2').outcome).toBe('ignored:readback_jaw_only');
+  expect(gesture(db, 'PICK_1', { heardDigest: CALL_DIGEST }).outcome).toBe('ignored:readback_jaw_only');
+  expect(callOf(db).status.tag).toBe('AwaitingConfirm');
+  expect(gesture(db, 'PICK_3', { heardDigest: CALL_DIGEST }).outcome).toBe('accepted:confirm');
   expect(callOf(db).status.tag).toBe('Confirmed');
 
   const db2 = newDb('direct');
@@ -426,13 +479,14 @@ test('a call pick reads back, PICK_1 confirms it, and PICK_2 would cancel it', (
   live(db2, 200);
   expect(gesture(db2, 'PICK_1').outcome).toBe('accepted:pick_call');
   live(db2, 1100);
-  expect(gesture(db2, 'PICK_2').outcome).toBe('accepted:stop_call');
-  expect([callOf(db2).status.tag, callOf(db2).reasonCode]).toEqual(['Stopped', 'no']);
+  expect(gesture(db2, 'PICK_2').outcome).toBe('ignored:readback_jaw_only');
+  expect(gesture(db2, 'STOP').outcome).toBe('accepted:stop_call');
+  expect([callOf(db2).status.tag, callOf(db2).reasonCode]).toEqual(['Stopped', 'stop']);
 });
 
 // ---------- Search: read-back and confirm, then categories, then a category's search ----------
 
-test('a Search pick creates a request with the fixed read-back and a digest; PICK_1 before the read-back is refused', () => {
+test('a Search pick creates a request with the fixed read-back and a digest; PICK_3 before the read-back is refused', () => {
   const db = newDb('direct');
   grantConsent(db, 'web_search');
   const q = listening(db, PLANS);
@@ -440,11 +494,11 @@ test('a Search pick creates a request with the fixed read-back and a digest; PIC
   expect(gesture(db, 'PICK_3').outcome).toBe('accepted:pick_search');
   expect(question(db, q.id).status.tag).toBe('Acting');
   const r = searchOf(db);
-  expect([r.status.tag, r.readBackText, r.questionId]).toEqual(['Prepared', 'Search the web for ideas? One: yes. Two: cancel.', q.id]);
+  expect([r.status.tag, r.readBackText, r.questionId]).toEqual(['Prepared', 'Search the web for ideas? Clench your jaw to search.', q.id]);
   expect(r.digest).toMatch(/^[0-9a-f]{16}$/);
   expect([...db.db.searchTimer.searchId.filter(r.id)].map((t) => t.kind.tag)).toEqual(['Readback']);
   live(db, 1100);
-  expect(gesture(db, 'PICK_1', { heardDigest: r.digest }).outcome).toBe('ignored:readback_not_done');
+  expect(gesture(db, 'PICK_3', { heardDigest: r.digest }).outcome).toBe('ignored:readback_not_done');
   // The station sees it on my_session.
   const mine = m.mySession(db.viewContext(auth(STATION)))!;
   expect([mine.search?.searchId, mine.search?.digest, mine.search?.status.tag]).toEqual([r.id, r.digest, 'Prepared']);
@@ -466,8 +520,8 @@ test('a confirmed search opens a categories turn; a category pick opens its sear
   const db = newDb('direct');
   const { q, r } = searchAwaiting(db);
   expect(r.status.tag).toBe('AwaitingConfirm');
-  expect(gesture(db, 'PICK_1', { heardDigest: 'ffffffffffffffff' }).outcome).toBe('ignored:digest_mismatch');
-  const g = gesture(db, 'PICK_1', { heardDigest: r.digest });
+  expect(gesture(db, 'PICK_3', { heardDigest: 'ffffffffffffffff' }).outcome).toBe('ignored:digest_mismatch');
+  const g = gesture(db, 'PICK_3', { heardDigest: r.digest });
   expect(g.outcome).toBe('accepted:confirm_search');
   const confirmed = searchOf(db);
   expect(confirmed.status.tag).toBe('Confirmed');
@@ -517,7 +571,7 @@ test('a confirmed search opens a categories turn; a category pick opens its sear
   expect([question(db, places.id).status.tag, question(db, places.id).replyText]).toEqual(['Released', "Let's go to the Palace of Fine Arts!"]);
 });
 
-test('PICK_1 inside the quiet hold restarts it for a search too', () => {
+test('PICK_3 inside the quiet hold restarts it for a search too', () => {
   const db = newDb('direct');
   grantConsent(db, 'web_search');
   listening(db, PLANS);
@@ -527,16 +581,40 @@ test('PICK_1 inside the quiet hold restarts it for a search too', () => {
   as(db, STATION, (ctx) => m.reportReadbackDone(ctx, { kind: 'search', id: r.id, digest: r.digest }));
   advance(db, 1100);
   beat(db);
-  expect(gesture(db, 'PICK_1', { heardDigest: r.digest, onsetAgeMs: 900 }).outcome).toBe('ignored:quiet_hold');
+  expect(gesture(db, 'PICK_3', { heardDigest: r.digest, onsetAgeMs: 900 }).outcome).toBe('ignored:quiet_hold');
   expect(searchOf(db).windowSeq).toBe(2);
 });
 
-test('PICK_2 cancels a search, STOP cancels a search, and PICK_3 is out of range during its confirm', () => {
+test('D29: 1 and 2 are ignored in a search read-back and confirm; PICK_3 during the read-back is refused, after it confirms', () => {
   const db = newDb('direct');
-  searchAwaiting(db);
-  expect(gesture(db, 'PICK_3').outcome).toBe('ignored:rank_out_of_range');
-  expect(gesture(db, 'PICK_2').outcome).toBe('accepted:stop_search');
-  expect([searchOf(db).status.tag, searchOf(db).reasonCode, searchOf(db).reason]).toEqual(['Stopped', 'no', 'Stopped. No search was started.']);
+  grantConsent(db, 'web_search');
+  listening(db, PLANS);
+  live(db, 200);
+  expect(gesture(db, 'PICK_3').outcome).toBe('accepted:pick_search');
+  live(db, 1100);
+  const during = gesture(db, 'PICK_2');
+  expect([during.outcome, during.questionId]).toEqual(['ignored:readback_jaw_only', searchOf(db).questionId]);
+  const r = searchOf(db);
+  expect(gesture(db, 'PICK_1', { heardDigest: r.digest }).outcome).toBe('ignored:readback_jaw_only');
+  expect(gesture(db, 'PICK_3', { heardDigest: r.digest }).outcome).toBe('ignored:readback_not_done');
+  expect(searchOf(db).status.tag).toBe('Prepared');
+  as(db, STATION, (ctx) => m.reportReadbackDone(ctx, { kind: 'search', id: r.id, digest: r.digest }));
+  live(db, 1500);
+  expect(gesture(db, 'PICK_1', { heardDigest: r.digest }).outcome).toBe('ignored:readback_jaw_only');
+  expect(gesture(db, 'PICK_2').outcome).toBe('ignored:readback_jaw_only');
+  expect(searchOf(db).status.tag).toBe('AwaitingConfirm');
+  expect(gesture(db, 'PICK_3', { heardDigest: r.digest }).outcome).toBe('accepted:confirm_search');
+  expect(searchOf(db).status.tag).toBe('Confirmed');
+});
+
+test('STOP cancels a search during its read-back or its confirm', () => {
+  const db = newDb('direct');
+  grantConsent(db, 'web_search');
+  listening(db, PLANS);
+  live(db, 200);
+  expect(gesture(db, 'PICK_3').outcome).toBe('accepted:pick_search');
+  expect(gesture(db, 'STOP').outcome).toBe('accepted:stop_search');
+  expect([searchOf(db).status.tag, searchOf(db).reasonCode, searchOf(db).reason]).toEqual(['Stopped', 'stop', 'Stopped. No search was started.']);
   expect([...db.db.searchTimer.searchId.filter(searchOf(db).id)]).toHaveLength(0);
 
   const db2 = newDb('direct');
@@ -564,9 +642,9 @@ test('a search times out: the read-back deadline or the confirm window stops it,
   const window = [...db2.db.searchTimer.searchId.filter(r2.id)].find((t) => t.kind.tag === 'ConfirmWindow')!;
   expect(micros(timerAt(window))).toBe(micros(r2.confirmClosesAt));
   live(db2, 8000);
-  expect(gesture(db2, 'PICK_1', { heardDigest: r2.digest }).outcome).toBe('ignored:window_closed');
+  expect(gesture(db2, 'PICK_3', { heardDigest: r2.digest }).outcome).toBe('ignored:window_closed');
   internal(db2, (ctx) => m.searchTimeout(ctx, { job: window }));
-  expect([searchOf(db2).status.tag, searchOf(db2).reasonCode]).toEqual(['Stopped', 'window_closed']);
+  expect([searchOf(db2).status.tag, searchOf(db2).reasonCode, searchOf(db2).reason]).toEqual(['Stopped', 'window_closed', 'No answer. No search was started.']);
 });
 
 test('a pause, a new question or a revoked consent voids a search waiting for its confirm', () => {
@@ -590,17 +668,17 @@ test('a pause, a new question or a revoked consent voids a search waiting for it
 test('a confirmed search is used once: a replayed confirm finds nothing to confirm', () => {
   const db = newDb('direct');
   const { r } = searchAwaiting(db);
-  expect(gesture(db, 'PICK_1', { heardDigest: r.digest, gestureId: 'search-ok' }).outcome).toBe('accepted:confirm_search');
-  gesture(db, 'PICK_1', { heardDigest: r.digest, gestureId: 'search-ok' }); // a retry of the same call: no-op
+  expect(gesture(db, 'PICK_3', { heardDigest: r.digest, gestureId: 'search-ok' }).outcome).toBe('accepted:confirm_search');
+  gesture(db, 'PICK_3', { heardDigest: r.digest, gestureId: 'search-ok' }); // a retry of the same call: no-op
   expect([...db.db.question.questionBySession.filter(scan(db).sessionId)].filter((q) => q.via === 'search')).toHaveLength(1);
   live(db, 1100);
-  expect(gesture(db, 'PICK_1', { heardDigest: r.digest }).outcome).toBe('ignored:no_list'); // the categories turn is preparing
+  expect(gesture(db, 'PICK_3', { heardDigest: r.digest }).outcome).toBe('ignored:no_list'); // the categories turn is preparing
 });
 
 test('a category pick needs web search consent and a categories turn', () => {
   const db = newDb('direct');
   const { r } = searchAwaiting(db);
-  gesture(db, 'PICK_1', { heardDigest: r.digest });
+  gesture(db, 'PICK_3', { heardDigest: r.digest });
   const cats = searchOf(db).followUpQuestionId;
   answer(db, cats, 'Categories', CATEGORIES);
   const consent = [...db.db.consent.consentByScope.filter({ tag: 'WebSearch' })][0]!;
@@ -642,7 +720,7 @@ test('only a categories turn may offer categories, a search turn answers with re
 test('a search turn may publish only replies', () => {
   const db = newDb('direct');
   const { r } = searchAwaiting(db);
-  gesture(db, 'PICK_1', { heardDigest: r.digest });
+  gesture(db, 'PICK_3', { heardDigest: r.digest });
   const cats = searchOf(db).followUpQuestionId;
   const catJob = claim(db, cats, 'Categories');
   expect(
@@ -662,7 +740,7 @@ test('a search turn may publish only replies', () => {
 test('an agent failure on a categories turn fails that question, like an options job', () => {
   const db = newDb('direct');
   const { r } = searchAwaiting(db);
-  gesture(db, 'PICK_1', { heardDigest: r.digest });
+  gesture(db, 'PICK_3', { heardDigest: r.digest });
   const cats = searchOf(db).followUpQuestionId;
   const j = claim(db, cats, 'Categories');
   as(db, AGENT, (ctx) => m.agentFail(ctx, { jobId: j.id, attempt: j.attempt, reasonCode: 'planner_timeout', reason: '' }));
@@ -692,7 +770,7 @@ test('the board shows short labels and kinds only while sharing is on, and lists
   live(db, 200);
   gesture(db, 'PICK_3');
   const board = m.boardSearches(anon());
-  expect(board.map((b) => [b.status.tag, b.questionId, b.readBackText])).toEqual([['Prepared', q.id, 'Search the web for ideas? One: yes. Two: cancel.']]);
+  expect(board.map((b) => [b.status.tag, b.questionId, b.readBackText])).toEqual([['Prepared', q.id, 'Search the web for ideas? Clench your jaw to search.']]);
 });
 
 test('ensure_timers re-arms a missing search timer, and purge_session deletes search requests', () => {
@@ -715,7 +793,7 @@ test('ensure_timers re-arms a missing search timer, and purge_session deletes se
 /** A confirmed search and a Category pick: the search turn is waiting for the agent to claim its Search job. */
 function categoryPicked(db: Test) {
   const { r } = searchAwaiting(db);
-  gesture(db, 'PICK_1', { heardDigest: r.digest });
+  gesture(db, 'PICK_3', { heardDigest: r.digest });
   const cats = searchOf(db).followUpQuestionId;
   answer(db, cats, 'Categories', CATEGORIES);
   live(db, 1100);
@@ -809,7 +887,7 @@ test('a Search job is never claimed or requeued while the session is paused', ()
 test('a Categories job whose lease lapses while paused is cancelled with its turn, not requeued', () => {
   const db = newDb('direct');
   const { r } = searchAwaiting(db);
-  gesture(db, 'PICK_1', { heardDigest: r.digest });
+  gesture(db, 'PICK_3', { heardDigest: r.digest });
   const cats = searchOf(db).followUpQuestionId;
   const job = claim(db, cats, 'Categories');
   settle(db);
@@ -825,7 +903,7 @@ test('a Categories job whose lease lapses while paused is cancelled with its tur
 test('a category pick needs good contact now: after the dead-man deadline it starts nothing', () => {
   const db = newDb('direct');
   const { r } = searchAwaiting(db);
-  gesture(db, 'PICK_1', { heardDigest: r.digest });
+  gesture(db, 'PICK_3', { heardDigest: r.digest });
   answer(db, searchOf(db).followUpQuestionId, 'Categories', CATEGORIES);
   advance(db, 1600); // past the 1500 ms lease, its timer not run
   expect(gesture(db, 'PICK_1').outcome).toBe('ignored:no_contact');
@@ -845,6 +923,6 @@ test("follow-up request ids never collide with a partner's request_id", () => {
   const r = searchOf(db);
   as(db, STATION, (ctx) => m.reportReadbackDone(ctx, { kind: 'search', id: r.id, digest: r.digest }));
   live(db, 1500);
-  expect(gesture(db, 'PICK_1', { heardDigest: r.digest }).outcome).toBe('accepted:confirm_search');
+  expect(gesture(db, 'PICK_3', { heardDigest: r.digest }).outcome).toBe('accepted:confirm_search');
   expect(question(db, searchOf(db).followUpQuestionId).requestId).toBe(`search.${r.id}`);
 });

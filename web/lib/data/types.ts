@@ -41,13 +41,13 @@ export type PipelineStatus = 'started' | 'ok' | 'error';
 
 /**
  * Direct select command names (D18, docs/direct-select.md). The person's gestures give four of them:
- * - PICK_1 (imagine squeezing the left fist): pick option 1. In a confirm, "One: send it". While paused, resume.
- * - PICK_2 (imagine squeezing the right fist): pick option 2. In a confirm, "Two: cancel".
- * - PICK_3 (single jaw clench): pick option 3.
+ * - PICK_1 (imagine squeezing the left fist): pick option 1. While paused, resume. Ignored in a read-back (D29).
+ * - PICK_2 (imagine squeezing the right fist): pick option 2. Ignored in a read-back (D29).
+ * - PICK_3 (single jaw clench): pick option 3. After a read-back, it sends it (D29).
  * - STOP (held jaw clench, about 1 second, PLAN D21): cancel, none of these, hang up, pause.
  * A double jaw clench means nothing (PLAN D21), so no gesture gives PICK_4; it stays a command because the module
  * takes up to 4 options and key 4 picks option 4 in a keyboard test.
- * Nothing leaves the room (a request, a call, a web search) without a read-back and a fresh PICK_1.
+ * Nothing leaves the room (a request, a call, a web search) without a read-back and a fresh PICK_3 (D29).
  * HEADSET_OFF is a system event, not a command: the headset lost contact. Like the 2-minute idle
  * auto-pause, it cancels anything pending. The scan words (YES, NO, CONFIRM; PLAN D11, D17, D21) are main's map for
  * the `say-when-demo` database; the station and the screens here speak direct select.
@@ -338,7 +338,7 @@ export type PipelineEventOf<S extends Stage> = Extract<PipelineEvent, { stage: S
 
 /**
  * PLAN.md Option row. Errands, calls and web searches are options too (D18): the person picks one by its number,
- * the read-back plays, and only a fresh PICK_1 ("One: send it") sends it.
+ * the read-back plays, and only a fresh PICK_3 (a jaw clench, "Clench your jaw to send it", D29) sends it.
  */
 export interface AnswerOption {
   id: string;

@@ -450,13 +450,13 @@ function line(text: string, hint: string | null = null, tone: StatusTone = 'plai
 }
 
 /**
- * The confirm hints (D18: the confirm is a fresh pick of 1, "One: send it"). Only a headset session names the imagined
- * left fist; a key or a switch press is named as itself, and an unknown input names no signal.
+ * The confirm hints (D29: the confirm is a single jaw clench after the read-back, "Clench your jaw to send it"). Only a
+ * headset session names the jaw clench; a key is named as itself, and an unknown input names no signal.
  */
 function confirmHints(input: InputKind, what: 'request' | 'call'): { waiting: string; confirmed: string } {
   const phrase = confirmPick(input);
   const nothing = what === 'call' ? 'No call is made' : 'Nothing is sent';
-  const waiting = input === 'headset' ? `${nothing} until they pick ${phrase} to send it.` : `${nothing} until they confirm.`;
+  const waiting = input === 'headset' ? `${nothing} until they confirm with ${phrase}.` : `${nothing} until they confirm.`;
   return { waiting, confirmed: input === 'unknown' ? 'They confirmed.' : `They confirmed with ${phrase}.` };
 }
 

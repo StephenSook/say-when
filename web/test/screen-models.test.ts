@@ -120,7 +120,7 @@ describe('screen models over the sample replay', () => {
     const waiting = conversationAt(at(29));
     assert.equal(waiting.agent?.kind, 'errand');
     assert.equal(waiting.agent?.status, 'waiting');
-    assert.equal(waiting.agent?.sentence, 'Waiting for 1 to send, 2 to cancel. Nothing is sent yet.');
+    assert.equal(waiting.agent?.sentence, 'Waiting for 3 to send. Nothing is sent yet.');
     assert.equal(conversationAt(at(61.5)).paused, 'paused');
     assert.equal(conversationAt(at(65)).paused, 'headset_off');
   });
@@ -130,7 +130,7 @@ describe('screen models over the sample replay', () => {
     assert.equal(errandHeadline(waiting, 'ok', 'headset').text, 'Waiting for the person to confirm. Nothing has been sent.');
     assert.equal(errandBadge(waiting, 'ok').status, 'waiting');
     assert.equal(errandHeadline(at(33).errands[0]!, 'ok', 'headset').status, 'done');
-    assert.equal(errandHeadline(at(33).errands[0]!, 'ok', 'headset').text, 'Sent after the person confirmed with 1 (an imagined left fist).');
+    assert.equal(errandHeadline(at(33).errands[0]!, 'ok', 'headset').text, 'Sent after the person confirmed with a jaw clench.');
     const hangingUp = at(58.8).calls[0]!;
     assert.equal(hangingUp.status, 'connected');
     assert.equal(hangingUp.cancelRequested, true);

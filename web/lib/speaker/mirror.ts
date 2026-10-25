@@ -1,7 +1,7 @@
 /**
  * Mirror the earpiece (Stephen, Sun Oct 25 2026: "make Cartesia output the voice every time when it's reading the
- * stuff back"). Judges in the room cannot hear the headset, so the room voice also says every read-back ("... One:
- * send it. Two: cancel."), as well as the picked reply it already says. Since Oct 25 (Stephen: "take off question
+ * stuff back"). Judges in the room cannot hear the headset, so the room voice also says every read-back ("...
+ * Clench your jaw to send it."), as well as the picked reply it already says. Since Oct 25 (Stephen: "take off question
  * repeating", "take off answer choices being repeated") it says neither the partner's question nor the numbered
  * options: lib/speaker/mirror-rows.ts offers read-backs only. Plain TypeScript outside React; the audio is the same
  * Cartesia voice as the reply.

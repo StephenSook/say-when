@@ -23,7 +23,7 @@ import type {
   InputKind,
   SafetyState,
 } from '@/lib/data/types';
-import { CONFIRM_SHORT, confirmPick, offWord, signalPhrase, withSignal } from '@/lib/commands';
+import { confirmPick, offWord, signalPhrase, withSignal } from '@/lib/commands';
 import { maskPhoneNumbers } from '@/lib/format';
 import { callStatusWord, statusFromCall, statusFromErrand, STATUS_WORDS, type RunStatus } from '@/lib/status';
 
@@ -41,7 +41,7 @@ export const AGENT_NAMES: Readonly<Record<AgentKind, string>> = {
 
 /** The empty state (docs/ui.md). It names the confirm in the session's input: a jaw clench only for the headset. */
 export function agentsEmptySentence(input: InputKind): string {
-  return `No errand or call yet. Errands and calls are offered as numbered options. Nothing is sent without a read-back and a fresh ${confirmPick(input)}: ${CONFIRM_SHORT}.`;
+  return `No errand or call yet. Errands and calls are offered as numbered options. Nothing is sent without a read-back and then ${confirmPick(input)}. No answer sends nothing.`;
 }
 
 /* ------------------------------------------------------------------------------------------------
@@ -273,7 +273,7 @@ export function errandMaybeSent(errand: Errand): boolean {
   return errand.status === 'failed' && errandStep(errand) === 6;
 }
 
-/** The phone call's five steps: script read back, the confirm (1 to send, 2 to cancel), ringing, connected, ended. */
+/** The phone call's five steps: script read back, the confirm (3, a jaw clench, to send; D29), ringing, connected, ended. */
 export interface CallPlan {
   script: RunStatus;
   confirm: RunStatus;
@@ -364,7 +364,7 @@ function commandStopSentence(command: CommandName, input: InputKind): string | n
 function reasonCodeSentence(code: string, input: InputKind): string | null {
   switch (code) {
     case 'window_closed':
-      return `The confirm window closed without ${confirmPick(input)}.`;
+      return 'No answer. Nothing was sent.';
     case 'readback_not_finished':
       return 'The read-back did not finish.';
     case 'no_consent':

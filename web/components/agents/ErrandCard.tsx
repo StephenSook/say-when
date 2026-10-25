@@ -8,7 +8,7 @@
  * 2 Form filled            the Actor filled the form in a browser; nothing is sent
  * 3 Values read back       the values the Actor read back off the page
  * 4 Read back              the read-back plays in the earpiece; its digest is in the tooltip only
- * 5 Confirm                the confirm window and its countdown: "1 to send, 2 to cancel"; only a fresh 1
+ * 5 Confirm                the confirm window and its countdown: "3 to send" (D29); only a fresh 3 (jaw)
  *                          sends it (the imagined left fist with the headset, key 1 or a short switch press)
  * 6 Sent                   with the form's confirmation text
  *
@@ -167,7 +167,7 @@ function confirmStep(
             {errand.confirmClosesAt !== null ? (
               <Countdown closesAt={errand.confirmClosesAt} opensAt={errand.confirmOpensAt ?? errand.readAloudAt} label="Time left to confirm" />
             ) : null}
-            <Note>Only {phrase} sends it. 2 cancels. If the time runs out, nothing is sent.</Note>
+            <Note>Only {phrase} sends it. STOP cancels. No answer: nothing is sent.</Note>
           </>
         ),
       };
