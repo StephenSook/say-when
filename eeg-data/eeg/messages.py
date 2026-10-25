@@ -43,8 +43,8 @@ def from_jaw(ev: dict, jaw_only: bool = False, now: float = None):
 class Output:
     """Writes messages as JSON lines to stdout and, optionally, appends them to a file."""
 
-    def __init__(self, jsonl_path: str = None, stream=sys.stdout):
-        self.stream = stream
+    def __init__(self, jsonl_path: str = None, stream=sys.stdout, server=None):
+        self.stream, self.server = stream, server
         self.file = open(jsonl_path, "a", encoding="utf-8") if jsonl_path else None
 
     def send(self, msg: dict):
@@ -54,3 +54,10 @@ class Output:
         if self.file:
             self.file.write(line + "\n")
             self.file.flush()
+        if self.server:
+            self.server.send(msg)
+
+    def live(self, frame: dict):
+        """A live signal frame: only to the web page, never to stdout or the log."""
+        if self.server and frame:
+            self.server.send(frame)

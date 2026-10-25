@@ -9,12 +9,12 @@ import { describe, test } from 'node:test';
 import { isPhoneRoute, isRolePageRoute } from '../lib/routes';
 
 describe('route rule', () => {
-  test('the station and the speaker are role pages', () => {
-    for (const path of ['/station', '/speaker', '/station/', '/speaker/x']) assert.equal(isRolePageRoute(path), true, path);
+  test('the station, the speaker and the headset page are role pages', () => {
+    for (const path of ['/station', '/speaker', '/station/', '/speaker/x', '/eeg']) assert.equal(isRolePageRoute(path), true, path);
   });
 
   test('dashboards and the phone are not role pages', () => {
-    for (const path of ['/', '/live', '/agents', '/conversation', '/partner', '/stations', '/speakers', '/judge', null, '']) {
+    for (const path of ['/', '/live', '/agents', '/conversation', '/partner', '/stations', '/speakers', '/judge', '/eegs', null, '']) {
       assert.equal(isRolePageRoute(path), false, String(path));
     }
   });

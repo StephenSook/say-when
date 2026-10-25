@@ -17,7 +17,7 @@ import time
 import numpy as np
 from PyQt5 import QtCore, QtWidgets
 
-from eeg import config, store
+from eeg import config, messages, store
 from eeg.brainmap import BANDS, BrainState, HeadMap, Legend
 from eeg.engine import Engine, Update
 from eeg.hands import HandConfig
@@ -38,6 +38,10 @@ class DemoEngine:
     def start(self):
         time.sleep(0.5)
         self.t0 = time.time()
+        self._sent_phase = None
+
+    def healthy(self):
+        return True
 
     def poll(self):
         time.sleep(self.step)
@@ -56,7 +60,16 @@ class DemoEngine:
         p = np.clip(np.array(target[phase]) + self.rng.normal(0, 0.05, 3), 0.01, None)
         p /= p.sum()
         self.total_samples += int(self.step * self.fs)
-        return Update(t=time.time(), proba=dict(zip(self.classes, p)), smoothed=dict(zip(self.classes, p)),
+        commands = []
+        n_phase = int(el // 5)
+        if phase in ("left", "right") and el % 5 >= 1.5 and self._sent_phase != n_phase:
+            self._sent_phase = n_phase  # one fake command per imagery phase, like the real decoder
+            commands.append(messages.gesture("YES" if phase == "right" else "NO", time.time() - 1.0, 0.8,
+                                             "imagery"))
+        if phase == "clench" and el % 5 >= 1.0 and self._sent_phase != n_phase:
+            self._sent_phase = n_phase
+            commands.append(messages.gesture("CONFIRM", time.time() - 0.5, 0.9, "jaw"))
+        return Update(commands=commands, t=time.time(), proba=dict(zip(self.classes, p)), smoothed=dict(zip(self.classes, p)),
                       status=phase.upper(), jaw_level=jaw * (1 + 0.1 * math.sin(el)), window=window,
                       samples=self.total_samples)
 

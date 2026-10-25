@@ -20,7 +20,7 @@ import wave
 from typing import Dict, List, Optional
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-BRIDGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "moss_bridge.mjs")
+BRIDGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "repo_bridge.mjs")
 
 # Cartesia voice configuration (API version, model and voice as in cartesia/src; speed and format chosen for this test)
 CARTESIA_API = "https://api.cartesia.ai"
@@ -74,16 +74,17 @@ class LocalRanker:
         pass
 
 
-class MossRanker:
-    """The repo's Moss package through moss_bridge.mjs. Indexes locally; billing counts session minutes."""
-    name = "Moss"
+class RepoBridge:
+    """The repo's own TypeScript packages (moss/, apify/client/) through repo_bridge.mjs, one JSON line per call."""
+    name = "repo bridge"
 
     def __init__(self):
         env = dict(os.environ)
         env.setdefault("MOSS_SNAPSHOT_DIR", os.path.join(REPO, "moss", ".memory"))
         env.setdefault("MOSS_IDLE_CLOSE_MS", "300000")
         self.proc = subprocess.Popen(["node", BRIDGE], cwd=os.path.dirname(BRIDGE), env=env, text=True,
-                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                                     encoding="utf-8", stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                     stderr=subprocess.DEVNULL)
         self.last_ms = None
 
     def _call(self, op: str, **kw) -> dict:
@@ -101,14 +102,6 @@ class MossRanker:
     def start(self):
         self._call("start")
 
-    def index(self, question_id: str, restaurants: List[dict]):
-        self._call("index", questionId=question_id, rows=restaurant_rows(restaurants))
-
-    def search(self, question_id: str, query: str) -> List[str]:
-        msg = self._call("search", questionId=question_id, query=query, topK=50)
-        self.last_ms = msg.get("mossMs")
-        return [h["id"] for h in msg["order"]]
-
     def close(self):
         try:
             if self.proc.poll() is None:
@@ -118,6 +111,19 @@ class MossRanker:
         finally:
             if self.proc.poll() is None:
                 self.proc.terminate()
+
+
+class MossRanker(RepoBridge):
+    """Moss ranking of the mock restaurants. Indexes locally; Moss bills open session minutes."""
+    name = "Moss"
+
+    def index(self, question_id: str, restaurants: List[dict]):
+        self._call("index", questionId=question_id, rows=restaurant_rows(restaurants))
+
+    def search(self, question_id: str, query: str) -> List[str]:
+        msg = self._call("search", questionId=question_id, query=query, topK=50)
+        self.last_ms = msg.get("mossMs")
+        return [h["id"] for h in msg["order"]]
 
 
 def make_ranker(use_moss: bool = True):
