@@ -5,7 +5,7 @@
  * steps on the left and the transcript on the right.
  *
  * 1 Prepared and read back the call script plays in the earpiece; its digest is in the tooltip only
- * 2 CONFIRM                the confirm window; only CONFIRM places the call (a single jaw clench with the headset)
+ * 2 Confirm                the confirm window, "1 to send, 2 to cancel"; only a fresh 1 places the call
  * 3 Ringing                Dialing, then Ringing with a ring timer (our own events: Cartesia has no ringing)
  * 4 Connected              the live duration; STOP hangs up (a held jaw clench with the headset)
  * 5 Ended                  with the reason in plain words
@@ -14,7 +14,7 @@
  */
 import type { ReactNode } from 'react';
 import { StepList, type Step } from '@/components/ui/StepList';
-import { signalPhrase, withSignal } from '@/lib/commands';
+import { CONFIRM_SHORT, confirmPick, withSignal } from '@/lib/commands';
 import type { CallRequest, CommandEvent, InputKind } from '@/lib/data/types';
 import { formatClock, formatClockDuration } from '@/lib/format';
 import { callStatusWord, type RunStatus } from '@/lib/status';
@@ -120,13 +120,13 @@ function confirmStep(
   input: InputKind,
 ): Step {
   const step = { key: 'confirm', status };
-  const phrase = signalPhrase('CONFIRM', input);
+  const phrase = confirmPick(input);
   switch (status) {
     case 'waiting': {
       const paused = pauseWords(safety, input);
       return {
         ...step,
-        label: numbered(2, `Waiting for ${withSignal('CONFIRM', input)}`),
+        label: numbered(2, `Waiting for ${CONFIRM_SHORT}`),
         detail: paused ? (
           <Note>{paused} This call stops here and will not be placed.</Note>
         ) : (
@@ -134,7 +134,7 @@ function confirmStep(
             {call.confirmClosesAt !== null ? (
               <Countdown closesAt={call.confirmClosesAt} opensAt={call.confirmOpensAt ?? call.readAloudAt} label="Time left to confirm the call" />
             ) : null}
-            <Note>Only {phrase ?? 'CONFIRM'} places the call. If the time runs out, nobody is called.</Note>
+            <Note>Only {phrase} places the call. 2 cancels. If the time runs out, nobody is called.</Note>
           </>
         ),
       };
@@ -149,7 +149,7 @@ function confirmStep(
     case 'failed':
       return { ...step, label: numbered(2, 'Not confirmed'), time: ended, detail: <Note>Not called: {rowReason(call, input)}</Note> };
     default:
-      return { ...step, label: numbered(2, phrase ? `Confirm with ${phrase}` : 'CONFIRM') };
+      return { ...step, label: numbered(2, `Confirm with ${phrase}`) };
   }
 }
 

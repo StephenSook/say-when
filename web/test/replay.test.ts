@@ -5,13 +5,11 @@ import {
   buildLoop,
   CONFIRM_WINDOW_MS,
   createReplaySource,
-  FIRST_WINDOW_MS,
   HISTORY_LOOPS,
   LOOP_MS,
   nextChangeAt,
+  PICK_WAIT_MS,
   replayRowsAt,
-  VETO_MS,
-  WINDOW_MS,
 } from '../lib/data/replay';
 import { COMMANDS, STAGES, type CallStatus, type CommandName, type DataRows, type ErrandStatus, type ScanPhase } from '../lib/data/types';
 
@@ -41,7 +39,7 @@ function sequence<T>(samples: readonly DataRows[], read: (rows: DataRows) => T |
 
 const optionId = (version: number, rank: number) => `opt-0-v${version}-${rank}`;
 
-describe('replay script (D11 commands)', () => {
+describe('replay script (direct select, D18)', () => {
   const loopEnd = replayRowsAt(START, START + LOOP_MS - 1);
   const events = eventsForQuestion(loopEnd.pipelineEvents, 'q-0');
   const commands = loopEnd.commands.filter((c) => c.questionId === 'q-0');
@@ -87,105 +85,99 @@ describe('replay script (D11 commands)', () => {
     assert.equal(new Set(tones).size, 4, 'four different tones');
   });
 
-  test('the scan clock passes through every phase', () => {
+  test('the scan clock passes through every direct select phase (no veto, D18)', () => {
     const phases = new Set<ScanPhase>(samples.map((rows) => rows.scan?.phase).filter((p): p is ScanPhase => p !== undefined));
-    for (const phase of ['idle', 'preparing', 'reading', 'window', 'veto', 'paused'] as ScanPhase[]) assert.ok(phases.has(phase), phase);
+    for (const phase of ['idle', 'preparing', 'reading', 'window', 'paused'] as ScanPhase[]) assert.ok(phases.has(phase), phase);
+    assert.ok(!phases.has('veto'), 'a reply pick is said at once: no veto in direct select');
     for (const rows of samples) {
       const scan = rows.scan;
       if (!scan) continue;
       assert.equal(scan.mode, 'answer');
       assert.equal(scan.answerMode, 'pick');
       assert.ok(scan.stepEndsAt >= scan.stepStartedAt, 'a phase ends after it starts');
-      if (scan.phase === 'reading' || scan.phase === 'window') assert.ok(scan.cursor !== null, 'reading and window are on an option');
+      if (scan.phase === 'reading') assert.ok(scan.cursor !== null, 'a read is on an option');
     }
   });
 
-  test('each response window is 3.5 s, and the first option of each scan waits 4 s', () => {
-    const spans = new Set<number>();
-    for (const rows of samples) {
-      const scan = rows.scan;
-      if (!scan || scan.phase !== 'window' || scan.outcome !== null) continue;
-      const span = scan.stepEndsAt - scan.stepStartedAt;
-      assert.equal(span, scan.cursor === 1 ? FIRST_WINDOW_MS : WINDOW_MS, `v${scan.version} option ${scan.cursor}`);
-      spans.add(span);
+  test('the earpiece reads the list once, numbered, back to back, then waits up to 2 minutes for a pick', () => {
+    const reads = events.filter((e) => e.stage === 'speak' && e.status === 'started' && e.detail.channel === 'earpiece' && e.at < START + 11_000);
+    assert.deepEqual(
+      reads.map((e) => (e.stage === 'speak' ? e.detail.text : null)),
+      ['One: Cafeteria.', 'Two: Thai place.', 'Three: Cafe on Bay.', 'Four: Too tired.'],
+    );
+    const v1 = samples.map((rows) => rows.scan).filter((scan) => scan?.version === 1);
+    const readings = v1.filter((scan) => scan?.phase === 'reading');
+    for (let rank = 2; rank <= 4; rank++) {
+      const before = readings.find((scan) => scan?.cursor === rank - 1)!;
+      const next = readings.find((scan) => scan?.cursor === rank)!;
+      assert.equal(next.stepStartedAt, before.stepEndsAt, `option ${rank} starts as soon as option ${rank - 1} ends: no window between`);
     }
-    assert.equal(WINDOW_MS, 3_500);
-    assert.equal(FIRST_WINDOW_MS, 4_000);
-    assert.deepEqual([...spans].sort(), [3_500, 4_000]);
+    const wait = v1.find((scan) => scan?.phase === 'window')!;
+    assert.equal(wait.stepStartedAt, readings.find((scan) => scan?.cursor === 4)!.stepEndsAt);
+    assert.equal(wait.stepEndsAt - wait.stepStartedAt, PICK_WAIT_MS);
+    assert.equal(PICK_WAIT_MS, 120_000);
+    assert.equal(wait.pass, 1);
+    assert.equal(wait.maxPasses, 1, 'read once');
   });
 
-  test('silence moves on: nothing is sent for option 1, and option 2 starts when its window closes', () => {
-    assert.ok(!commands.some((c) => c.optionId === optionId(1, 1)), 'no command on option 1');
-    let windowOneEnds: number | null = null;
-    let readingTwoStarts: number | null = null;
-    for (const rows of samples) {
-      const scan = rows.scan;
-      if (!scan || scan.version !== 1) continue;
-      if (scan.cursor === 1 && scan.phase === 'window') windowOneEnds = scan.stepEndsAt;
-      if (scan.cursor === 2 && scan.phase === 'reading' && readingTwoStarts === null) readingTwoStarts = scan.stepStartedAt;
-    }
-    assert.ok(windowOneEnds !== null && readingTwoStarts !== null);
-    assert.equal(readingTwoStarts, windowOneEnds);
+  test('silence picks nothing: no command lands while the list is read', () => {
+    const listEnds = samples.map((rows) => rows.scan).find((scan) => scan?.version === 1 && scan.phase === 'window')!.stepStartedAt;
+    assert.ok(!commands.some((c) => c.at < listEnds), 'nothing is picked while the options are read');
   });
 
-  test('NO skips option 2 inside its window, and the cursor moves on before that window would have closed', () => {
-    const no = commands.find((c) => c.command === 'NO')!;
-    assert.equal(no.optionId, optionId(1, 2));
-    const windowTwo = samples.map((rows) => rows.scan).find((scan) => scan?.version === 1 && scan.cursor === 2 && scan.phase === 'window');
-    assert.ok(windowTwo);
-    assert.ok(no.at > windowTwo.stepStartedAt && no.at < windowTwo.stepEndsAt);
-    const readingThree = samples.map((rows) => rows.scan).find((scan) => scan?.version === 1 && scan.cursor === 3);
-    assert.ok(readingThree && readingThree.stepStartedAt > no.at && readingThree.stepStartedAt < windowTwo.stepEndsAt);
-  });
+  test('PICK_3, a single jaw clench, picks option 3 during the wait; it is said out loud at once', () => {
+    const pick = commands.find((c) => c.command === 'PICK_3' && c.accepted)!;
+    assert.equal(pick.optionId, optionId(1, 3));
+    const before = replayRowsAt(START, pick.at - 1);
+    assert.equal(before.scan?.phase, 'window', 'picked from the wait after the list');
+    const at = replayRowsAt(START, pick.at);
+    assert.equal(at.scan?.phase, 'idle');
+    assert.equal(at.scan?.outcome, 'picked');
+    assert.equal(at.scan?.pickedOptionId, optionId(1, 3));
+    assert.equal(optionUnderCursor(at.scan, at.options), null, 'nothing else plays');
 
-  test('YES picks option 3, a 0.7 s veto follows, then the reply is released and said out loud', () => {
-    const yes = commands.find((c) => c.command === 'YES' && c.accepted)!;
-    assert.equal(yes.optionId, optionId(1, 3));
-    const veto = replayRowsAt(START, yes.at);
-    assert.equal(veto.scan?.phase, 'veto');
-    assert.equal(veto.scan?.pickedOptionId, optionId(1, 3));
-    assert.equal(veto.scan?.outcome, null, 'not final during the veto');
-    assert.equal(veto.scan && veto.scan.stepEndsAt - veto.scan.stepStartedAt, VETO_MS);
-    assert.equal(optionUnderCursor(veto.scan, veto.options), null, 'nothing new plays during the veto');
-    assert.equal(spokenReply(veto.questions[0] ?? null), null, 'nothing is said during the veto');
-
-    const released = replayRowsAt(START, yes.at + VETO_MS);
-    assert.equal(released.scan?.phase, 'idle');
-    assert.equal(released.scan?.outcome, 'picked');
+    const released = replayRowsAt(START, pick.at + 50);
     const option = loopEnd.options.find((o) => o.id === optionId(1, 3));
+    assert.equal(option?.label, 'Cafe on Bay');
     assert.deepEqual(spokenReply(released.questions[0] ?? null), { text: option?.text, spokenAt: null });
 
     const spoken = spokenReply(loopEnd.questions[0] ?? null);
-    assert.equal(spoken?.text, option?.text);
+    assert.equal(spoken?.text, option?.text, 'the room hears the full text, not the label');
     const aloud = events.filter((e) => e.stage === 'speak' && e.detail.channel === 'aloud');
     assert.deepEqual(
       aloud.map((e) => e.status),
       ['started', 'ok'],
     );
-    assert.ok(aloud[0]!.at > yes.at + VETO_MS - 1, 'said out loud only after the veto');
+    assert.ok(aloud[0]!.at - pick.at <= 200, 'said out loud right after the pick');
     assert.equal(spoken?.spokenAt, aloud[1]!.at);
   });
 
-  test('the story runs in D11 order, and the tail pauses and resumes', () => {
+  test('the story runs in direct select order, and the tail pauses and resumes', () => {
     const accepted = commands.filter((c) => c.accepted).map((c) => c.command);
-    assert.deepEqual(accepted, ['NO', 'YES', 'YES', 'CONFIRM', 'YES', 'CONFIRM', 'STOP', 'STOP', 'YES', 'HEADSET_OFF', 'YES']);
+    assert.deepEqual(accepted, ['PICK_3', 'PICK_1', 'PICK_1', 'PICK_1', 'PICK_1', 'STOP', 'STOP', 'PICK_1', 'HEADSET_OFF', 'PICK_1']);
   });
 
-  test('every D11 command appears, and no retired command name appears anywhere', () => {
+  test('only direct select command names appear: no scan word and no retired name anywhere', () => {
     const names = new Set<CommandName>(commands.map((c) => c.command));
-    for (const name of COMMANDS) assert.ok(names.has(name), name);
-    assert.equal(names.size, COMMANDS.length);
-    assert.doesNotMatch(JSON.stringify(loopEnd), /"(SELECT|ERRAND|CALL|PAUSE)"/);
+    for (const name of names) assert.ok(COMMANDS.includes(name), name);
+    for (const name of ['PICK_1', 'PICK_3', 'STOP', 'HEADSET_OFF'] as const) assert.ok(names.has(name), name);
+    // A headset sample: no gesture gives 4 (a double jaw clench means nothing, PLAN D21), so no PICK_4 appears.
+    assert.equal(names.has('PICK_4'), false);
+    assert.doesNotMatch(JSON.stringify(loopEnd), /"(SELECT|ERRAND|CALL|PAUSE|YES|NO|CONFIRM)"/);
   });
 
-  test('one YES repeat inside the refractory time is ignored', () => {
+  test('a repeat inside the refractory time and a number with no option are ignored', () => {
     const ignored = commands.filter((c) => !c.accepted);
-    assert.equal(ignored.length, 1);
-    assert.equal(ignored[0]?.command, 'YES');
-    assert.equal(ignored[0]?.ignoredReason, 'Repeat inside the refractory time');
+    assert.deepEqual(
+      ignored.map((c) => [c.command, c.ignoredReason]),
+      [
+        ['PICK_3', 'Repeat inside the refractory time'],
+        ['PICK_3', 'There is no option with that number'],
+      ],
+    );
   });
 
-  test('errands and calls are follow-up options, each picked with YES', () => {
+  test('errands and calls are follow-up options, each picked by its number', () => {
     const kinds = (version: number) =>
       loopEnd.options
         .filter((o) => o.questionId === 'q-0' && o.version === version)
@@ -197,24 +189,25 @@ describe('replay script (D11 commands)', () => {
       latestOptions(loopEnd.options, 'q-0').map((o) => o.version),
       [3, 3],
     );
-    const picks = commands.filter((c) => c.command === 'YES' && c.accepted && c.optionId !== null).map((c) => c.optionId);
+    const picks = commands.filter((c) => c.command.startsWith('PICK_') && c.accepted && c.optionId !== null).map((c) => c.optionId);
     assert.deepEqual(picks, [optionId(1, 3), optionId(2, 1), optionId(3, 1)]);
     assert.equal(loopEnd.errands[0]?.optionId, optionId(2, 1));
     assert.equal(loopEnd.calls[0]?.optionId, optionId(3, 1));
     for (const pick of [optionId(2, 1), optionId(3, 1)]) {
-      const yes = commands.find((c) => c.optionId === pick && c.command === 'YES')!;
-      assert.equal(replayRowsAt(START, yes.at).scan?.phase, 'idle', 'no veto for an errand or call: its own CONFIRM guards it');
+      const one = commands.find((c) => c.optionId === pick && c.command === 'PICK_1')!;
+      assert.equal(replayRowsAt(START, one.at).scan?.phase, 'idle', 'an errand or call is guarded by its own read-back and confirm');
     }
+    for (const option of loopEnd.options) assert.ok((option.label ?? '').split(/\s+/).length <= 3, `${option.id}: a 1 to 3 word label`);
   });
 
-  test('the errand waits for CONFIRM after its read-back, then is sent with the confirmation text', () => {
+  test('the errand waits for a fresh PICK_1 after its read-back, then is sent with the confirmation text', () => {
     const statuses = sequence<ErrandStatus>(samples, (rows) => rows.errands.find((e) => e.id === 'err-0')?.status);
     assert.deepEqual(statuses, ['preparing', 'previewed', 'reading_back', 'awaiting_confirm', 'confirmed', 'submitting', 'sent']);
     for (const rows of samples) {
       const errand = rows.errands.find((e) => e.id === 'err-0');
       if (errand?.status !== 'awaiting_confirm') continue;
       assert.ok(errand.previewDigest && /^[0-9a-f]{16}$/.test(errand.previewDigest), 'a 16 hex digest');
-      assert.ok(errand.readBackText, 'read back before the confirm');
+      assert.ok(errand.readBackText?.endsWith('One: send it. Two: cancel.'), 'read back, ending with the two-option confirm');
       assert.ok(errand.screenshotUrl?.startsWith('data:image/svg+xml'), 'a preview picture');
       assert.equal(errand.confirmClosesAt, (errand.readAloudAt ?? 0) + CONFIRM_WINDOW_MS);
       assert.equal(errand.sentAt, null, 'nothing sent while waiting');
@@ -222,19 +215,19 @@ describe('replay script (D11 commands)', () => {
     const sent = loopEnd.errands.find((e) => e.id === 'err-0');
     assert.equal(sent?.confirmationText, 'Your response has been recorded.');
     const confirm = commands.find((c) => c.id === sent?.confirmCommandId);
-    assert.equal(confirm?.command, 'CONFIRM');
-    assert.ok((confirm?.at ?? 0) > (sent?.readAloudAt ?? Infinity), 'CONFIRM comes after the read-back');
+    assert.equal(confirm?.command, 'PICK_1', 'One: send it');
+    assert.ok((confirm?.at ?? 0) > (sent?.readAloudAt ?? Infinity), 'the confirm comes after the read-back');
     assert.ok((sent?.confirmedAt ?? Infinity) <= (sent?.confirmClosesAt ?? 0), 'confirmed inside the window');
     assert.equal(sent?.stopCommandId, null);
   });
 
-  test('the call reads back, waits for CONFIRM, rings, connects, shows a transcript, and STOP hangs it up', () => {
+  test('the call reads back, waits for a fresh PICK_1, rings, connects, shows a transcript, and STOP hangs it up', () => {
     const statuses = sequence<CallStatus>(samples, (rows) => rows.calls.find((c) => c.id === 'call-0')?.status);
     assert.deepEqual(statuses, ['prepared', 'awaiting_confirm', 'confirmed', 'dialing', 'ringing', 'connected', 'ended']);
     const call = loopEnd.calls.find((c) => c.id === 'call-0')!;
-    assert.equal(commands.find((c) => c.id === call.confirmCommandId)?.command, 'CONFIRM');
+    assert.equal(commands.find((c) => c.id === call.confirmCommandId)?.command, 'PICK_1');
     assert.equal(commands.find((c) => c.id === call.stopCommandId)?.command, 'STOP');
-    assert.ok((call.dialedAt ?? 0) > (call.confirmedAt ?? Infinity), 'dialed only after CONFIRM');
+    assert.ok((call.dialedAt ?? 0) > (call.confirmedAt ?? Infinity), 'dialed only after the confirm');
     assert.ok((call.confirmedAt ?? Infinity) <= (call.confirmClosesAt ?? 0), 'confirmed inside the window');
     assert.equal(call.result, 'cancelled');
     assert.equal(call.endReason, 'The person hung up with STOP.');
@@ -272,7 +265,7 @@ describe('replay script (D11 commands)', () => {
     for (const call of loopEnd.calls) assert.doesNotMatch(call.contactName, /\d/, 'a name, not a number');
   });
 
-  test('STOP during the call does not pause; STOP while idle pauses; headset off shows; YES resumes each time', () => {
+  test('STOP during the call does not pause; STOP while idle pauses; headset off shows; PICK_1 resumes each time', () => {
     assert.deepEqual(
       sequence(samples, (rows) => rows.safety.state),
       ['ok', 'paused', 'ok', 'headset_off', 'ok'],

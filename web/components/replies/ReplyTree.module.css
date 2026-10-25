@@ -211,6 +211,30 @@
   flex: 1 1 auto;
 }
 
+/* The pick number, "1" to "4" (D18): the same number the earpiece says and the gesture legend uses. */
+.pickBadge {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  min-width: 40px;
+  height: 40px;
+  padding: 0 8px;
+  border: 2px solid var(--line);
+  border-radius: 999px;
+  color: var(--fg);
+  font-size: 24px;
+  font-weight: var(--weight-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.option_picked .pickBadge {
+  border-color: var(--pick);
+}
+
+.option_reading .pickBadge {
+  border-color: var(--accent);
+}
+
 .title {
   font-size: 29px;
   font-weight: var(--weight-strong);

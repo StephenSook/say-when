@@ -65,6 +65,7 @@ import RequestPairingReducer from "./request_pairing_reducer";
 import RevokeConsentReducer from "./revoke_consent_reducer";
 import RevokeDeviceReducer from "./revoke_device_reducer";
 import SetBoardSharingReducer from "./set_board_sharing_reducer";
+import SetInputModeReducer from "./set_input_mode_reducer";
 import SetSandboxReducer from "./set_sandbox_reducer";
 import SetTimingReducer from "./set_timing_reducer";
 import StartSessionReducer from "./start_session_reducer";
@@ -81,6 +82,7 @@ import BoardErrandsRow from "./board_errands_table";
 import BoardEventsRow from "./board_events_table";
 import BoardLedgerRow from "./board_ledger_table";
 import BoardPayloadsRow from "./board_payloads_table";
+import BoardSearchesRow from "./board_searches_table";
 import BoardSessionLedgerRow from "./board_session_ledger_table";
 import BoardWordTimingsRow from "./board_word_timings_table";
 import CallQueueRow from "./call_queue_table";
@@ -219,6 +221,13 @@ const tablesSchema = __schema({
     constraints: [
     ],
   }, BoardPayloadsRow),
+  boardSearches: __table({
+    name: 'board_searches',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, BoardSearchesRow),
   boardSessionLedger: __table({
     name: 'board_session_ledger',
     indexes: [
@@ -310,6 +319,7 @@ const reducersSchema = __reducers(
   __reducerSchema("revoke_consent", RevokeConsentReducer),
   __reducerSchema("revoke_device", RevokeDeviceReducer),
   __reducerSchema("set_board_sharing", SetBoardSharingReducer),
+  __reducerSchema("set_input_mode", SetInputModeReducer),
   __reducerSchema("set_sandbox", SetSandboxReducer),
   __reducerSchema("set_timing", SetTimingReducer),
   __reducerSchema("start_session", StartSessionReducer),

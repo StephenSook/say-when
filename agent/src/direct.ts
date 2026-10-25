@@ -1,0 +1,464 @@
+// Direct select (docs/direct-select.md, PLAN D18): four gestures pick four options, so the person hears the whole
+// list once, numbered, and picks any of them. A web search runs only when they ask for it. Three jobs:
+// - Options: memory first, then Claude's options, each with a short earpiece label. A question that could use outside
+//   facts gets a Search option third (yes-style, no-style, Search the web, something else); small talk never does.
+//   Nothing is searched here.
+// - Categories (after a Search pick and its confirm): up to four categories tailored to the question, with no web
+//   call, and the search words each one stands for (kept in CategoryBook).
+// - Category search (after a Category pick): the Google Maps search near AGENT_PLACES_NEAR for a place question, the
+//   RAG web search otherwise, indexed the usual way (pipeline rows, the question's Moss web index), then up to four
+//   places or facts as replies with their sources.
+// The person always picks; a reply is said aloud at once, and an errand, a call or a search start waits for a read-back
+// and a fresh confirm in the module.
+
+import type { QuestionClass } from '@say-when/apify-client';
+
+import { LIMITS } from './contract.js';
+import { withDeadline } from './deadline.js';
+import { classifyYesNo, stockYesNo } from './fastpath.js';
+import {
+    ConsentWithdrawnError,
+    consentNow,
+    JobInputError,
+    memoryConsent,
+    planOptions,
+    publish,
+    recentErrand,
+    type JobDeps,
+    type PlanContext,
+} from './jobs.js';
+import { acceptedSource } from './options.js';
+import { JobEvents } from './pipeline.js';
+import { PlannerError, type PlanInput, type WebContext } from './planner/types.js';
+import { JobAbortedError, memoryContext, mossDeadline, recallMemory, retrieveStep, searchStep } from './retrieval.js';
+import type { AgentQueueRow, AnswerMode, OptionInput, Tone } from './types.js';
+
+const clean = (text: string): string => text.replace(/\s+/g, ' ').trim();
+const norm = (text: string): string => clean(text).toLowerCase().replace(/[^\p{L}\p{N} ]+/gu, '').trim();
+
+/**
+ * A job the person cannot be helped with right now, with the sentence they hear (agent_fail). For example a category
+ * search after web search consent was withdrawn.
+ */
+export class DirectRefusal extends Error {
+    constructor(
+        readonly code: string,
+        readonly sentence: string,
+    ) {
+        super(`direct select: ${code}`);
+        this.name = 'DirectRefusal';
+    }
+}
+
+export const WEB_OFF = 'Web search is turned off, so I did not search.';
+export const SEARCH_OFF = 'Web search is not set up, so I did not search.';
+
+/** The Search option the sidecar adds when the planner left it out (its words are fixed, never a fact). */
+export const STOCK_SEARCH: Readonly<OptionInput> = {
+    kind: 'search',
+    label: 'Search the web',
+    text: 'Search the web for ideas.',
+    tone: '',
+    laugh: false,
+    provenance: 'stock',
+    sources: [],
+    memoryRefs: [],
+    actionJson: '',
+};
+
+/**
+ * The options with exactly one Search option, third (or last when there are fewer): yes-style, no-style, Search the
+ * web, something else. A yes or no plan becomes a pick, since the module takes only replies in yes_no mode.
+ */
+export function withSearch(options: readonly OptionInput[], maxOptions: number): { answerMode: AnswerMode; options: OptionInput[]; added: boolean } {
+    const found = options.find((o) => o.kind === 'search');
+    const search = found ?? { ...STOCK_SEARCH };
+    const room = Math.max(1, Math.min(maxOptions, LIMITS.maxOptions) - 1);
+    const rest = options.filter((o) => o.kind !== 'search').slice(0, room);
+    const at = Math.min(2, rest.length);
+    return { answerMode: 'pick', options: [...rest.slice(0, at), search, ...rest.slice(at)], added: !found };
+}
+
+/**
+ * A Search option is offered when the question could use outside facts (the same local check as D8), web search is
+ * allowed and set up, and no request was just sent (a question about it, "Should we let Stephen know?", is about the
+ * call, not the web). Menu turns never search.
+ */
+function searchOffered(deps: JobDeps, row: AgentQueueRow, check: QuestionClass | null, allowWeb: () => boolean): boolean {
+    if (!check || !check.needsWeb) return false;
+    return row.webSearchAllowed && allowWeb() && deps.retrieval.search !== null && recentErrand(row, deps.now()) === null;
+}
+
+/** Options job in direct select: everything from the question to `agent_publish_options(final = true)`, with no search. */
+export async function runDirectOptionsJob(row: AgentQueueRow, attempt: number, deps: JobDeps, signal: AbortSignal): Promise<void> {
+    const job = { jobId: row.jobId, attempt };
+    const events = new JobEvents(deps.db, job, deps.log, deps.clock, { heartbeatMs: deps.leaseHeartbeatMs, signal });
+    const isMenu = row.origin === 'menu' && row.menuItem !== 'none';
+    if (!isMenu && row.questionText.trim() === '') throw new JobInputError('empty_question');
+    const allowMemory = () => memoryConsent(deps, row, attempt);
+    const allowWeb = () => consentNow(deps, row, attempt).webSearchAllowed;
+    const callPossible = () => !!deps.dialer && deps.contacts.length > 0 && recentErrand(row, deps.now()) !== null;
+    // The conversation is kept, and sent, only under memory consent (as in the scan path, src/jobs.ts).
+    const history = allowMemory() ? deps.conversation.recent(row.askedBy) : [];
+    if (!isMenu && allowMemory()) deps.conversation.add(row.askedBy, { speaker: 'partner', text: row.questionText });
+    try {
+        const check = isMenu ? null : deps.retrieval.classify(row.questionText);
+        const offer = searchOffered(deps, row, check, allowWeb);
+
+        // 0. The yes or no fast path: "One: yes. Two: no." at once. Not when a Search option or a call fits better.
+        if (!isMenu && deps.yesNoFast) {
+            const verdict = classifyYesNo(row.questionText);
+            const fast = verdict.yesNo && !callPossible() && !offer;
+            const why = verdict.yesNo && !fast ? (offer ? 'search_possible' : 'call_possible') : verdict.reason;
+            deps.log.info(fast ? 'yes or no fast path: stock options' : 'yes or no fast path not taken', { job: row.jobId, why });
+            if (fast) {
+                const options = stockYesNo();
+                await events.instant('plan', 'ok', 'yes no stock', 0, { counts: { optionCount: options.length, yesNo: true, final: true } });
+                await publish(deps.db, job, 'yes_no', options, true);
+                deps.log.info('options published', { job: row.jobId, options: options.length, mode: 'yes_no', ms: 0 });
+                return;
+            }
+        }
+
+        // 1. Memory first.
+        const recall = await recallMemory(deps.retrieval, events, row, signal, allowMemory, deps.forms);
+        if (signal.aborted) throw new JobAbortedError();
+
+        // 2. The search decision (D8), in the pipeline. Nothing is searched until the person picks Search and confirms.
+        if (check && !check.needsWeb) await searchStep(deps.retrieval, events, row, check, signal, allowWeb);
+        else if (check && offer) {
+            await events.instant('search', 'ok', 'offered', 0, { counts: { needsWeb: true, searches: 0, rowCount: 0, offered: true }, payload: { reason: check.reason, rows: [] } });
+        }
+        const ctx: PlanContext = { deps, row, events, signal, allowMemory, allowWeb };
+
+        // 3. Claude's options, and the publish. As in the scan path, a plan that relied on a consent withdrawn on the
+        // way is written again without it, three rounds at most; a Search option needs web search consent too.
+        for (let round = 1; ; round++) {
+            const consent = consentNow(deps, row, attempt);
+            const offering = offer && consent.webSearchAllowed;
+            const nowMs = deps.now();
+            const recent = recentErrand(row, nowMs);
+            const memory = consent.memoryAllowed ? memoryContext(recall) : [];
+            const input: PlanInput = {
+                question: row.questionText,
+                origin: row.origin,
+                menuItem: row.menuItem,
+                history: consent.memoryAllowed ? history : [],
+                memory,
+                web: [],
+                forms: deps.forms,
+                contacts: recent && deps.dialer ? deps.contacts : [],
+                recentErrand: recent,
+                search: offering ? 'offered' : check?.needsWeb ? 'not_allowed' : check ? 'not_needed' : 'none',
+                task: 'options',
+                searchOffer: offering,
+                maxOptions: deps.maxOptions,
+                nowMs,
+                timeZone: deps.timeZone,
+                consent: () => ({ memory: allowMemory(), web: allowWeb() }),
+            };
+            // With a Search option the order means something (yes, no, search, something else), so memory does not reorder it.
+            const planned = await planOptions(ctx, input, memory, [], recent, 'claude', !offering);
+            const shaped = offering ? withSearch(planned.options, deps.maxOptions) : { answerMode: planned.plan.answerMode, options: planned.options, added: false };
+            const allowed = () => planned.stillAllowed() && (!offering || allowWeb());
+            try {
+                if (!allowed()) throw new ConsentWithdrawnError();
+                await publish(deps.db, job, shaped.answerMode, shaped.options, true, allowed);
+                deps.log.info('options published', {
+                    job: row.jobId,
+                    options: shaped.options.length,
+                    mode: shaped.answerMode,
+                    ms: planned.plan.ms,
+                    search: offering,
+                    searchAdded: shaped.added,
+                });
+                break;
+            } catch (error) {
+                if (!(error instanceof ConsentWithdrawnError)) throw error;
+                if (round >= 3) throw new PlannerError('aborted');
+                deps.log.info('a consent was withdrawn while the options were made; writing them again without it', { job: row.jobId });
+            }
+        }
+    } finally {
+        events.close();
+    }
+}
+
+// ---------- Categories ----------
+
+export interface CategoryEntry {
+    label: string;
+    text: string;
+    /** The search words the category stands for. Public words only: from the question and the category, never memory. */
+    query: string;
+}
+
+/**
+ * The categories this sidecar offered, by question, so a Category pick runs the search words the planner wrote for
+ * it. In this process only (a restart falls back to defaultCategoryQuery). Content-light: category words and search
+ * words, never memory.
+ */
+export class CategoryBook {
+    private readonly entries = new Map<string, CategoryEntry[]>();
+
+    constructor(private readonly max = 50) {}
+
+    record(questionId: bigint, categories: readonly CategoryEntry[]): void {
+        const key = questionId.toString();
+        this.entries.delete(key);
+        this.entries.set(key, categories.map((c) => ({ ...c })));
+        while (this.entries.size > this.max) {
+            const oldest = this.entries.keys().next().value;
+            if (oldest === undefined) break;
+            this.entries.delete(oldest);
+        }
+    }
+
+    /** The search words for the picked category (matched by its label or its text), or null. */
+    find(questionId: bigint, category: string): string | null {
+        const wanted = norm(category);
+        if (wanted === '') return null;
+        const found = (this.entries.get(questionId.toString()) ?? []).find((c) => norm(c.label) === wanted || norm(c.text) === wanted);
+        return found?.query ?? null;
+    }
+}
+
+function categoryBook(deps: JobDeps): CategoryBook {
+    deps.categoryBook ??= new CategoryBook();
+    return deps.categoryBook;
+}
+
+/**
+ * A categories or search turn is a new question row on the person's original question (spacetime/src/clock.ts
+ * createFollowUp), so both share the original's id: the categories are kept under it, and found again under it.
+ */
+function originalOf(row: AgentQueueRow): { id: bigint; text: string } {
+    return {
+        id: row.parentQuestionId !== 0n ? row.parentQuestionId : row.questionId,
+        text: row.parentQuestionText.trim() !== '' ? row.parentQuestionText : row.questionText,
+    };
+}
+
+/** The place a question names after in, near, around or at ("... today in San Francisco?"), or null. */
+export function placeHint(question: string): string | null {
+    const match = /\b(?:in|near|around|at)\s+((?:[A-Z][\p{L}'.-]*)(?:\s+[A-Z][\p{L}'.-]*){0,3})/u.exec(question);
+    return match?.[1] ?? null;
+}
+
+/** The question as search words: one line, no closing punctuation, short. */
+function topicOf(question: string): string {
+    return clean(question).replace(/[?.!]+$/, '').slice(0, 100);
+}
+
+const PLACE_CATEGORIES: readonly { label: string; text: string; words: string }[] = [
+    { label: 'Nature', text: 'Something outdoors, like a park.', words: 'parks and gardens' },
+    { label: 'Fun', text: 'Something fun to do.', words: 'fun things to do' },
+    { label: 'Food', text: 'Somewhere to eat.', words: 'restaurants' },
+];
+const FACT_CATEGORIES: readonly { label: string; text: string; suffix: string }[] = [
+    { label: 'Quick facts', text: 'The short answer.', suffix: '' },
+    { label: 'Latest news', text: 'What is new about it.', suffix: ' news' },
+];
+const SOMETHING_ELSE = { label: 'Something else', text: 'Something else.' } as const;
+
+/** The categories when the planner cannot write them: fixed words for a place question, or for facts. */
+export function stockCategories(question: string, check: QuestionClass, max: number): CategoryEntry[] {
+    const topic = topicOf(question);
+    const place = placeHint(question);
+    const list: CategoryEntry[] =
+        check.kind === 'places'
+            ? PLACE_CATEGORIES.map((c) => ({ label: c.label, text: c.text, query: place ? `${c.words} in ${place}` : c.words }))
+            : FACT_CATEGORIES.map((c) => ({ label: c.label, text: c.text, query: `${topic}${c.suffix}` }));
+    const room = Math.max(1, Math.min(max, LIMITS.maxOptions) - 1);
+    return [...list.slice(0, room), { ...SOMETHING_ELSE, query: topic }];
+}
+
+/** Search words for a category this sidecar did not offer (or no longer remembers). */
+export function defaultCategoryQuery(question: string, category: string): string {
+    const topic = topicOf(question);
+    const wanted = norm(category);
+    if (wanted === '' || wanted === norm(SOMETHING_ELSE.label)) return topic;
+    const stock = PLACE_CATEGORIES.find((c) => norm(c.label) === wanted);
+    const place = placeHint(question);
+    if (stock) return place ? `${stock.words} in ${place}` : stock.words;
+    return `${clean(category).slice(0, 40)} ${place ? `in ${place}` : topic}`.trim();
+}
+
+function categoryOption(entry: CategoryEntry, provenance: 'model' | 'stock'): OptionInput {
+    return { kind: 'category', label: entry.label, text: entry.text, tone: '', laugh: false, provenance, sources: [], memoryRefs: [], actionJson: '' };
+}
+
+/** Categories job: after a confirmed Search, up to four categories for the question, with no web call. */
+export async function runCategoriesJob(row: AgentQueueRow, attempt: number, deps: JobDeps, signal: AbortSignal): Promise<void> {
+    const job = { jobId: row.jobId, attempt };
+    const events = new JobEvents(deps.db, job, deps.log, deps.clock, { heartbeatMs: deps.leaseHeartbeatMs, signal });
+    try {
+        const original = originalOf(row);
+        if (original.text.trim() === '') throw new JobInputError('empty_question');
+        // No web call here, so the job carries no web search consent (the module checks it again at the Category pick).
+        const ctx: PlanContext = { deps, row, events, signal, allowMemory: () => memoryConsent(deps, row, attempt), allowWeb: () => false };
+        // Only the question: no memory and no conversation, so the search words can carry nothing private.
+        const input: PlanInput = {
+            question: original.text,
+            origin: row.origin,
+            menuItem: row.menuItem,
+            history: [],
+            memory: [],
+            web: [],
+            forms: [],
+            contacts: [],
+            recentErrand: null,
+            search: 'none',
+            task: 'categories',
+            maxOptions: deps.maxOptions,
+            nowMs: deps.now(),
+            timeZone: deps.timeZone,
+        };
+        let entries: CategoryEntry[];
+        let options: OptionInput[];
+        try {
+            const planned = await planOptions(ctx, input, [], [], null, 'claude categories', false);
+            entries = planned.plan.options.map((o) => ({ label: o.label, text: o.text, query: o.query }));
+            options = planned.options;
+        } catch (error) {
+            if (signal.aborted || error instanceof JobAbortedError) throw new JobAbortedError();
+            if (!(error instanceof PlannerError)) throw error;
+            // The person asked to search, so fixed categories beat a failure.
+            entries = stockCategories(original.text, deps.retrieval.classify(original.text), deps.maxOptions);
+            options = entries.map((entry) => categoryOption(entry, 'stock'));
+            deps.log.warn('the planner could not write categories; using the stock ones', { job: row.jobId, code: error.code });
+            await events.instant('plan', 'ok', 'categories stock', 0, { counts: { optionCount: options.length, final: true } });
+        }
+        categoryBook(deps).record(original.id, entries);
+        await publish(deps.db, job, 'pick', options, true);
+        deps.log.info('categories published', { job: row.jobId, options: options.length });
+    } finally {
+        events.close();
+    }
+}
+
+// ---------- Category search ----------
+
+const PLACE_TONES: readonly Tone[] = ['warm', 'calm', 'neutral', 'firm'];
+
+/** At most this many words in a place label (a place name may be longer than a category). */
+const PLACE_LABEL_WORDS = 5;
+
+function placeLabel(name: string): string {
+    return clean(name).split(' ').slice(0, PLACE_LABEL_WORDS).join(' ');
+}
+
+/** Replies naming the places the maps search found, for when the planner cannot write them. Never a web page title. */
+export function placeOptions(web: readonly WebContext[], max: number): OptionInput[] {
+    const out: OptionInput[] = [];
+    const seen = new Set<string>();
+    for (const item of web) {
+        if (item.kind !== 'maps' || out.length >= Math.min(max, LIMITS.maxOptions)) continue;
+        const name = clean(item.title).replace(/[<>[\]{}]/g, '').slice(0, 80);
+        if (name === '' || seen.has(norm(name))) continue;
+        seen.add(norm(name));
+        const source = acceptedSource(item.source);
+        out.push({
+            kind: 'reply',
+            label: placeLabel(name),
+            text: `Let's go to ${name}!`,
+            tone: PLACE_TONES[out.length] ?? '',
+            laugh: false,
+            provenance: 'maps',
+            sources: source ? [source] : [],
+            memoryRefs: [],
+            actionJson: '',
+        });
+    }
+    return out;
+}
+
+/** Category search job: the search the person asked for, then up to four places or facts as replies. */
+export async function runCategorySearchJob(row: AgentQueueRow, attempt: number, deps: JobDeps, signal: AbortSignal): Promise<void> {
+    const job = { jobId: row.jobId, attempt };
+    const events = new JobEvents(deps.db, job, deps.log, deps.clock, { heartbeatMs: deps.leaseHeartbeatMs, signal });
+    const questionKey = `q${row.questionId}`;
+    let mayBeIndexed = false;
+    try {
+        const category = clean(row.category);
+        const original = originalOf(row);
+        if (original.text.trim() === '') throw new JobInputError('empty_question');
+        if (category === '') throw new JobInputError('empty_category');
+        const allowWeb = () => consentNow(deps, row, attempt).webSearchAllowed;
+        const allowMemory = () => memoryConsent(deps, row, attempt);
+        if (!row.webSearchAllowed || !allowWeb()) throw new DirectRefusal('web_search_off', WEB_OFF);
+        if (!deps.retrieval.search) throw new DirectRefusal('search_off', SEARCH_OFF);
+
+        // The search words: the planner's for this category, or fixed ones. Never memory.
+        const check = deps.retrieval.classify(original.text);
+        const known = categoryBook(deps).find(original.id, category);
+        const query = known ?? defaultCategoryQuery(original.text, category);
+        deps.log.info('category search', { job: row.jobId, known: known !== null, places: check.kind === 'places' });
+        const search = await searchStep(deps.retrieval, events, row, { ...check, needsWeb: true }, signal, allowWeb, undefined, { query, places: check.kind === 'places' });
+        if (signal.aborted) throw new JobAbortedError();
+
+        // Indexed the usual way: the question's Moss web index, forgotten at the end.
+        mayBeIndexed = search.rows.length > 0;
+        const retrieved = await retrieveStep(deps.retrieval, events, row, questionKey, search.rows, null, signal, allowMemory, query);
+        if (signal.aborted) throw new JobAbortedError();
+        const ctx: PlanContext = { deps, row, events, signal, allowMemory, allowWeb };
+
+        for (let round = 1; ; round++) {
+            const web = allowWeb() ? retrieved.web : [];
+            const input: PlanInput = {
+                question: original.text,
+                origin: row.origin,
+                menuItem: row.menuItem,
+                history: [],
+                memory: [],
+                web,
+                forms: [],
+                contacts: [],
+                recentErrand: null,
+                search: web.length > 0 ? 'done' : search.status === 'done' ? 'none' : search.status === 'not_allowed' || !allowWeb() ? 'not_allowed' : 'failed',
+                task: 'category_search',
+                category,
+                maxOptions: deps.maxOptions,
+                nowMs: deps.now(),
+                timeZone: deps.timeZone,
+                consent: () => ({ memory: false, web: allowWeb() }),
+            };
+            let options: OptionInput[];
+            let allowed: () => boolean;
+            try {
+                const planned = await planOptions(ctx, input, [], web, null, 'claude results', false);
+                options = planned.options;
+                allowed = planned.stillAllowed;
+            } catch (error) {
+                if (signal.aborted || error instanceof JobAbortedError) throw new JobAbortedError();
+                if (!(error instanceof PlannerError)) throw error;
+                // Places the maps search found can still be offered by name; anything else fails as usual.
+                const fallback = placeOptions(web, deps.maxOptions);
+                if (fallback.length === 0) throw error;
+                deps.log.warn('the planner could not write the results; offering the places by name', { job: row.jobId, code: error.code });
+                await events.instant('plan', 'ok', 'places stock', 0, { counts: { optionCount: fallback.length, final: true } });
+                options = fallback;
+                allowed = allowWeb;
+            }
+            try {
+                if (!allowed()) throw new ConsentWithdrawnError();
+                await publish(deps.db, job, 'pick', options, true, allowed);
+                deps.log.info('search results published', { job: row.jobId, options: options.length });
+                break;
+            } catch (error) {
+                if (!(error instanceof ConsentWithdrawnError)) throw error;
+                if (round >= 3) throw new PlannerError('aborted');
+                deps.log.info('a consent was withdrawn while the options were made; writing them again without it', { job: row.jobId });
+            }
+        }
+    } finally {
+        events.close();
+        if (mayBeIndexed && deps.retrieval.web) {
+            // Bounded and without the job's signal, as in the options job.
+            const forgetting = deps.retrieval.web.forget(questionKey);
+            await withDeadline(forgetting, mossDeadline(deps.retrieval, 'forget'), 'web forget').catch(() =>
+                deps.log.warn('could not forget the web passages in time; Moss drops them when the run closes', { job: row.jobId }),
+            );
+        }
+    }
+}

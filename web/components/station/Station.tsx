@@ -26,7 +26,8 @@ import {
   heartbeatChip,
   inputBanner,
   inputChip,
-  keyboardLegend,
+  gestureLegendLine,
+  stationOptionRows,
   lastWorkLine,
   sessionLine,
   timingLine,
@@ -178,7 +179,8 @@ function StatusBlock({ status }: { status: BigStatus }) {
 }
 
 function RunningSession({ s, engine, now }: { s: StationSnapshot; engine: StationEngine | null; now: number }) {
-  const legend = keyboardLegend(s);
+  const legend = gestureLegendLine(s);
+  const rows = stationOptionRows(s);
   const work = lastWorkLine(s);
   const line = sessionLine(s);
   const needsAudio = !s.setup.silent && s.audio.state !== 'running';
@@ -193,8 +195,25 @@ function RunningSession({ s, engine, now }: { s: StationSnapshot; engine: Statio
         </div>
       ) : null}
       <EarpieceNow s={s} engine={engine} now={now} />
+      {rows.length > 0 ? (
+        <ol className={styles.optionList} aria-label="The options, numbered. The person picks one by its number.">
+          {rows.map((row) => (
+            <li key={row.key} className={styles.optionRow}>
+              <span className={cx(styles.optionBadge, 'num')} aria-hidden="true">
+                {row.badge}
+              </span>
+              <span className={styles.optionWords}>
+                {row.words}
+                {row.kind ? <span className={styles.optionKind}>, {row.kind}</span> : null}
+              </span>
+              {row.gesture ? <span className={styles.optionGesture}>{row.gesture}</span> : null}
+              {!row.ready && !s.setup.silent ? <span className={styles.optionGesture}>voice not ready</span> : null}
+            </li>
+          ))}
+        </ol>
+      ) : null}
       {legend ? (
-        <p className={styles.legend} aria-label="Keyboard test keys">
+        <p className={styles.legend} aria-label={s.setup.mode === 'keyboard' ? 'Keyboard test keys' : 'Gesture legend'}>
           {legend}
         </p>
       ) : null}

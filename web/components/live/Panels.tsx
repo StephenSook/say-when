@@ -193,6 +193,8 @@ const KIND_WORDS: Readonly<Record<OptionKind, string>> = {
   reply: 'Reply',
   errand: 'Errand',
   call: 'Call',
+  search: 'Web search',
+  category: 'Category',
   menu: 'Menu',
 };
 

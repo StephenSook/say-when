@@ -3,23 +3,24 @@
  * label) and the command events in the session ledger. It never draws brain activity and never claims a signal the
  * rows do not name. Pure, so a test can run it over the sample replay.
  *
- * Honest wording (lib/commands.ts): in a headset session YES and NO are imagined fist squeezes (the brain part) and
- * CONFIRM and STOP are jaw clenches (a muscle signal); a keyboard session's commands are keys, a switch session's are
- * presses, and an unknown input names no signal at all. Only an imagined squeeze gets a hand mark (YES cyan, NO amber).
+ * Honest wording (lib/commands.ts): in a headset session 1 and 2 are imagined fist squeezes (the brain part) and 3,
+ * 4 and STOP are jaw clenches (a muscle signal); a keyboard session's commands are keys, a switch session's are
+ * presses, and an unknown input names no signal at all. Only an imagined squeeze gets a hand mark (the right fist, 2,
+ * cyan; the left fist, 1, amber), the brain screen's colors.
  */
 import { commandSignal, commandWord, COMMAND_INFO } from '../commands';
 import type { CommandEvent, InputKind, PersonCommand } from '../data/types';
 import { PERSON_COMMANDS } from '../data/types';
 import { formatAge } from '../format';
 
-/** A brain-related mark: an imagined right fist (YES) or left fist (NO) in a headset session. */
+/** A brain-related mark: 'yes' is the cyan right fist (2), 'no' the amber left fist (1), in a headset session. */
 export type HandMark = 'yes' | 'no';
 
 export interface DecoderLine {
   id: string;
-  /** "YES", "CONFIRM", or "Headset off" ("Input off") for the system event. */
+  /** "1" to "4", "STOP", or "Headset off" ("Input off") for the system event. */
   word: string;
-  /** What the person did in this input: "imagined right fist", "key Y", "single jaw clench". null when not known. */
+  /** What the person did in this input: "imagined right fist", "key 2", "single jaw clench". null when not known. */
   signal: string | null;
   /** Set only for an imagined squeeze in a headset session. */
   hand: HandMark | null;
@@ -57,9 +58,10 @@ const TITLES: Readonly<Record<InputKind, string>> = {
 };
 
 const HOW: Readonly<Record<InputKind, string | null>> = {
-  headset: 'Imagined fists choose. Jaw clenches send or stop.',
-  keyboard: 'Keys Y, N, C and S.',
-  switch: 'One switch: short press, double press, long press.',
+  // A double jaw clench means nothing (PLAN D21), so no gesture picks 4; key 4 still works in a keyboard test.
+  headset: 'Imagined fists pick 1 and 2. A single jaw clench picks 3; a held clench (about 1 second) is STOP.',
+  keyboard: 'Keys 1, 2, 3 and S.',
+  switch: 'One switch: short press 1, double press 2, long press STOP.',
   unknown: null,
 };
 
@@ -76,7 +78,8 @@ export function decoderLine(event: CommandEvent, input: InputKind, now: number):
     id: event.id,
     word: commandWord(event.command, input),
     signal: person ? commandSignal(event.command as PersonCommand, input) : null,
-    hand: imagined ? (event.command === 'YES' ? 'yes' : 'no') : null,
+    // The hand's color (CSS hand_yes cyan = right fist, hand_no amber = left fist): PICK_2 is the right fist.
+    hand: imagined ? (event.command === 'PICK_2' ? 'yes' : 'no') : null,
     ago: now > 0 ? formatAge(event.at, now) : '',
     ignored: event.accepted ? null : (event.ignoredReason ?? 'Did not count'),
     confidence,

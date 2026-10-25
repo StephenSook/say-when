@@ -9,6 +9,10 @@ import {
   type AlgebraicTypeType as __AlgebraicTypeType,
   type Infer as __Infer,
 } from "spacetimedb";
+import {
+  InputMode,
+} from "./types";
+
 
 export default __t.row({
   id: __t.u8().primaryKey(),
@@ -40,4 +44,7 @@ export default __t.row({
   jobLeaseMs: __t.u32().name("job_lease_ms"),
   jobMaxAttempts: __t.u8().name("job_max_attempts"),
   pairingTtlMs: __t.u32().name("pairing_ttl_ms"),
+  get inputMode() {
+    return InputMode.name("input_mode");
+  },
 });

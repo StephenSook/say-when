@@ -18,7 +18,7 @@
  * - Memory text is only ever read through hitDisplay: a memory shows its words only when the
  *   person marked it shareable.
  */
-import { COMMAND_INFO, commandSignal, commandWord, offWord, withSignal } from '../../lib/commands';
+import { COMMAND_INFO, commandSignal, commandWord, CONFIRM_SHORT, offWord } from '../../lib/commands';
 import { hitDisplay, latestOptions, timeToFirstOption } from '../../lib/data/derive';
 import type {
   AnswerOption,
@@ -845,7 +845,7 @@ function errandSentence(errand: Errand, input: InputKind): string {
     case 'reading_back':
       return 'Reading the values back in the earpiece.';
     case 'awaiting_confirm':
-      return `Waiting for ${withSignal('CONFIRM', input)}.`;
+      return `Waiting for ${CONFIRM_SHORT}.`;
     case 'confirmed':
       return 'CONFIRM matched the read-back. Sending.';
     case 'submitting':
@@ -872,7 +872,7 @@ function callSentence(call: CallRequest, input: InputKind): string {
     case 'prepared':
       return 'Reading the call script back in the earpiece.';
     case 'awaiting_confirm':
-      return `Waiting for ${withSignal('CONFIRM', input)}.`;
+      return `Waiting for ${CONFIRM_SHORT}.`;
     case 'confirmed':
       return 'CONFIRM matched the script. Dialing next.';
     case 'dialing':

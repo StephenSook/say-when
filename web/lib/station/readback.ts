@@ -1,10 +1,12 @@
 /**
  * Read-backs, `report_readback_done` and the confirm window (docs/station.md 2.11).
  *
- * 1. Start when `my_session.errand` is Previewed with a 16-hex `preview_digest` and a read-back text, or when
- *    `my_session.call` is Prepared with `script_digest` and a text, and this page has not finished that read-back.
- *    One at a time; an errand comes before a call, as in the module.
- * 2. Say it in the assistant voice with the mode's confirm sentence on the end, on the options channel.
+ * 1. Start when `my_session.errand` is Previewed with a 16-hex `preview_digest` and a read-back text, when
+ *    `my_session.call` is Prepared with `script_digest` and a text, or when `my_session.search` (D18) is Prepared
+ *    with a 16-hex `digest` and a text, and this page has not finished that read-back. One at a time; an errand
+ *    comes before a call, and a call before a search, as in the module.
+ * 2. Say it in the assistant voice on the options channel. An errand or call read-back gets the two-option confirm
+ *    on the end ("One: send it. Two: cancel."); a search read-back already ends with its numbers and is read as is.
  * 3. Stop it at once, and report nothing, when the errand or call leaves Previewed or Prepared, a pause cue arrives,
  *    or the session ends.
  * 4. Done only when playback ends on its own: record the digest (CONFIRM carries it), then call
@@ -18,22 +20,25 @@
 import { callErrorKind, callErrorText, sendWithResend } from '../role/calls';
 import type { InputMode } from '../role/storage';
 import type { ChimeName } from '../voice/audio';
-import { readbackKey } from './commands';
+import { readbackKey, type ReadbackKind } from './commands';
 import type { Channel, ClipLike, SynthJob } from './earpiece';
 import { phraseText } from './phrases';
 
-/** What a read-back says: the Actor's text, then "To send it, {act}. To cancel, do nothing." for the input mode. */
-export function readbackSegments(text: string, mode: InputMode): [string, string] {
-  return [text, phraseText('confirmTail', mode)];
+/**
+ * What a read-back says: the Actor's text, then "One: send it. Two: cancel." The module's search read-back
+ * ("Search the web for ideas? One: yes. Two: cancel.") already carries its numbers, so it is read as is.
+ */
+export function readbackSegments(text: string, mode: InputMode, kind: ReadbackKind = 'errand'): string[] {
+  return kind === 'search' ? [text] : [text, phraseText('confirmTail', mode)];
 }
 
-/** `my_session.errand` or `.call`, reduced. `status` is the binding's tag. */
+/** `my_session.errand`, `.call` or `.search`, reduced. `status` is the binding's tag. */
 export interface WorkLite {
-  kind: 'errand' | 'call';
+  kind: ReadbackKind;
   id: bigint;
   status: string;
   readBackText: string;
-  /** `preview_digest` for an errand, `script_digest` for a call. */
+  /** `preview_digest` for an errand, `script_digest` for a call, `digest` for a search. */
   digest: string;
   confirmOpensAt: bigint | null;
   confirmClosesAt: bigint | null;
@@ -43,15 +48,16 @@ export interface WorkLite {
 
 const ERRAND_DIGEST_RE = /^[0-9a-f]{16}$/;
 
-/** The work whose read-back should play now: the errand first, then the call (docs/station.md 2.11 step 1). */
-export function readbackCandidate(errand: WorkLite | null, call: WorkLite | null): WorkLite | null {
+/** The work whose read-back should play now: the errand first, then the call, then the search (docs/station.md 2.11 step 1). */
+export function readbackCandidate(errand: WorkLite | null, call: WorkLite | null, search: WorkLite | null = null): WorkLite | null {
   if (errand && errand.status === 'Previewed' && ERRAND_DIGEST_RE.test(errand.digest) && errand.readBackText.trim() !== '') return errand;
   if (call && call.status === 'Prepared' && call.digest.trim() !== '' && call.readBackText.trim() !== '') return call;
+  if (search && search.status === 'Prepared' && ERRAND_DIGEST_RE.test(search.digest) && search.readBackText.trim() !== '') return search;
   return null;
 }
 
-/** The status in which a read-back plays: Previewed for an errand, Prepared for a call. */
-export function readbackStatus(kind: 'errand' | 'call'): string {
+/** The status in which a read-back plays: Previewed for an errand, Prepared for a call or a search. */
+export function readbackStatus(kind: ReadbackKind): string {
   return kind === 'errand' ? 'Previewed' : 'Prepared';
 }
 
@@ -72,7 +78,7 @@ export type ReadbackPhase =
 
 export interface ReadbackState {
   phase: ReadbackPhase;
-  kind: 'errand' | 'call' | null;
+  kind: ReadbackKind | null;
   id: bigint | null;
   /** When the window opened locally, on the station clock. */
   windowStartedAt: number | null;
@@ -89,10 +95,10 @@ export interface ReadbackTiming {
 
 export interface ReadbackDeps<Clip extends ClipLike = ClipLike> {
   now(): number;
-  /** The read-back utterance: the text, then the mode's confirm sentence, in the assistant voice. */
-  synth(text: string): SynthJob<Clip>;
+  /** The read-back utterance in the assistant voice: the text, then the confirm sentence (none for a search). */
+  synth(text: string, kind: ReadbackKind): SynthJob<Clip>;
   channel: Channel<Clip>;
-  report(args: { kind: 'errand' | 'call'; id: bigint; digest: string }): Promise<void>;
+  report(args: { kind: ReadbackKind; id: bigint; digest: string }): Promise<void>;
   waitForLive(timeoutMs: number): Promise<boolean>;
   chime(name: ChimeName): void;
   timing(): ReadbackTiming;
@@ -145,9 +151,10 @@ export class Readback<Clip extends ClipLike = ClipLike> {
     return this.state;
   }
 
-  /** Every `my_session` change: the errand and call as they are now, and when the update arrived. */
-  update(errand: WorkLite | null, call: WorkLite | null, arrival: number): void {
-    for (const work of [errand, call]) {
+  /** Every `my_session` change: the errand, call and search as they are now, and when the update arrived. */
+  update(errand: WorkLite | null, call: WorkLite | null, arrival: number, search: WorkLite | null = null): void {
+    const byKind = (kind: ReadbackKind): WorkLite | null => (kind === 'errand' ? errand : kind === 'call' ? call : search);
+    for (const work of [errand, call, search]) {
       if (!work) continue;
       if (work.status === readbackStatus(work.kind)) {
         const seen = `${readbackKey(work.kind, work.id)}:${work.digest}`;
@@ -164,7 +171,7 @@ export class Readback<Clip extends ClipLike = ClipLike> {
 
     const active = this.active;
     if (active) {
-      const now = active.work.kind === 'errand' ? errand : call;
+      const now = byKind(active.work.kind);
       const same = now !== null && now.id === active.work.id;
       const phase = this.state.phase;
       if (phase === 'preparing' || phase === 'playing') {
@@ -189,8 +196,8 @@ export class Readback<Clip extends ClipLike = ClipLike> {
     }
 
     if (this.active) return;
-    this.clearSettled(errand, call);
-    const next = readbackCandidate(errand, call);
+    this.clearSettled(byKind);
+    const next = readbackCandidate(errand, call, search);
     if (!next || this.finished.has(this.finishKey(next))) return;
     this.begin(next);
   }
@@ -220,10 +227,10 @@ export class Readback<Clip extends ClipLike = ClipLike> {
    * Prepared, and clears once the module has moved it on (it stops it with `readback_not_finished`), so the scan's
    * own status shows again instead of the old failure for the rest of the session.
    */
-  private clearSettled(errand: WorkLite | null, call: WorkLite | null): void {
+  private clearSettled(byKind: (kind: ReadbackKind) => WorkLite | null): void {
     const { phase, kind, id } = this.state;
     if (phase !== 'failed' && phase !== 'too_long' && phase !== 'late') return;
-    const now = kind === 'errand' ? errand : kind === 'call' ? call : null;
+    const now = kind !== null ? byKind(kind) : null;
     if (now && now.id === id && now.status === readbackStatus(now.kind)) return;
     this.set({ phase: 'idle', kind: null, id: null, windowStartedAt: null, message: null });
   }
@@ -239,7 +246,7 @@ export class Readback<Clip extends ClipLike = ClipLike> {
     const arrival = this.seenAt.get(this.finishKey(work)) ?? this.deps.now();
     let job: SynthJob<Clip>;
     try {
-      job = this.deps.synth(work.readBackText);
+      job = this.deps.synth(work.readBackText, work.kind);
     } catch (error) {
       this.finished.add(this.finishKey(work));
       this.set({ phase: 'failed', kind: work.kind, id: work.id, message: 'Could not voice the read-back. Nothing will be sent.' });

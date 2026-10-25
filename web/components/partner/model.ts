@@ -9,7 +9,7 @@
  *
  * The status sentence, newest first:
  * 1. Paused or the input off: "Paused. Please wait." or "Headset off. Please wait." ("Input off" for keys or a switch)
- * 2. An option in the earpiece: "They are choosing, option 2 of 4."
+ * 2. An option in the earpiece: "They are choosing, option 2 of 4." After the list, "They are choosing from 4 options."
  * 3. YES on a reply, inside the short veto: "They picked an answer."
  * 4. The newest pick and the errand or call it started: "They answered.", "Waiting for them to confirm."
  * 5. The scan ended with no pick: "They chose none of these.", "No pick. Nothing was said or sent."
@@ -17,7 +17,7 @@
  * 7. Before the options are read: "Listening.", "Looking it up.", "Getting options ready."
  */
 import type { Step } from '@/components/ui/StepList';
-import { commandSignal, offWord, signalPhrase } from '@/lib/commands';
+import { confirmPick, offWord } from '@/lib/commands';
 import { spokenReply, type SpokenReply } from '@/lib/data/derive';
 import type {
   AnswerOption,
@@ -338,7 +338,17 @@ function sentenceFor(f: Facts): Sentence {
       // "option 2 of 4": the number only, never the option's words.
       const count = countOptions(f.options, id, scan.version);
       const cursor = scan.cursor;
-      const where = cursor === null ? '' : count >= cursor ? `, option ${cursor} of ${count}` : `, option ${cursor}`;
+      // Direct select (D18): after the list is read, the wait is for any of its numbers.
+      const where =
+        scan.phase === 'window'
+          ? count > 0
+            ? ` from ${count} ${count === 1 ? 'option' : 'options'}`
+            : ''
+          : cursor === null
+            ? ''
+            : count >= cursor
+              ? `, option ${cursor} of ${count}`
+              : `, option ${cursor}`;
       if (f.question.origin === 'menu' || scan.mode === 'menu') text = `They are choosing from their own menu${where}.`;
       else if (f.followUp) text = `They are choosing what to do next${where}.`;
       else text = `They are choosing${where}.`;
@@ -440,14 +450,14 @@ function line(text: string, hint: string | null = null, tone: StatusTone = 'plai
 }
 
 /**
- * The confirm hints. Only a headset session names the single jaw clench; a key or a switch press is named as itself, and
- * an unknown input names no signal.
+ * The confirm hints (D18: the confirm is a fresh pick of 1, "One: send it"). Only a headset session names the imagined
+ * left fist; a key or a switch press is named as itself, and an unknown input names no signal.
  */
 function confirmHints(input: InputKind, what: 'request' | 'call'): { waiting: string; confirmed: string } {
-  const phrase = signalPhrase('CONFIRM', input);
+  const phrase = confirmPick(input);
   const nothing = what === 'call' ? 'No call is made' : 'Nothing is sent';
-  const waiting = input === 'headset' ? `${nothing} without their ${commandSignal('CONFIRM', input)}.` : `${nothing} until they confirm.`;
-  return { waiting, confirmed: phrase === null ? 'They confirmed.' : `They confirmed with ${phrase}.` };
+  const waiting = input === 'headset' ? `${nothing} until they pick ${phrase} to send it.` : `${nothing} until they confirm.`;
+  return { waiting, confirmed: input === 'unknown' ? 'They confirmed.' : `They confirmed with ${phrase}.` };
 }
 
 /** Content-free errand progress. The form's name and values stay off the phone. */

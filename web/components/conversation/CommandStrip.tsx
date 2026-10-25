@@ -1,8 +1,9 @@
 'use client';
 
 /**
- * The command strip (docs/ui.md "Command strip"): the person's four commands at the bottom center,
- * a legend and a live echo of the input. When a command event arrives, its chip lights for 1.2 s
+ * The command strip (docs/ui.md "Command strip"): the gesture legend of direct select (D18), 1, 2,
+ * 3 and STOP (a double jaw clench means nothing, PLAN D21, so no gesture gives 4 and it has no chip),
+ * at the bottom center, a legend and a live echo of the input. When a command event arrives, its chip lights for 1.2 s
  * (litCommand): accent border and fill, and its light turns from a ring into a filled dot, so the
  * echo is a shape as well as a color. Ignored repeats never light. HEADSET_OFF is a system event,
  * not a command the person gives, so it has no chip; the shell banner shows it.
@@ -16,7 +17,7 @@ import { COMMAND_INFO, commandChipLabel } from '@/lib/commands';
 import { cx } from '@/lib/cx';
 import { litCommand } from '@/lib/data/derive';
 import { useCommands, useInput } from '@/lib/data/provider';
-import { PERSON_COMMANDS, type InputKind } from '@/lib/data/types';
+import { SHOWN_COMMANDS, type InputKind } from '@/lib/data/types';
 import { useNow } from '@/lib/use-now';
 import styles from './CommandStrip.module.css';
 
@@ -35,7 +36,7 @@ export function CommandStrip() {
 
   return (
     <ul className={styles.strip} aria-label={`${STRIP_NAMES[input]}. The last one heard lights up.`}>
-      {PERSON_COMMANDS.map((name) => {
+      {SHOWN_COMMANDS.map((name) => {
         const on = lit === name;
         return (
           <li key={name} className={styles.item}>

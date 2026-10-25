@@ -38,7 +38,7 @@ describe('decoder frames on /eeg', () => {
   });
 
   test('gesture and health still go through the station parser', () => {
-    const g = parseLiveFrame(JSON.stringify({ type: 'gesture', id: '6f1c2b7e-9d1a-4c3e-8f00-1a2b3c4d5e6f', command: 'YES', onsetAgeMs: 900, confidence: 0.8, source: 'imagery' }));
+    const g = parseLiveFrame(JSON.stringify({ type: 'gesture', id: '6f1c2b7e-9d1a-4c3e-8f00-1a2b3c4d5e6f', command: 'PICK_2', onsetAgeMs: 900, confidence: 0.8, source: 'imagery' }));
     assert.equal(g.kind, 'gesture');
     assert.equal(parseLiveFrame(JSON.stringify({ type: 'health', decoderHealthy: true })).kind, 'health');
     assert.equal(parseLiveFrame('not json').kind, 'bad');
@@ -65,18 +65,20 @@ describe('true or false quiz', () => {
     assert.ok(QUESTIONS.length >= 20);
   });
 
-  test('YES is TRUE and NO is FALSE, and the first second does not count', () => {
+  test('the right fist is TRUE and the left fist FALSE in either map, and the first second does not count', () => {
     const q = startQuiz([{ text: 'Fire is hot.', answer: true }, { text: 'Ice is hot.', answer: false }], t0);
-    assert.equal(onCommand(q, 'YES', 0.9, t0 + 500).phase, 'asking');
-    const a = onCommand(q, 'YES', 0.9, t0 + 1_500);
+    assert.equal(onCommand(q, 'PICK_2', 0.9, t0 + 500).phase, 'asking');
+    const a = onCommand(q, 'PICK_2', 0.9, t0 + 1_500);
     assert.equal(a.phase, 'result');
     assert.equal(a.results[0].correct, true);
     const b = tick(a, t0 + 1_500 + QUIZ_TIMING.resultMs);
     assert.equal(b.phase, 'asking');
     assert.equal(b.index, 1);
     const c = onCommand(b, 'YES', 0.7, b.askedAt + 2_000);
-    assert.equal(c.results[1].said, true);
+    assert.equal(c.results[1].said, true, 'a scan map decoder still answers');
     assert.equal(c.results[1].correct, false);
+    assert.equal(onCommand(b, 'PICK_1', 0.7, b.askedAt + 2_000).results[1].said, false, 'the left fist is FALSE');
+    assert.equal(onCommand(b, 'PICK_3', 1, b.askedAt + 2_000).phase, 'asking', 'a jaw clench is not an answer');
     assert.equal(onCommand(b, 'CONFIRM', 1, b.askedAt + 2_000).phase, 'asking');
   });
 

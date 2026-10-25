@@ -19,7 +19,7 @@ const BARS: { key: string; label: string }[] = [
  * /quiz: a true or false practice quiz on the EEG laptop, with the decoder's live left, right and rest bars.
  * The live brain is Screen 1 at /brain.
  * It talks only to the local decoder (ws://127.0.0.1:8765, eeg-data/live.py) and nothing else: no module,
- * no agent. TRUE is YES (imagine the right fist), FALSE is NO (the left fist).
+ * no agent. TRUE is the imagined right fist (PICK_2, or YES in the scan map), FALSE the left fist (PICK_1 or NO).
  */
 export function EegQuiz() {
   const [link, setLink] = useState<Link>('connecting');

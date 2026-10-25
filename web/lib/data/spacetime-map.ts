@@ -280,6 +280,8 @@ const OPTION_KINDS: Readonly<Record<BoardOption['kind']['tag'], OptionKind>> = {
   Errand: 'errand',
   Call: 'call',
   Menu: 'menu',
+  Search: 'search',
+  Category: 'category',
 };
 
 const SCAN_PHASES: Readonly<Record<BoardScanRow['phase']['tag'], ScanPhase>> = {
@@ -347,7 +349,7 @@ const IGNORED_REASONS: ReadonlyMap<string, string> = new Map([
   ['no_option', 'No option was being read'],
   ['nothing_to_confirm', 'Nothing was waiting for a confirm'],
   ['veto', 'A reply was already picked'],
-  ['yes_is_not_confirm', 'YES does not confirm. Only CONFIRM sends'],
+  ['yes_is_not_confirm', 'That does not confirm. Only 1 after the read-back sends'],
   ['readback_not_done', 'The read-back had not finished'],
   ['quiet_hold', 'Too soon after the read-back'],
   ['window_closed', 'The confirm window had closed'],
@@ -360,6 +362,13 @@ const IGNORED_REASONS: ReadonlyMap<string, string> = new Map([
   ['already_paused', 'The system was already paused'],
   ['operator_pause', 'Paused by a helper. Only the owner can resume'],
   ['no_session', 'No session was running'],
+  // Direct select (D18)
+  ['no_list', 'No options were live to pick from'],
+  ['stale_question', 'Picked from a list that had already moved on'],
+  ['rank_out_of_range', 'There is no option with that number'],
+  ['direct_mode', 'A scan word: this database picks by number'],
+  ['scan_mode', 'A pick by number: this database scans'],
+  ['not_allowed', 'Not allowed'],
 ]);
 
 /** A reason code as words for the feed: the known sentence, else the code with its underscores as spaces. */
@@ -515,6 +524,8 @@ function optionsFromBoard(row: BoardQuestion): AnswerOption[] {
     version: row.version,
     rank: option.rank,
     text: shownText(option.label) ?? `Option ${option.rank}`,
+    // The earpiece's short words (D18); "Option N" with sharing off, like the text.
+    label: shownText(option.shortLabel) ?? `Option ${option.rank}`,
     kind: OPTION_KINDS[option.kind.tag],
     tone: option.tone.trim() || null,
     sources: row.textShared ? option.sources.map(sourceFromBoard) : [],

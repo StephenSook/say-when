@@ -122,7 +122,7 @@ describe('which database', () => {
         it(`refuses ${db}`, () => {
             const r = demoUp(['--db', db, '--dry-run'], setup());
             assert.equal(r.code, 1);
-            assert.match(r.text, /runs only say-when-dev and say-when-demo/);
+            assert.match(r.text, /runs only say-when-dev, say-when-demo and say-when-direct/);
         });
     }
 

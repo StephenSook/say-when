@@ -18,10 +18,13 @@ import type {
   Errand,
   ErrandTimerKind,
   Question,
+  SearchRequest,
+  SearchTimerKind,
   Session,
 } from './schema';
 import {
   appendLedger,
+  digest16,
   DIGEST_RE,
   emitCue,
   hasKey,
@@ -80,6 +83,8 @@ export interface PendingWork {
   liveCalls: CallRequest[];
   /** An errand the agent is submitting. */
   submitting?: Errand;
+  /** D18: a web search the person picked, before its confirm (Prepared or AwaitingConfirm). */
+  search?: SearchRequest;
 }
 
 export function pendingWork(db: ReadDb, sessionId: bigint): PendingWork {
@@ -95,7 +100,15 @@ export function pendingWork(db: ReadDb, sessionId: bigint): PendingWork {
       if (!out.liveCall || c.id > out.liveCall.id) out.liveCall = c;
     }
   }
+  for (const r of db.searchRequest.searchBySession.filter(sessionId)) {
+    if (isSearchOpen(r) && (!out.search || r.id > out.search.id)) out.search = r;
+  }
   return out;
+}
+
+/** D18: a search request still waiting for its read-back or its confirm. */
+export function isSearchOpen(r: SearchRequest): boolean {
+  return r.status.tag === 'Prepared' || r.status.tag === 'AwaitingConfirm';
 }
 
 /** The session already has a call being dialed or on the line. One call at a time: a second is refused. */
@@ -107,7 +120,7 @@ function lineBusy(db: ReadDb, sessionId: bigint, exceptCallId = 0n): boolean {
 }
 
 export function hasAnythingPending(p: PendingWork): boolean {
-  return !!(p.errand || p.call || p.liveCall || p.submitting);
+  return !!(p.errand || p.call || p.liveCall || p.submitting || p.search);
 }
 
 // ---------- Spoken reasons ----------
@@ -142,6 +155,11 @@ const SAY: Record<string, string> = {
 function sayFor(code: string, isCall: boolean): string {
   const s = hasKey(SAY, code) ? SAY[code]! : 'Stopped. Nothing was sent.';
   return isCall ? s.replace('Nothing was sent.', 'No call was made.') : s;
+}
+
+/** D18: the same sentences for a web search the person did not confirm. */
+function saySearch(code: string): string {
+  return sayFor(code, false).replace('Nothing was sent.', 'No search was started.');
 }
 
 /**
@@ -372,6 +390,161 @@ export function voidPending(ctx: Ctx, sessionId: bigint, code: string, actor: Ac
       requestCallCancel(ctx, c, dialerCancelReason(code), { actor, cue: false });
     }
   }
+  for (const r of [...ctx.db.searchRequest.searchBySession.filter(sessionId)]) {
+    if (isSearchOpen(r)) stopSearch(ctx, r, code, { actor, cue: false });
+  }
+}
+
+// ---------- D18: a web search the person picked (read-back, then a two-option confirm) ----------
+
+/** The module's own read-back for a Search pick: the station reads it as it is, numbers included. */
+export const SEARCH_READBACK = 'Search the web for ideas? One: yes. Two: cancel.';
+
+function saveSearch(ctx: Ctx, r: SearchRequest): SearchRequest {
+  const next = { ...r, updatedAt: ctx.timestamp };
+  ctx.db.searchRequest.id.update(next);
+  return next;
+}
+
+export function clearSearchTimers(ctx: Ctx, searchId: bigint, kinds?: SearchTimerKind['tag'][]): void {
+  for (const r of [...ctx.db.searchTimer.searchId.filter(searchId)]) {
+    if (!kinds || kinds.includes(r.kind.tag)) ctx.db.searchTimer.scheduledId.delete(r.scheduledId);
+  }
+}
+
+export function armSearchTimer(ctx: Ctx, searchId: bigint, kind: SearchTimerKind['tag'], seq: number, when: Timestamp): void {
+  clearSearchTimers(ctx, searchId, [kind]);
+  ctx.db.searchTimer.insert({ scheduledId: 0n, scheduledAt: onceAt(when), searchId, kind: { tag: kind }, seq });
+}
+
+function searchDeadlinePassed(ctx: Ctx, searchId: bigint, kind: SearchTimerKind['tag'], seq: number): boolean {
+  for (const r of ctx.db.searchTimer.searchId.filter(searchId)) {
+    if (r.kind.tag === kind && r.seq === seq && timerDue(r, ctx.timestamp)) return true;
+  }
+  return false;
+}
+
+function searchEvent(ctx: Ctx, r: SearchRequest, key: string, status: 'started' | 'ok' | 'error', detail: string, actor: Actor = 'Module'): void {
+  writePipeline(ctx, {
+    eventKey: `w${r.id}:${key}`,
+    sessionId: r.sessionId,
+    questionId: r.questionId,
+    stage: 'search',
+    status,
+    detail,
+    actor,
+  });
+}
+
+/**
+ * A pick on a Search option: a Prepared request with the module's read-back and a read-back deadline. Without web
+ * search consent it is Refused at once, and no search can start.
+ */
+export function createSearchFromPick(ctx: Ctx, cfg: Config, s: Session, q: Question, o: AnswerOption, gestureId: string): SearchRequest {
+  const consentOk = hasConsent(ctx.db, 'WebSearch', '');
+  const inserted = ctx.db.searchRequest.insert({
+    id: 0n,
+    sessionId: s.id,
+    questionId: q.id,
+    optionId: o.id,
+    status: consentOk ? { tag: 'Prepared' } : { tag: 'Refused' },
+    readBackText: SEARCH_READBACK,
+    digest: '',
+    reasonCode: consentOk ? '' : 'no_consent',
+    reason: consentOk ? '' : saySearch('no_consent'),
+    windowSeq: 0,
+    readbackDoneAt: undefined,
+    confirmOpensAt: undefined,
+    confirmClosesAt: undefined,
+    confirmedAt: undefined,
+    confirmGestureId: '',
+    stopGestureId: '',
+    followUpQuestionId: 0n,
+    createdAt: ctx.timestamp,
+    updatedAt: ctx.timestamp,
+    endedAt: consentOk ? undefined : ctx.timestamp,
+  });
+  const r = saveSearch(ctx, { ...inserted, digest: digest16(`search:${inserted.id}:${SEARCH_READBACK}`) });
+  if (!consentOk) {
+    emitCue(ctx, s.id, 'search_refused', { reason: 'no_consent', questionId: q.id, optionId: o.id });
+    appendLedger(ctx, s.id, 'search', 'Station', { questionId: q.id, optionId: o.id, gestureId, outcome: 'refused', reason: 'no_consent' });
+    searchEvent(ctx, r, 'refused', 'error', 'refused: no_consent');
+    return r;
+  }
+  armSearchTimer(ctx, r.id, 'Readback', 0, plusMs(ctx.timestamp, cfg.readbackDeadlineMs));
+  emitCue(ctx, s.id, 'search_readback', { questionId: q.id, optionId: o.id });
+  appendLedger(ctx, s.id, 'search', 'Station', { questionId: q.id, optionId: o.id, gestureId, digest: r.digest, outcome: 'prepared' });
+  searchEvent(ctx, r, 'prepared', 'started', 'search read-back');
+  return r;
+}
+
+/** Stops a search nobody has confirmed. A Confirmed, Stopped or Refused request is left as it is. */
+export function stopSearch(ctx: Ctx, r: SearchRequest, code: string, opts: StopOpts): SearchRequest {
+  if (!isSearchOpen(r)) return r;
+  clearSearchTimers(ctx, r.id);
+  const next = saveSearch(ctx, {
+    ...r,
+    status: { tag: 'Stopped' },
+    reasonCode: code,
+    reason: saySearch(code),
+    stopGestureId: opts.gestureId ?? '',
+    endedAt: ctx.timestamp,
+  });
+  if (opts.cue !== false) emitCue(ctx, r.sessionId, 'not_sent', { reason: code, questionId: r.questionId, optionId: r.optionId });
+  appendLedger(ctx, r.sessionId, 'search', opts.actor, { questionId: r.questionId, optionId: r.optionId, gestureId: opts.gestureId, digest: r.digest, outcome: 'stopped', reason: code });
+  searchEvent(ctx, next, 'stopped', 'error', `stopped: ${codeLabel(code)}`);
+  return next;
+}
+
+/**
+ * The confirm pick for a search (PICK_1, or CONFIRM in Scan mode): the same checks as an errand's, with web search
+ * consent. Returns '' when the request is now Confirmed (the caller then opens the categories turn), else the ignore
+ * reason. An early pick restarts the quiet hold.
+ */
+export function confirmSearch(ctx: Ctx, s: Session, r: SearchRequest, g: ConfirmInput): string {
+  const cfg = getConfig(ctx.db);
+  const reason = gateReason(ctx, s.id, {
+    status: r.status.tag,
+    readbackDoneAt: r.readbackDoneAt,
+    confirmOpensAt: r.confirmOpensAt,
+    confirmClosesAt: r.confirmClosesAt,
+    digest: r.digest,
+    consentOk: hasConsent(ctx.db, 'WebSearch', ''),
+  }, g);
+  if (reason === 'quiet_hold') {
+    const { opensAt, closesAt } = restartHold(ctx, cfg);
+    const windowSeq = r.windowSeq + 1;
+    saveSearch(ctx, { ...r, confirmOpensAt: opensAt, confirmClosesAt: closesAt, windowSeq });
+    armSearchTimer(ctx, r.id, 'ConfirmWindow', windowSeq, closesAt);
+    return reason;
+  }
+  if (reason) return reason;
+  const next = saveSearch(ctx, {
+    ...r,
+    status: { tag: 'Confirmed' },
+    confirmGestureId: g.gestureId,
+    confirmedAt: ctx.timestamp,
+    endedAt: ctx.timestamp,
+  });
+  clearSearchTimers(ctx, r.id);
+  emitCue(ctx, s.id, 'confirmed', { questionId: r.questionId, optionId: r.optionId });
+  appendLedger(ctx, s.id, 'search', 'Station', { questionId: r.questionId, optionId: r.optionId, gestureId: g.gestureId, digest: r.digest, outcome: 'confirmed' });
+  searchEvent(ctx, next, 'confirmed', 'ok', 'search confirmed', 'Station');
+  return '';
+}
+
+/** Records the categories turn a confirmed search opened. */
+export function setSearchFollowUp(ctx: Ctx, searchId: bigint, followUpQuestionId: bigint): void {
+  const r = ctx.db.searchRequest.id.find(searchId);
+  if (r) saveSearch(ctx, { ...r, followUpQuestionId });
+}
+
+/** `search_timeout`: the read-back deadline or the confirm window, each only for the row it was armed for. */
+export function searchTimedOut(ctx: Ctx, searchId: bigint, kind: SearchTimerKind['tag'], seq: number): void {
+  const r = ctx.db.searchRequest.id.find(searchId);
+  if (!r) return;
+  if (kind === 'Readback' && r.status.tag === 'Prepared' && seq === r.windowSeq) stopSearch(ctx, r, 'readback_not_finished', { actor: 'Scheduler' });
+  if (kind === 'ConfirmWindow' && r.status.tag === 'AwaitingConfirm' && seq === r.windowSeq) stopSearch(ctx, r, 'window_closed', { actor: 'Scheduler' });
 }
 
 // ---------- Made when the person picks an errand or call option (4.3, 4.4) ----------
@@ -634,7 +807,29 @@ export function readbackDone(ctx: Ctx, s: Session, kind: string, id: bigint, dig
     callEvent(ctx, next, 'readback', 'ok', 'read-back done', 'Station');
     return;
   }
-  throw new SenderError('kind must be errand or call');
+  if (kind === 'search') {
+    const r = ctx.db.searchRequest.id.find(id);
+    if (!r || r.sessionId !== s.id) throw new SenderError('no such search');
+    if (r.status.tag === 'AwaitingConfirm' && r.digest === digest) return; // a retry
+    if (r.status.tag !== 'Prepared') throw new SenderError('search is not waiting for a read-back');
+    if (digest !== r.digest) throw new SenderError('digest mismatch: the station played a stale read-back');
+    if (searchDeadlinePassed(ctx, r.id, 'Readback', r.windowSeq)) throw new SenderError('read-back deadline passed');
+    const windowSeq = r.windowSeq + 1;
+    const next = saveSearch(ctx, {
+      ...r,
+      status: { tag: 'AwaitingConfirm' },
+      readbackDoneAt: ctx.timestamp,
+      confirmOpensAt: opensAt,
+      confirmClosesAt: closesAt,
+      windowSeq,
+    });
+    clearSearchTimers(ctx, r.id, ['Readback']);
+    armSearchTimer(ctx, r.id, 'ConfirmWindow', windowSeq, closesAt);
+    appendLedger(ctx, s.id, 'search', 'Station', { questionId: r.questionId, optionId: r.optionId, digest, outcome: 'awaiting_confirm' });
+    searchEvent(ctx, next, 'readback', 'ok', 'read-back done', 'Station');
+    return;
+  }
+  throw new SenderError('kind must be errand, call or search');
 }
 
 // ---------- The CONFIRM checks (3.4 step 6) ----------
@@ -1173,6 +1368,12 @@ export function stopUncovered(ctx: Ctx, scope: ConsentScope['tag'], actor: Actor
   // Web search and memory are flags copied onto a job when it is made. Revoking the scope clears the flag on every
   // job not yet done (the sidecar reads it from `agent_queue`; a later `search` report is refused), and cancels a
   // Remember job, which would otherwise still write the spoken reply into memory.
+  // D18: a search nobody has confirmed yet stops when web search consent goes.
+  if (scope === 'WebSearch' && !hasConsent(ctx.db, 'WebSearch', '')) {
+    for (const tag of ['Prepared', 'AwaitingConfirm'] as const) {
+      for (const r of [...ctx.db.searchRequest.searchByStatus.filter({ tag })]) stopSearch(ctx, r, 'consent_revoked', { actor });
+    }
+  }
   if ((scope === 'WebSearch' || scope === 'Memory') && !hasConsent(ctx.db, scope, '')) {
     for (const tag of ['Pending', 'Claimed'] as const) {
       for (const j of [...ctx.db.agentJob.jobByStatus.filter({ tag })]) {

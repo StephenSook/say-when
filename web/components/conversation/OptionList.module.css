@@ -92,6 +92,14 @@
   gap: var(--s1);
 }
 
+/* The earpiece's short label (D18), so the room can match "Three: cafe on Bay" to its row. */
+.ear {
+  font-size: var(--text-meta);
+  line-height: var(--leading-tight);
+  color: var(--fg);
+  white-space: nowrap;
+}
+
 .tone {
   font-size: var(--text-meta);
   line-height: var(--leading-tight);

@@ -15,8 +15,22 @@ describe('decoder frames', () => {
   });
 
   test('a good gesture keeps its id, source, confidence and age', () => {
-    const frame = parseDecoderFrame(JSON.stringify({ type: 'gesture', id: 'a1-b2', command: 'YES', onsetAgeMs: 840, confidence: 0.82, source: 'imagery' }));
-    assert.deepEqual(frame, { kind: 'gesture', command: 'YES', gestureId: 'a1-b2', idReplaced: false, source: 'imagery', confidence: 0.82, onsetAgeMs: 840 });
+    const frame = parseDecoderFrame(JSON.stringify({ type: 'gesture', id: 'a1-b2', command: 'PICK_2', onsetAgeMs: 840, confidence: 0.82, source: 'imagery' }));
+    assert.deepEqual(frame, { kind: 'gesture', command: 'PICK_2', gestureId: 'a1-b2', idReplaced: false, source: 'imagery', confidence: 0.82, onsetAgeMs: 840 });
+  });
+
+  test('the six direct select words pass (D18): PICK_1 to PICK_4, STOP, HEADSET_OFF', () => {
+    for (const command of ['PICK_1', 'PICK_2', 'PICK_3', 'PICK_4', 'STOP', 'HEADSET_OFF']) {
+      const frame = parseDecoderFrame(JSON.stringify({ type: 'gesture', id: 'g', command, source: 'jaw' }));
+      assert.equal(frame.kind, 'gesture', command);
+      if (frame.kind === 'gesture') assert.equal(frame.command, command);
+    }
+  });
+
+  test('a scan word (YES, NO, CONFIRM) is a scan_command: the decoder runs --mode scan', () => {
+    for (const command of ['YES', 'NO', 'CONFIRM']) {
+      assert.deepEqual(parseDecoderFrame(JSON.stringify({ type: 'gesture', id: 'g', command })), { kind: 'bad', reason: 'scan_command' }, command);
+    }
   });
 
   test('a bad or missing id is replaced, so a STOP is never lost', () => {
@@ -32,19 +46,20 @@ describe('decoder frames', () => {
   });
 
   test('a bad source becomes decoder; a missing or negative age is 0; confidence is clamped, missing is 0', () => {
-    const frame = parseDecoderFrame(JSON.stringify({ type: 'gesture', id: 'g', command: 'NO', source: 'Jaw Clench', onsetAgeMs: -5, confidence: 3 }));
+    const frame = parseDecoderFrame(JSON.stringify({ type: 'gesture', id: 'g', command: 'PICK_1', source: 'Jaw Clench', onsetAgeMs: -5, confidence: 3 }));
     assert.ok(frame.kind === 'gesture');
     if (frame.kind !== 'gesture') return;
     assert.equal(frame.source, 'decoder');
     assert.equal(frame.onsetAgeMs, 0);
     assert.equal(frame.confidence, 1);
-    const bare = parseDecoderFrame(JSON.stringify({ type: 'gesture', id: 'g', command: 'NO' }));
+    const bare = parseDecoderFrame(JSON.stringify({ type: 'gesture', id: 'g', command: 'PICK_1' }));
     assert.ok(bare.kind === 'gesture' && bare.confidence === 0 && bare.onsetAgeMs === 0 && bare.source === 'decoder');
   });
 
-  test('a command outside the five words is bad; an unknown type and binary frames are ignored', () => {
+  test('a command outside the six words is bad; an unknown type and binary frames are ignored', () => {
     assert.deepEqual(parseDecoderFrame(JSON.stringify({ type: 'gesture', id: 'g', command: 'MAYBE' })), { kind: 'bad', reason: 'bad_command' });
-    assert.deepEqual(parseDecoderFrame(JSON.stringify({ type: 'gesture', id: 'g', command: 'yes' })), { kind: 'bad', reason: 'bad_command' });
+    assert.deepEqual(parseDecoderFrame(JSON.stringify({ type: 'gesture', id: 'g', command: 'pick_1' })), { kind: 'bad', reason: 'bad_command' });
+    assert.deepEqual(parseDecoderFrame(JSON.stringify({ type: 'gesture', id: 'g', command: 'PICK_5' })), { kind: 'bad', reason: 'bad_command' });
     assert.deepEqual(parseDecoderFrame('not json'), { kind: 'bad', reason: 'not_json' });
     assert.deepEqual(parseDecoderFrame('[1,2]'), { kind: 'bad', reason: 'not_json' });
     assert.deepEqual(parseDecoderFrame(JSON.stringify({ type: 'telemetry' })), { kind: 'ignored', reason: 'unknown_type' });
@@ -138,9 +153,20 @@ describe('the decoder bridge', () => {
     const h = harness();
     h.bridge.start();
     h.sockets[0]!.open();
-    h.sockets[0]!.message(JSON.stringify({ type: 'gesture', id: 'g-1', command: 'CONFIRM', onsetAgeMs: 840, confidence: 0.9, source: 'jaw' }));
+    h.sockets[0]!.message(JSON.stringify({ type: 'gesture', id: 'g-1', command: 'PICK_3', onsetAgeMs: 840, confidence: 0.9, source: 'jaw' }));
     assert.equal(h.commands.length, 1);
-    assert.deepEqual(h.commands[0], { command: 'CONFIRM', gestureId: 'g-1', source: 'jaw', confidence: 0.9, onsetLocal: 5_000 - 840, via: 'decoder', idReplaced: false });
+    assert.deepEqual(h.commands[0], { command: 'PICK_3', gestureId: 'g-1', source: 'jaw', confidence: 0.9, onsetLocal: 5_000 - 840, via: 'decoder', idReplaced: false });
+  });
+
+  test('a scan word from a --mode scan decoder is dropped, counted, and marked for the restart note', () => {
+    const h = harness();
+    h.bridge.start();
+    h.sockets[0]!.open();
+    assert.equal(h.bridge.getState().lastScanWordAt, null);
+    h.sockets[0]!.message(JSON.stringify({ type: 'gesture', id: 'g-2', command: 'YES', source: 'imagery' }));
+    assert.equal(h.commands.length, 0, 'never relayed: this database picks by number');
+    assert.equal(h.bridge.getState().badMessages, 1);
+    assert.equal(h.bridge.getState().lastScanWordAt, 5_000);
   });
 
   test('bad messages are counted and dropped; replaced ids are counted and still relayed', () => {

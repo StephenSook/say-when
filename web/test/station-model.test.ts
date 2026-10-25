@@ -16,7 +16,9 @@ import {
   heartbeatChip,
   inputBanner,
   inputChip,
+  gestureLegendLine,
   keyboardLegend,
+  stationOptionRows,
   lastWorkLine,
   pauseSentence,
   SESSION_LABEL_RE,
@@ -49,8 +51,8 @@ function base(patch: Partial<StationSnapshot> = {}): StationSnapshot {
     session: { id: null, ownership: 'none', label: null, error: null, questionId: null, questionText: '', origin: null },
     scan: null,
     options: [
-      { optionId: 11n, rank: 1, text: 'Tea please', tone: 'calm', kind: 'Reply', ready: true },
-      { optionId: 12n, rank: 2, text: 'Send the care team a request', tone: 'warm', kind: 'Errand', ready: true },
+      { optionId: 11n, rank: 1, text: 'Tea please', label: 'Tea', tone: 'calm', kind: 'Reply', ready: true },
+      { optionId: 12n, rank: 2, text: 'Send the care team a request', label: '', tone: 'warm', kind: 'Errand', ready: true },
     ],
     earpiece: { readyCount: 2, optionCount: 2, synthesizing: null, lagMedianMs: 80, nowPlaying: null, waitingFor: null, wordTimingsOff: false, yesNoPromptMs: null },
     playing: null,
@@ -79,8 +81,39 @@ describe('honest input labels', () => {
     assert.equal(inputBanner(base({ setup: { ...base().setup, mode: 'keyboard' } })), 'Keyboard test input. These are key presses, not headset signals.');
     assert.equal(inputBanner(base({ setup: { ...base().setup, mode: 'switch' } })), 'USB switch input. These are switch presses, not headset signals.');
     assert.match(inputBanner(base({ setup: { ...base().setup, mode: 'keyboard', silent: true } })) ?? '', /Silent test: options are not voiced\.$/);
-    assert.equal(keyboardLegend(base({ setup: { ...base().setup, mode: 'keyboard' } })), 'Y = YES   N = NO   C = CONFIRM   S = STOP   H = headset off (test)');
+    assert.equal(
+      keyboardLegend(base({ setup: { ...base().setup, mode: 'keyboard' } })),
+      '1 2 3 = pick that option (in a confirm: 1 = send it, 2 = cancel)   S = STOP   H = headset off (test)',
+    );
     assert.equal(keyboardLegend(base()), null);
+  });
+
+  test('the gesture legend follows the input, from the one legend in lib/commands.ts (D18, D21: no 4)', () => {
+    assert.equal(
+      gestureLegendLine(base()),
+      '1 = imagined left fist · 2 = imagined right fist · 3 = single jaw clench · STOP = held jaw clench',
+    );
+    assert.match(gestureLegendLine(base({ setup: { ...base().setup, mode: 'keyboard' } })) ?? '', /^1 2 3 = pick that option/);
+    assert.equal(
+      gestureLegendLine(base({ setup: { ...base().setup, mode: 'switch' } })),
+      '1 = short switch press · 2 = double switch press · STOP = long switch press · 3 is not on the switch',
+    );
+    assert.equal(gestureLegendLine(base({ setup: { ...base().setup, mode: null } })), null);
+  });
+
+  test('the live list is numbered, with the gesture for each number; words only with sharing on', () => {
+    const off = stationOptionRows(base());
+    assert.deepEqual(
+      off.map((r) => [r.badge, r.words, r.gesture, r.kind]),
+      [
+        ['1', 'Option 1', 'imagined left fist', null],
+        ['2', 'Option 2', 'imagined right fist', 'request'],
+      ],
+    );
+    const on = stationOptionRows(base({ config: { ...base().config!, shareText: true } }));
+    assert.deepEqual(on.map((r) => r.words), ['Tea', 'Send the care team a request'], 'the label, else the words');
+    const keys = stationOptionRows(base({ setup: { ...base().setup, mode: 'keyboard' } }));
+    assert.deepEqual(keys.map((r) => r.gesture), ['key 1', 'key 2']);
   });
 
   test('session labels: keyboard is always a test; labels pass the module check', () => {
@@ -148,14 +181,18 @@ describe('before a session', () => {
 describe('during a session', () => {
   test('reading, window, veto, preparing, idle', () => {
     assert.equal(bigStatus(running({ scan: scan({ phase: 'reading' }) }), NOW).title, 'Reading option 2 of 2');
-    assert.equal(bigStatus(running({ scan: scan({ phase: 'window' }) }), NOW).title, 'Window open for option 2 of 2');
+    // Direct select (D18): after the list is read, the wait is for any number.
+    const wait = bigStatus(running({ scan: scan({ phase: 'window' }) }), NOW);
+    assert.equal(wait.title, 'Waiting for a pick');
+    assert.equal(wait.sentence, '1 or 2 picks. Silence picks nothing.');
+    assert.equal(bigStatus(running({ scan: scan({ phase: 'reading' }) }), NOW).sentence, 'Any number picks it, any time.');
     assert.equal(bigStatus(running({ scan: scan({ phase: 'reading', answerMode: 'yes_no', cursor: 0 }) }), NOW).title, 'Reading: Yes or no?');
     assert.equal(bigStatus(running({ scan: scan({ phase: 'reading', mode: 'menu', cursor: 3, optionCount: 4 }) }), NOW).title, 'Reading menu item 3 of 4');
     const veto = bigStatus(running({ scan: scan({ phase: 'veto', stepMs: 700, arrivedWall: NOW, pickedRank: 2 }) }), NOW);
     assert.equal(veto.title, 'Picked option 2. Saying it in 0.7 s.');
-    assert.equal(veto.sentence, 'NO or STOP cancels.');
+    assert.equal(veto.sentence, 'STOP cancels.');
     assert.equal(bigStatus(running({ scan: scan({ phase: 'preparing' }) }), NOW).title, 'Getting options ready');
-    assert.equal(bigStatus(running({ scan: scan({ phase: 'idle' }) }), NOW).sentence, "YES opens the person's menu.");
+    assert.equal(bigStatus(running({ scan: scan({ phase: 'idle' }) }), NOW).sentence, null, 'no menu from idle in direct select');
   });
 
   test('a yes or no answer reads as an answer, not as a picked option', () => {
@@ -174,8 +211,8 @@ describe('during a session', () => {
   });
 
   test('every pause reason has its sentence; a helper pause shows the owner command', () => {
-    assert.equal(pauseSentence('stop', 'headset', 120_000), 'Paused. YES resumes.');
-    assert.equal(pauseSentence('idle', 'headset', 120_000), 'Paused after 2 minutes. YES resumes.');
+    assert.equal(pauseSentence('stop', 'headset', 120_000), 'Paused. 1 resumes.');
+    assert.equal(pauseSentence('idle', 'headset', 120_000), 'Paused after 2 minutes. 1 resumes.');
     assert.equal(pauseSentence('headset_off', 'headset', 120_000), 'Headset off. Nothing will be sent.');
     assert.equal(pauseSentence('headset_off', 'keyboard', 120_000), 'Input off. Nothing will be sent.');
     assert.equal(pauseSentence('headset_lost', 'switch', 120_000), 'Signal lost. Nothing will be sent.');
@@ -190,7 +227,8 @@ describe('during a session', () => {
       bigStatus(running({ readback: { ...base().readback, phase, ...extra } }), NOW);
     assert.equal(rb('playing').title, 'Reading it back');
     assert.equal(rb('hold').title, 'Waiting for your confirm');
-    assert.equal(rb('window', { windowStartedWall: NOW - 3_000 }).sentence, '5.0 s left. Silence sends nothing.');
+    assert.equal(rb('window', { windowStartedWall: NOW - 3_000 }).sentence, '5.0 s left. 1 to send, 2 to cancel. Silence sends nothing.');
+    assert.match(rb('playing').sentence ?? '', /fresh 1 after the read-back/);
     assert.equal(rb('window', { windowStartedWall: NOW - 3_000 }).status, 'waiting');
     assert.equal(rb('too_long').status, 'stopped');
     assert.equal(rb('late').title, 'Not sent: the read-back took too long.');
@@ -207,10 +245,11 @@ describe('during a session', () => {
     assert.equal(off.words, null);
     const on = earpieceHero(running({ scan: scan({ phase: 'reading', cursor: 1 }), config: { ...base().config!, shareText: true } }), NOW);
     assert.equal(on.title, 'Option 1 of 2, calm');
-    assert.equal(on.words, 'Tea please');
+    assert.equal(on.words, 'One: Tea. Tea please', 'what the earpiece says, then the words the room would hear');
     assert.equal(on.bar?.label, 'Reading the option');
     const window = earpieceHero(running({ scan: scan({ phase: 'window', stepMs: 3_000, arrivedWall: NOW - 1_000 }) }), NOW);
-    assert.equal(window.bar?.valueText, 'window, 2.0 s left');
+    assert.equal(window.title, 'Waiting for a pick: 1 or 2');
+    assert.equal(window.bar?.valueText, 'waiting for a pick, 2.0 s left');
     const silent = earpieceHero(running({ setup: { ...base().setup, mode: 'keyboard', silent: true }, scan: scan({ phase: 'reading', cursor: 1 }) }), NOW);
     assert.equal(silent.title, 'Option 1, not voiced');
     assert.equal(silent.note, 'Silent test: options are not voiced.');
@@ -225,7 +264,7 @@ describe('during a session', () => {
   test('command rows: the source in words, ignored is muted, HEADSET_OFF from a key is labeled a test', () => {
     const entry = (patch: Partial<CommandEntry>): CommandEntry => ({
       gestureId: 'g',
-      command: 'YES',
+      command: 'PICK_2',
       source: 'key',
       via: 'key',
       at: NOW,
@@ -276,5 +315,11 @@ describe('the decoder permission hint (docs/station.md 5.1)', () => {
     assert.deepEqual(decoderNotes({ decoder: decoder({ slowConnect: true, word: 'healthy' }) }), []);
     assert.deepEqual(decoderNotes({ decoder: null }), []);
     assert.match(DECODER_PERMISSION_NOTE, /click Allow/);
+  });
+
+  test('a scan word says to restart the decoder in direct select, instead of the plain bad message line', () => {
+    const [note] = decoderNotes({ decoder: decoder({ word: 'healthy', recentBad: true, badMessages: 1, recentScanWord: true }) });
+    assert.match(note ?? '', /python live\.py --window --mode direct/);
+    assert.deepEqual(decoderNotes({ decoder: decoder({ word: 'healthy', recentBad: true, badMessages: 2 }) }), ['Bad decoder message (2 so far).']);
   });
 });

@@ -198,7 +198,7 @@ jobs:
           echo "passing tests: $pass, failing: $failed"
           test "$failed" -eq 0
           # Floor on passing tests, so a run that finds no tests cannot pass.
-          test "$pass" -ge 196
+          test "$pass" -ge 233
 
   web:
     name: Web dashboard (typecheck, tests, production build)
@@ -296,4 +296,4 @@ jobs:
           grep -qE '^# fail 0$' test.log
           pass=$(awk '/^# pass/ {print $3}' test.log)
           echo "passing tests: $pass"
-          test "$pass" -ge 320
+          test "$pass" -ge 351

@@ -53,6 +53,11 @@ interface JobRecord {
     replyText: string;
     recentErrandTitle: string;
     recentErrandSentAtMs: number | null;
+    /** Direct select: the original question of a categories or search turn (0n otherwise), and its words. */
+    parentQuestionId: bigint;
+    parentQuestionText: string;
+    /** Direct select: the Category option picked, for a `category_search` job. */
+    category: string;
     createdAtMs: number;
     /** False once the question was picked, cancelled or superseded: publishes then write nothing. */
     questionOpen: boolean;
@@ -160,6 +165,16 @@ export interface NewErrandPreview {
 
 const refuse = (reducer: string, message: string) => new DbCallError('refused', reducer, message);
 
+/**
+ * The option kinds each job may publish, as the module allows them (spacetime/src/agent.ts KINDS_FOR_JOB): a Category
+ * option, whose pick starts a search at once, comes only from a categories job, which only a confirmed Search makes.
+ */
+export const KINDS_FOR_JOB: Partial<Record<JobKind, readonly OptionInput['kind'][]>> = {
+    options: ['reply', 'errand', 'call', 'search'],
+    categories: ['category', 'reply'],
+    category_search: ['reply'],
+};
+
 /** The module's stand-in. `me` is the sidecar's identity; rows claimed by anyone else are someone else's. */
 export class MemoryDb implements AgentDb {
     readonly me: string;
@@ -237,6 +252,9 @@ export class MemoryDb implements AgentDb {
                 replyText: job.replyText,
                 recentErrandTitle: job.recentErrandTitle,
                 recentErrandSentAtMs: job.recentErrandSentAtMs,
+                parentQuestionId: job.parentQuestionId,
+                parentQuestionText: job.parentQuestionText,
+                category: job.category,
                 createdAtMs: job.createdAtMs,
             });
         }
@@ -360,6 +378,51 @@ export class MemoryDb implements AgentDb {
             replyText: '',
             recentErrandTitle: job.recentErrandTitle ?? '',
             recentErrandSentAtMs: job.recentErrandSentAtMs ?? null,
+            parentQuestionId: 0n,
+            parentQuestionText: '',
+            category: '',
+            createdAtMs: this.now(),
+            questionOpen: true,
+        });
+        this.changed();
+        return id;
+    }
+
+    /** The question a job answers, so a test can open the direct select follow-ups on it. */
+    questionOf(jobId: bigint): bigint {
+        const job = this.jobs.get(jobId);
+        if (!job) throw new Error('questionOf: no such job');
+        return job.questionId;
+    }
+
+    /**
+     * Direct select, like the module's createFollowUp (spacetime/src/clock.ts): a confirmed Search opens a categories
+     * turn and a Category pick a search turn, each a new question row on the person's original question
+     * (`parentQuestionId`, its words copied), with one job. A categories job carries no web search consent (it makes
+     * no web call); a search job carries the WebSearch consent. Without `parentQuestionId` a new original is made up.
+     */
+    addFollowUpJob(job: { kind: 'categories' | 'category_search'; questionText: string; parentQuestionId?: bigint; category?: string; webSearchAllowed?: boolean; memoryAllowed?: boolean }): bigint {
+        const id = this.id();
+        this.jobs.set(id, {
+            id,
+            kind: job.kind,
+            status: 'pending',
+            attempt: 0,
+            claimedBy: null,
+            questionId: this.id(),
+            questionText: job.questionText,
+            origin: 'partner',
+            menuItem: 'none',
+            askedBy: 'b'.repeat(64),
+            webSearchAllowed: job.webSearchAllowed ?? (job.kind === 'category_search' && this.consent.webSearch),
+            memoryAllowed: job.memoryAllowed ?? this.consent.memory,
+            errandId: 0n,
+            replyText: '',
+            recentErrandTitle: '',
+            recentErrandSentAtMs: null,
+            parentQuestionId: job.parentQuestionId ?? this.id(),
+            parentQuestionText: job.questionText,
+            category: job.kind === 'category_search' ? (job.category ?? '') : '',
             createdAtMs: this.now(),
             questionOpen: true,
         });
@@ -409,6 +472,9 @@ export class MemoryDb implements AgentDb {
             replyText: '',
             recentErrandTitle: '',
             recentErrandSentAtMs: null,
+            parentQuestionId: 0n,
+            parentQuestionText: '',
+            category: '',
             createdAtMs: this.now(),
             questionOpen: true,
         });
@@ -436,6 +502,9 @@ export class MemoryDb implements AgentDb {
             replyText: job.replyText,
             recentErrandTitle: '',
             recentErrandSentAtMs: null,
+            parentQuestionId: 0n,
+            parentQuestionText: '',
+            category: '',
             createdAtMs: this.now(),
             questionOpen: true,
         });
@@ -737,7 +806,11 @@ export class MemoryDb implements AgentDb {
     private publish(a: ReducerArgs['agentPublishOptions']): void {
         const name = 'agentPublishOptions';
         const job = this.fenced(name, a.jobId, a.attempt);
-        if (job.kind !== 'options') throw refuse(name, 'not an options job');
+        // Direct select: the categories and category search jobs publish options for their question too, each only
+        // the kinds it may (spacetime/src/agent.ts KINDS_FOR_JOB).
+        const kinds = KINDS_FOR_JOB[job.kind];
+        if (!kinds) throw refuse(name, 'not an options job');
+        if (a.options.some((o) => !kinds.includes(o.kind))) throw refuse(name, `a ${job.kind} job cannot publish that option kind`);
         if (!job.questionOpen) {
             if (a.final) job.status = 'done';
             else this.renewLease(job);
@@ -752,6 +825,7 @@ export class MemoryDb implements AgentDb {
             throw refuse(name, 'answer_mode must be pick or yes_no');
         }
         for (const option of a.options) checkOption(name, option);
+        if (a.answerMode === 'yes_no' && a.options.some((o) => o.kind !== 'reply')) throw refuse(name, 'yes_no options must be replies');
         const version = Math.max(this.versions.get(job.questionId) ?? 0, 0) + 1;
         this.versions.set(job.questionId, version);
         this.publishes.push({
@@ -952,6 +1026,8 @@ function checkCounts(reducer: string, json: string): void {
 
 function checkOption(reducer: string, option: OptionInput): void {
     checkText(reducer, option.text, 'text', LIMITS.optionText, 1);
+    // Direct select: the earpiece label, empty for "read the text" (docs/direct-select.md section 4).
+    checkText(reducer, option.label, 'label', LIMITS.optionLabel);
     if (option.tone !== '' && !(TONES as readonly string[]).includes(option.tone)) throw refuse(reducer, 'tone is not in the allowlist');
     if (option.kind === 'errand') {
         const a = parseObject(reducer, option.actionJson, 'action_json');
@@ -969,9 +1045,9 @@ function checkOption(reducer: string, option: OptionInput): void {
         if (typeof a.recipientName !== 'string' || a.recipientName.trim() === '' || a.recipientName.length > 80) throw refuse(reducer, 'bad recipientName');
         if (typeof a.readBack !== 'string' || a.readBack.trim() === '' || a.readBack.length > 500) throw refuse(reducer, 'bad readBack');
         if (typeof a.expiresAt !== 'number' || !Number.isFinite(a.expiresAt)) throw refuse(reducer, 'bad expiresAt');
-    } else if (option.kind === 'reply') {
+    } else if (option.kind === 'reply' || option.kind === 'search' || option.kind === 'category') {
         if (option.actionJson !== '') throw refuse(reducer, 'a reply carries no action');
     } else {
-        throw refuse(reducer, 'kind must be reply, errand or call');
+        throw refuse(reducer, 'kind must be reply, errand, call, search or category');
     }
 }

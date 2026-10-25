@@ -87,14 +87,16 @@ export function micros(ts: Timestamp | undefined): bigint {
 }
 
 /**
- * A fresh database after `init`, published by OWNER. The tests below run the D11 timed scan (silence moves on); the
- * D19 tests (paced.test.ts) turn `scanPolicy.silenceRepeats` back on.
+ * A fresh database after `init`, published by OWNER. A new database answers by direct select (D18); the suites
+ * written for the scanning cursor ask for `scan`, so they run exactly as before. Those run the D11 timed scan
+ * (silence moves on); the D19 tests (paced.test.ts) turn `scanPolicy.silenceRepeats` back on.
  */
-export function emptyDb(): Test {
+export function emptyDb(mode: 'scan' | 'direct' = 'scan'): Test {
   scanPolicy.silenceRepeats = false;
   const test = createModuleTestHarness(spacetimedb, m);
   test.clock.set(new Timestamp(NOW_MICROS));
   as(test, OWNER, (ctx) => m.init(ctx, {}));
+  if (mode === 'scan') as(test, OWNER, (ctx) => m.setInputMode(ctx, { mode: 'scan' }));
   return test;
 }
 
@@ -113,8 +115,8 @@ export function beat(test: Test, healthy = true): void {
 }
 
 /** Four paired devices, an active session, one healthy heartbeat. The partner is a caregiver. */
-export function newDb(): Test {
-  const test = emptyDb();
+export function newDb(mode: 'scan' | 'direct' = 'scan'): Test {
+  const test = emptyDb(mode);
   pair(test, STATION, 'station');
   pair(test, PARTNER, 'partner', true);
   pair(test, SPEAKER, 'speaker');
@@ -148,12 +150,12 @@ export function ask(test: Test, text = 'Do you want some water?'): Question {
   return test.db.question.requestId.find(requestId)!;
 }
 
-export function pendingJob(test: Test, questionId: bigint, kind: 'Options' | 'ErrandPreview' | 'Remember' = 'Options') {
+export function pendingJob(test: Test, questionId: bigint, kind: 'Options' | 'ErrandPreview' | 'Remember' | 'Categories' | 'Search' = 'Options') {
   return [...test.db.agentJob.jobByQuestion.filter(questionId)].find((j) => j.kind.tag === kind && j.status.tag === 'Pending');
 }
 
 /** The agent claims the question's pending job of this kind. Returns the claimed row. */
-export function claim(test: Test, questionId: bigint, kind: 'Options' | 'ErrandPreview' | 'Remember' = 'Options') {
+export function claim(test: Test, questionId: bigint, kind: 'Options' | 'ErrandPreview' | 'Remember' | 'Categories' | 'Search' = 'Options') {
   const job = pendingJob(test, questionId, kind);
   if (!job) throw new Error(`no pending ${kind} job for question ${questionId}`);
   as(test, AGENT, (ctx) => m.agentClaim(ctx, { jobId: job.id }));
@@ -161,7 +163,7 @@ export function claim(test: Test, questionId: bigint, kind: 'Options' | 'ErrandP
 }
 
 export function reply(text: string, extra: Partial<OptionInput> = {}): OptionInput {
-  return { kind: 'reply', text, tone: 'warm', laugh: false, provenance: 'memory', sources: [], memoryRefs: [], actionJson: '', ...extra };
+  return { kind: 'reply', text, tone: 'warm', laugh: false, provenance: 'memory', sources: [], memoryRefs: [], actionJson: '', label: '', ...extra };
 }
 
 export const FORM_KEY = 'care_team_request';
@@ -176,6 +178,7 @@ export function errandOption(text = 'Send the care team a lunch request', formKe
     sources: [],
     memoryRefs: [],
     actionJson: JSON.stringify({ formKey, formUrl: 'demo', formTitle: 'Care team request', fields: [{ label: 'Request', value: 'Lunch, please' }] }),
+    label: 'Send request',
   };
 }
 
@@ -198,6 +201,7 @@ export function callOption(test: Test, requestId = 'call-1', contactId = 'leon')
       digest: CALL_DIGEST,
       expiresAt: Number(now(test).toMillis()) + 120_000,
     }),
+    label: 'Call Leon',
   };
 }
 
@@ -272,7 +276,9 @@ export interface GestureOpts {
 }
 
 /** Relays one command as the station, by default heard at the current step on the current option. */
-export function gesture(test: Test, command: 'YES' | 'NO' | 'CONFIRM' | 'STOP' | 'HEADSET_OFF', opts: GestureOpts = {}): GestureLog {
+export type CommandWord = 'YES' | 'NO' | 'CONFIRM' | 'STOP' | 'HEADSET_OFF' | 'PICK_1' | 'PICK_2' | 'PICK_3' | 'PICK_4';
+
+export function gesture(test: Test, command: CommandWord, opts: GestureOpts = {}): GestureLog {
   const s = scan(test);
   const gestureId = opts.gestureId ?? `g-${nextGesture++}`;
   as(test, STATION, (ctx) =>

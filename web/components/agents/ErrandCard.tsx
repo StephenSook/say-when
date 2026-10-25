@@ -4,20 +4,20 @@
  * The form errand's big card (docs/ui.md "Screen 2", docs/mockups/agents.html): six numbered
  * steps on the left and the preview of the filled form on the right.
  *
- * 1 Picked with YES        the errand option, from the option rows
+ * 1 Picked with its number the errand option, from the option rows (direct select, D18)
  * 2 Form filled            the Actor filled the form in a browser; nothing is sent
  * 3 Values read back       the values the Actor read back off the page
  * 4 Read back              the read-back plays in the earpiece; its digest is in the tooltip only
- * 5 CONFIRM                the confirm window and its countdown; only CONFIRM sends it (a single jaw clench
- *                          with the headset, the key or the switch press otherwise)
+ * 5 Confirm                the confirm window and its countdown: "1 to send, 2 to cancel"; only a fresh 1
+ *                          sends it (the imagined left fist with the headset, key 1 or a short switch press)
  * 6 Sent                   with the form's confirmation text
  *
- * A NO, a STOP, the input coming off, a pause or the window running out stops the step it lands
+ * A 2 (cancel), a STOP, the input coming off, a pause or the window running out stops the step it lands
  * on with "Not sent: <reason>", in calm muted text. Only a broken step is red.
  */
 import type { ReactNode } from 'react';
 import { StepList, type Step } from '@/components/ui/StepList';
-import { signalPhrase, withSignal } from '@/lib/commands';
+import { CONFIRM_SHORT, confirmPick } from '@/lib/commands';
 import type { AnswerOption, CommandEvent, Errand, InputKind } from '@/lib/data/types';
 import { formatClock, formatSeconds } from '@/lib/format';
 import type { RunStatus } from '@/lib/status';
@@ -29,7 +29,7 @@ import { Countdown, Elapsed } from './Timers';
 
 export interface ErrandCardProps {
   errand: Errand;
-  /** The errand option YES picked, for its words. null when it is not in the rows. */
+  /** The errand option the person picked, for its words and number. null when it is not in the rows. */
   option: AnswerOption | null;
   commands: readonly CommandEvent[];
   safety: SafetyWord;
@@ -55,12 +55,14 @@ function errandSteps(errand: Errand, option: AnswerOption | null, commands: read
   const notSent = <Note>Not sent: {stopReason(errand, commands, input)}</Note>;
   const ended = clock(errand.endedAt);
   const picked = screenText(option?.text);
+  // Direct select (D18): the person picked it by its number.
+  const pickedBy = option ? String(option.rank) : 'its number';
 
   const steps: Step[] = [
     {
       key: 'picked',
       status: plan.picked,
-      label: numbered(1, picked ? `Picked with YES: "${picked}"` : 'Picked with YES'),
+      label: numbered(1, picked ? `Picked with ${pickedBy}: "${picked}"` : `Picked with ${pickedBy}`),
       time: formatClock(errand.createdAt),
       pick: true,
     },
@@ -150,13 +152,13 @@ function confirmStep(
   input: InputKind,
 ): Step {
   const step = { key: 'confirm', status };
-  const phrase = signalPhrase('CONFIRM', input);
+  const phrase = confirmPick(input);
   switch (status) {
     case 'waiting': {
       const paused = pauseWords(safety, input);
       return {
         ...step,
-        label: numbered(5, `Waiting for ${withSignal('CONFIRM', input)}`),
+        label: numbered(5, `Waiting for ${CONFIRM_SHORT}`),
         detail: paused ? (
           // The banner and the sentence on top already say "Nothing will be sent".
           <Note>{paused} This errand stops here and will not be sent.</Note>
@@ -165,7 +167,7 @@ function confirmStep(
             {errand.confirmClosesAt !== null ? (
               <Countdown closesAt={errand.confirmClosesAt} opensAt={errand.confirmOpensAt ?? errand.readAloudAt} label="Time left to confirm" />
             ) : null}
-            <Note>Only {phrase ?? 'CONFIRM'} sends it. If the time runs out, nothing is sent.</Note>
+            <Note>Only {phrase} sends it. 2 cancels. If the time runs out, nothing is sent.</Note>
           </>
         ),
       };
@@ -180,7 +182,7 @@ function confirmStep(
     case 'failed':
       return { ...step, label: numbered(5, 'Not confirmed'), time: ended, detail: <Note>{rowReason(errand, input)}</Note> };
     default:
-      return { ...step, label: numbered(5, phrase ? `Confirm with ${phrase}` : 'CONFIRM') };
+      return { ...step, label: numbered(5, `Confirm with ${phrase}`) };
   }
 }
 

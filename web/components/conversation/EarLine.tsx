@@ -35,6 +35,18 @@ export function EarLine({ cursor, live, pausedWord, prompt }: EarLineProps) {
   }
 
   const heard = prompt ? `: "${prompt}"` : '';
+  // Direct select (D18): the list was read; the earpiece is quiet while it waits for a pick.
+  if (cursor.waitingFor) {
+    return (
+      <div className={styles.ear}>
+        <span className={styles.label}>
+          <HeadsetIcon size={16} className={styles.icon} />
+          <span>{live ? `Waiting for a pick: ${cursor.waitingFor}` : `Waiting for a pick at the last update: ${cursor.waitingFor}`}</span>
+        </span>
+        {live ? <WindowCountdown startedAt={cursor.startedAt} endsAt={cursor.endsAt} label="Time left to pick" /> : null}
+      </div>
+    );
+  }
   if (!live) {
     return (
       <div className={styles.ear}>

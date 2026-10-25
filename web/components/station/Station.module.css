@@ -146,6 +146,54 @@
   overflow-wrap: anywhere;
 }
 
+/* The live list, numbered (D18): the number is what the person picks it by. */
+.optionList {
+  display: grid;
+  gap: var(--s1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.optionRow {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto auto;
+  align-items: baseline;
+  column-gap: var(--s3);
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.optionBadge {
+  font-size: var(--text-title);
+  font-weight: var(--weight-strong);
+}
+
+.optionWords {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.optionKind,
+.optionGesture {
+  color: var(--fg-muted);
+}
+
+.optionGesture {
+  white-space: nowrap;
+}
+
+@media (max-width: 520px) {
+  .optionRow {
+    grid-template-columns: 32px minmax(0, 1fr);
+  }
+
+  .optionGesture {
+    grid-column: 2;
+  }
+}
+
 .alertBlock {
   display: grid;
   gap: var(--s3);

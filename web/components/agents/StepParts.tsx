@@ -43,7 +43,7 @@ export function Note({ children }: { children: ReactNode }) {
 export function WithDigest({ value, children }: { value: string | null; children: ReactNode }) {
   const short = shortDigest(value);
   if (!short || value === null) return <>{children}</>;
-  return <span title={`Digest ${short} (full ${value.trim()}). A CONFIRM counts only if it matches.`}>{children}</span>;
+  return <span title={`Digest ${short} (full ${value.trim()}). A confirm (1) counts only if it matches.`}>{children}</span>;
 }
 
 /** The values the form agent read back off the filled page, label beside value. */

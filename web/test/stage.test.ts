@@ -122,22 +122,23 @@ describe('brain slot', () => {
 describe('decoder panel words', () => {
   const now = START + 10_000;
 
-  test('a headset session: YES and NO are imagined fists with a hand mark; the jaw commands have none', () => {
+  test('a headset session: 1 and 2 are imagined fists with a hand mark; the jaw commands (3, STOP) have none', () => {
     const view = buildDecoderView(
       [
         command('c1', 'STOP', START + 1_000),
-        command('c2', 'CONFIRM', START + 2_000),
-        command('c3', 'NO', START + 3_000, { confidence: 0.84 }),
-        command('c4', 'YES', START + 9_000),
+        command('c2', 'PICK_3', START + 2_000),
+        command('c3', 'PICK_1', START + 3_000, { confidence: 0.84 }),
+        command('c4', 'PICK_2', START + 9_000),
       ],
       'headset',
       now,
     );
     assert.equal(view.title, 'Headset');
-    assert.match(view.how ?? '', /Imagined fists choose\. Jaw clenches send or stop\./);
+    assert.match(view.how ?? '', /Imagined fists pick 1 and 2\. A single jaw clench picks 3; a held clench \(about 1 second\) is STOP\./);
+    assert.doesNotMatch(view.how ?? '', /double|4/);
     assert.deepEqual(view.last, {
       id: 'c4',
-      word: 'YES',
+      word: '2',
       signal: 'imagined right fist',
       hand: 'yes',
       ago: 'just now',
@@ -147,8 +148,8 @@ describe('decoder panel words', () => {
     assert.deepEqual(
       view.earlier.map((line) => [line.word, line.signal, line.hand]),
       [
-        ['NO', 'imagined left fist', 'no'],
-        ['CONFIRM', 'single jaw clench', null],
+        ['1', 'imagined left fist', 'no'],
+        ['3', 'single jaw clench', null],
         ['STOP', 'held jaw clench', null],
       ],
     );
@@ -156,13 +157,14 @@ describe('decoder panel words', () => {
   });
 
   test('a keyboard session names the keys, never a fist, the jaw or the brain, and shows no confidence', () => {
-    const commands = (['YES', 'NO', 'CONFIRM', 'STOP', 'HEADSET_OFF'] as const).map((name, i) => command(`k${i}`, name, START + i * 1_000));
+    const commands = (['PICK_1', 'PICK_2', 'PICK_3', 'STOP', 'HEADSET_OFF'] as const).map((name, i) => command(`k${i}`, name, START + i * 1_000));
     const view = buildDecoderView(commands, 'keyboard', now);
     assert.equal(view.title, 'Keyboard test');
+    assert.equal(view.how, 'Keys 1, 2, 3 and S.');
     assert.equal(view.last?.word, 'Input off');
     assert.deepEqual(
       view.earlier.map((line) => line.signal),
-      ['key S', 'key C', 'key N'],
+      ['key S', 'key 3', 'key 2'],
     );
     const json = JSON.stringify(view);
     assert.doesNotMatch(json, /imagined|fist|jaw|clench|brain|headset/i);
@@ -172,26 +174,29 @@ describe('decoder panel words', () => {
     }
   });
 
-  test('a switch session names presses, and NO has no signal on a switch', () => {
-    assert.equal(decoderLine(command('s1', 'YES', START), 'switch', now).signal, 'short switch press');
-    assert.equal(decoderLine(command('s2', 'NO', START), 'switch', now).signal, null);
+  test('a switch session names presses, and 3 and 4 have no signal on a switch', () => {
+    assert.equal(decoderLine(command('s1', 'PICK_1', START), 'switch', now).signal, 'short switch press');
+    assert.equal(decoderLine(command('s4', 'PICK_2', START), 'switch', now).signal, 'double switch press');
+    assert.equal(decoderLine(command('s2', 'PICK_3', START), 'switch', now).signal, null);
+    assert.equal(decoderLine(command('s5', 'PICK_4', START), 'switch', now).signal, null);
     assert.equal(decoderLine(command('s3', 'STOP', START), 'switch', now).signal, 'long switch press');
     assert.equal(buildDecoderView([], 'switch', now).title, 'Switch');
   });
 
   test('an unknown input names no signal and says nothing about how it works', () => {
-    const view = buildDecoderView([command('u1', 'YES', START)], 'unknown', now);
+    const view = buildDecoderView([command('u1', 'PICK_1', START)], 'unknown', now);
     assert.equal(view.title, 'Commands');
     assert.equal(view.how, null);
+    assert.equal(view.last?.word, '1');
     assert.equal(view.last?.signal, null);
     assert.equal(view.last?.hand, null);
     assert.equal(view.last?.confidence, null);
   });
 
   test('an ignored command says why it did not count; a headset off is a system event with no hand', () => {
-    const ignored = decoderLine(command('i1', 'YES', START, { accepted: false, ignoredReason: 'Repeat inside the refractory time' }), 'headset', now);
+    const ignored = decoderLine(command('i1', 'PICK_2', START, { accepted: false, ignoredReason: 'Repeat inside the refractory time' }), 'headset', now);
     assert.equal(ignored.ignored, 'Repeat inside the refractory time');
-    assert.equal(decoderLine(command('i2', 'NO', START, { accepted: false, ignoredReason: null }), 'headset', now).ignored, 'Did not count');
+    assert.equal(decoderLine(command('i2', 'PICK_3', START, { accepted: false, ignoredReason: null }), 'headset', now).ignored, 'Did not count');
     const off = decoderLine(command('h1', 'HEADSET_OFF', START), 'headset', now);
     assert.deepEqual([off.word, off.signal, off.hand, off.confidence], ['Headset off', null, null, null]);
   });
@@ -199,9 +204,9 @@ describe('decoder panel words', () => {
   test('an ignored repeat never takes the place of the command that counted; it is listed as not counted', () => {
     const view = buildDecoderView(
       [
-        command('r1', 'NO', START + 1_000),
-        command('r2', 'YES', START + 5_000),
-        command('r3', 'YES', START + 5_200, { accepted: false, ignoredReason: 'Repeat inside the refractory time' }),
+        command('r1', 'PICK_1', START + 1_000),
+        command('r2', 'PICK_2', START + 5_000),
+        command('r3', 'PICK_2', START + 5_200, { accepted: false, ignoredReason: 'Repeat inside the refractory time' }),
       ],
       'headset',
       now,
@@ -216,7 +221,7 @@ describe('decoder panel words', () => {
         ['r1', null],
       ],
     );
-    const onlyIgnored = buildDecoderView([command('o1', 'YES', START, { accepted: false, ignoredReason: 'Low confidence' })], 'headset', now);
+    const onlyIgnored = buildDecoderView([command('o1', 'PICK_2', START, { accepted: false, ignoredReason: 'Low confidence' })], 'headset', now);
     assert.equal(onlyIgnored.last, null);
     assert.equal(onlyIgnored.none, NO_COMMAND_COUNTED);
     assert.equal(onlyIgnored.earlier[0]?.ignored, 'Low confidence');
@@ -225,12 +230,12 @@ describe('decoder panel words', () => {
   test('no command yet, the newest first, at most a few earlier ones, and no time text before the clock runs', () => {
     assert.deepEqual(buildDecoderView([], 'headset', now), {
       title: 'Headset',
-      how: 'Imagined fists choose. Jaw clenches send or stop.',
+      how: 'Imagined fists pick 1 and 2. A single jaw clench picks 3; a held clench (about 1 second) is STOP.',
       last: null,
       none: NO_COMMAND_YET,
       earlier: [],
     });
-    const many = Array.from({ length: 9 }, (_, i) => command(`m${i}`, i % 2 === 0 ? 'YES' : 'NO', START + i * 500));
+    const many = Array.from({ length: 9 }, (_, i) => command(`m${i}`, i % 2 === 0 ? 'PICK_2' : 'PICK_1', START + i * 500));
     const view = buildDecoderView(many, 'headset', now);
     assert.equal(view.last?.id, 'm8');
     assert.deepEqual(
@@ -274,17 +279,17 @@ describe('stage over the sample replay', () => {
     }
   });
 
-  test('the replay is a headset session, so its YES is an imagined right fist; with keys it would say key Y', () => {
+  test('the replay is a headset session, so its 1 is an imagined left fist; with keys it would say key 1', () => {
     const rows = replayRowsAt(START, START + LOOP_MS - 1);
-    const firstYes = rows.commands.find((event) => event.command === 'YES' && event.accepted);
-    assert.ok(firstYes, 'the loop has an accepted YES');
+    const firstOne = rows.commands.find((event) => event.command === 'PICK_1' && event.accepted);
+    assert.ok(firstOne, 'the loop has an accepted PICK_1');
     for (const [input, signal, hand] of [
-      ['headset', 'imagined right fist', 'yes'],
-      ['keyboard', 'key Y', null],
+      ['headset', 'imagined left fist', 'no'],
+      ['keyboard', 'key 1', null],
       ['switch', 'short switch press', null],
       ['unknown', null, null],
     ] as const) {
-      const line = decoderLine(firstYes, input as InputKind, START + LOOP_MS);
+      const line = decoderLine(firstOne, input as InputKind, START + LOOP_MS);
       assert.deepEqual([line.signal, line.hand], [signal, hand], input);
     }
     assert.equal(rows.input, 'headset');

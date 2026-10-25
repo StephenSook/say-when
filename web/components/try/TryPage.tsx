@@ -7,6 +7,7 @@
  */
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { StatusMark } from '@/components/ui';
+import { commandLabel } from '@/lib/commands';
 import type { RunStatus } from '@/lib/status';
 import type { StationCommand } from '@/lib/station/commands';
 import { TRY_WORDS, type StepStatus } from '@/lib/try/model';
@@ -22,11 +23,15 @@ const STEP_STATUS: Record<StepStatus, { status: RunStatus; word: string }> = {
   failed: { status: 'failed', word: 'Failed' },
 };
 
-const BUTTONS: ReadonlyArray<{ command: StationCommand; hint: string }> = [
-  { command: 'YES', hint: 'pick this' },
-  { command: 'NO', hint: 'skip' },
-  { command: 'CONFIRM', hint: 'send' },
-  { command: 'STOP', hint: 'cancel' },
+/**
+ * Direct select (D18): one button per gesture, 1, 2, 3 and STOP, labeled from the one legend (lib/commands.ts). A
+ * double jaw clench means nothing (PLAN D21), so the headset has no 4 and neither do these stand-ins.
+ */
+const BUTTONS: ReadonlyArray<{ command: StationCommand; word: string; hint: string; tone: 'pick' | 'stop' | null }> = [
+  { command: 'PICK_1', word: commandLabel('PICK_1'), hint: 'option 1, or send it', tone: 'pick' },
+  { command: 'PICK_2', word: commandLabel('PICK_2'), hint: 'option 2, or cancel', tone: null },
+  { command: 'PICK_3', word: commandLabel('PICK_3'), hint: 'option 3', tone: null },
+  { command: 'STOP', word: commandLabel('STOP'), hint: 'cancel, hang up', tone: 'stop' },
 ];
 
 export function TryPage() {
@@ -184,8 +189,14 @@ export function TryPage() {
 
           <div className={styles.buttons} role="group" aria-label="Headset stand-in buttons">
             {BUTTONS.map((b) => (
-              <button key={b.command} type="button" className={cx(styles.command, styles[b.command.toLowerCase()])} onClick={() => press(b.command)}>
-                <span className={styles.commandWord}>{b.command}</span>
+              <button
+                key={b.command}
+                type="button"
+                className={cx(styles.command, b.tone === 'pick' && styles.yes, b.tone === 'stop' && styles.stop)}
+                onClick={() => press(b.command)}
+                aria-label={`${b.word}: ${b.hint}`}
+              >
+                <span className={styles.commandWord}>{b.word}</span>
                 <span className={styles.commandHint}>{b.hint}</span>
               </button>
             ))}

@@ -371,7 +371,7 @@ describe('SpacetimeDB source', () => {
     const SERVER_AHEAD_MS = 3_000;
     const yes = (id: string, at: number): CommandEvent => ({
       id,
-      command: 'YES',
+      command: 'PICK_1',
       at,
       accepted: true,
       ignoredReason: null,

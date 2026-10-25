@@ -51,6 +51,8 @@ export interface DecoderView {
   idsReplaced: number;
   /** A bad message or a replaced id in the last 10 s. */
   recentBad: boolean;
+  /** The decoder sent YES, NO or CONFIRM in the last 10 s: it runs `--mode scan`. */
+  recentScanWord?: boolean;
   recentIdReplaced: boolean;
   errorText: string | null;
   /** Still connecting after 3 s: most likely Chrome's local network permission prompt is waiting for a click. */
@@ -77,8 +79,10 @@ export interface OptionView {
   optionId: bigint;
   rank: number;
   text: string;
+  /** The short earpiece words (D18); '' means the earpiece reads `text`. */
+  label: string;
   tone: string;
-  /** Reply, Errand, Call or Menu. */
+  /** Reply, Errand, Call, Search, Category or Menu. */
   kind: string;
   ready: boolean;
 }
@@ -86,6 +90,8 @@ export interface OptionView {
 export interface WorkView {
   errand: { status: string; formTitle: string; reason: string } | null;
   call: { status: string; contactName: string; reason: string } | null;
+  /** The web search waiting for its read-back and confirm (D18). */
+  search?: { status: string; reason: string } | null;
 }
 
 export interface StationConfigView {

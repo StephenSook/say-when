@@ -247,6 +247,11 @@ export async function searchStep(
     signal: AbortSignal,
     allowed: () => boolean = () => true,
     stop?: AbortSignal,
+    /**
+     * Direct select's category search: these search words instead of the question (a place query for maps), and
+     * whether to look for places. Never memory: the words come from the question and the category.
+     */
+    override?: { query: string; places: boolean },
 ): Promise<SearchOutcome> {
     if (!check.needsWeb) {
         if (row.webSearchAllowed && allowed()) {
@@ -262,7 +267,7 @@ export async function searchStep(
         await events.instant('search', 'error', 'search off', 0, { counts: { needsWeb: true, searches: 0, rowCount: 0 } });
         return { status: 'failed', rows: [], kind: null };
     }
-    const kind: 'web' | 'maps' = check.kind === 'places' && deps.placesNear ? 'maps' : 'web';
+    const kind: 'web' | 'maps' = (override ? override.places : check.kind === 'places') && deps.placesNear ? 'maps' : 'web';
     const step = await events.begin('search', kind);
     if (!allowed()) {
         // Revoked while the step was starting: the question never goes out.
@@ -275,8 +280,8 @@ export async function searchStep(
         if (stop?.aborted) throw new DOMException('stopped', 'AbortError');
         const result =
             kind === 'maps'
-                ? await deps.search.places(placeQuery(row.questionText), { signal: combined, near: deps.placesNear ?? undefined })
-                : await deps.search.web(row.questionText, { signal: combined });
+                ? await deps.search.places(override?.query ?? placeQuery(row.questionText), { signal: combined, near: deps.placesNear ?? undefined })
+                : await deps.search.web(override?.query ?? row.questionText, { signal: combined });
         await step.ok(result.partial ? `${kind} partial` : kind, {
             counts: { needsWeb: true, searches: 1, rowCount: result.rows.length, partial: result.partial },
             payload: { reason: check.reason, rows: result.rows.map(searchRowPayload) },
@@ -339,6 +344,8 @@ export async function retrieveStep(
     recall: Recall | null,
     signal: AbortSignal,
     memoryAllowed: () => boolean = () => true,
+    /** What the passages are matched against: the question by default, the category's search words for a category search. */
+    query: string = row.questionText,
 ): Promise<Retrieved> {
     if (rows.length === 0) return { web: [] };
     if (!deps.web || !deps.memory || !deps.memory.isOpen()) {
@@ -357,7 +364,7 @@ export async function retrieveStep(
     }
     const search = await events.begin('retrieve', 'web search');
     try {
-        const found = await withDeadline(deps.web.search(questionKey, row.questionText), mossDeadline(deps, 'search'), 'web search', signal);
+        const found = await withDeadline(deps.web.search(questionKey, query), mossDeadline(deps, 'search'), 'web search', signal);
         const web = contextFromHits(found.hits);
         // The memory hits are shown beside the web hits only while memory consent still holds.
         const memoryPayload: PayloadHit[] = recall && memoryAllowed() ? recall.hits.map(memoryHitPayload) : [];

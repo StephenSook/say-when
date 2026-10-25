@@ -3,8 +3,11 @@
   {"type": "gesture", "id", "command", "onsetAgeMs", "confidence", "source"}
   {"type": "health", "decoderHealthy"}
 
-command is YES, NO, CONFIRM, STOP or HEADSET_OFF. Nothing here talks to SpacetimeDB or the
-station yet: messages go to stdout (one JSON object per line) and optionally to a .jsonl file.
+command depends on the map (config.MODES, live.py --mode):
+  direct (D18, default): PICK_1, PICK_2, PICK_3, STOP or HEADSET_OFF
+  scan   (D11 + D21):    YES, NO, CONFIRM, STOP or HEADSET_OFF
+Nothing here talks to SpacetimeDB: messages go to stdout (one JSON object per line), the 8765 server and optionally
+a .jsonl file.
 """
 import json
 import sys
@@ -13,13 +16,31 @@ import uuid
 
 from eeg import config
 
-# PLAN D21 (supersedes D17's jaw map): a single clench is CONFIRM and a held one (LONG_CLENCH_S) is STOP. A double
-# clench sends nothing: it has no entry here, so from_jaw returns None. The detector still recognizes a double, so two
-# quick clenches never become two CONFIRMs.
-JAW_COMMAND = {"single": "CONFIRM", "long": "STOP"}
-# Jaw-only fallback (docs/brain-mode-test.md), unchanged by D17 and D21: a single clench is YES, a double is CONFIRM,
-# and there is no STOP gesture (a teammate stops from the station keys).
-JAW_ONLY_COMMAND = {"double": "CONFIRM", "single": "YES"}
+# Jaw clench -> command, per map. A clench is a muscle signal (EMG), never a brain signal.
+# PLAN D21, in both maps: a held clench (LONG_CLENCH_S) is STOP and a double clench sends nothing. A double has no
+# entry here, so from_jaw returns None for it. The detector still recognizes a double, so two quick clenches never
+# become two single-clench commands.
+JAW_COMMAND = {
+    # D18 direct select: single = option 3, held = STOP.
+    "direct": {"single": "PICK_3", "long": "STOP"},
+    # Scan: single = CONFIRM (D17), held = STOP.
+    "scan": {"single": "CONFIRM", "long": "STOP"},
+}
+# Jaw-only fallback (docs/brain-mode-test.md), imagery off.
+JAW_ONLY_COMMAND = {
+    # Direct: the jaw takes over the two fist picks, so every confirm ("One: send it. Two: cancel.") still works:
+    # single = PICK_1, double = PICK_2, held = STOP. Option 3 needs the station key 3.
+    "direct": {"single": "PICK_1", "double": "PICK_2", "long": "STOP"},
+    # Scan, unchanged by D17 and D21: single = YES, double = CONFIRM, silence = NO, and there is no STOP gesture (a
+    # teammate stops from the station keys).
+    "scan": {"double": "CONFIRM", "single": "YES"},
+}
+
+
+def _mode(mode: str) -> str:
+    if mode not in config.MODES:
+        raise ValueError(f"unknown mode {mode}; use one of {', '.join(config.MODES)}")
+    return mode
 
 
 def gesture(command: str, onset: float, confidence: float, source: str, now: float = None) -> dict:
@@ -35,14 +56,16 @@ def health(ok: bool) -> dict:
     return {"type": "health", "decoderHealthy": bool(ok)}
 
 
-def from_hand(ev: dict, now: float = None) -> dict:
-    return gesture(config.HAND_COMMAND[ev["hand"]], ev["onset"], ev["confidence"], "imagery", now)
+def from_hand(ev: dict, now: float = None, *, mode: str = config.DEFAULT_MODE) -> dict:
+    """direct: left -> PICK_1, right -> PICK_2. scan: right -> YES, left -> NO."""
+    return gesture(config.HAND_COMMANDS[_mode(mode)][ev["hand"]], ev["onset"], ev["confidence"], "imagery", now)
 
 
-def from_jaw(ev: dict, jaw_only: bool = False, now: float = None):
-    """single -> CONFIRM, long (held) -> STOP, double -> None (no command, PLAN D21); in the jaw-only fallback
-    single -> YES, double -> CONFIRM, no STOP."""
-    cmd = (JAW_ONLY_COMMAND if jaw_only else JAW_COMMAND).get(ev["kind"])
+def from_jaw(ev: dict, jaw_only: bool = False, now: float = None, *, mode: str = config.DEFAULT_MODE):
+    """A clench event (single / double / long) as a command, or None when the map has no command for it: a double in
+    either main map (PLAN D21), and a held clench in the scan jaw-only fallback."""
+    table = JAW_ONLY_COMMAND if jaw_only else JAW_COMMAND
+    cmd = table[_mode(mode)].get(ev["kind"])
     conf = min(1.0, ev["strength"] / (2 * config.JAW_RATIO))
     return gesture(cmd, ev["onset"], conf, "jaw", now) if cmd else None
 

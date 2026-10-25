@@ -15,7 +15,7 @@ import { commandChipLabel, commandWord, inputChip, safetySentence } from '../lib
 import { eventsForQuestion, latestQuestion, spokenReply } from '../lib/data/derive';
 import { replayRowsAt } from '../lib/data/replay';
 import { boardRows, inputFromLabel, inputFromLedger, type BoardSnapshot } from '../lib/data/spacetime-map';
-import { PERSON_COMMANDS, type DataRows, type InputKind } from '../lib/data/types';
+import { PERSON_COMMANDS, SHOWN_COMMANDS, type DataRows, type InputKind } from '../lib/data/types';
 import { call, errand, event, ledger, midScan, option, question, read, scan, ts, wordTiming } from './board-fixtures';
 
 const INPUTS: readonly InputKind[] = ['headset', 'keyboard', 'switch', 'unknown'];
@@ -142,32 +142,30 @@ describe('the input mode, from the session label in the public ledger', () => {
   });
 
   test('the sample replay is a headset session by its own data', () => {
-    const rows = replayRowsAt(0, 20_000);
+    const rows = replayRowsAt(0, 25_000);
     assert.equal(rows.input, 'headset');
-    const yes = feedItems(rows.pipelineEvents, rows.commands, rows.errands, rows.calls, 40, rows.input).find((item) => item.name === 'YES' && item.status === 'accepted');
-    assert.match(yes?.detail ?? '', /^imagined right fist/);
+    const feed = feedItems(rows.pipelineEvents, rows.commands, rows.errands, rows.calls, 40, rows.input);
+    const three = feed.find((item) => item.name === '3' && item.status === 'accepted');
+    assert.match(three?.detail ?? '', /^single jaw clench/);
+    const one = feed.find((item) => item.name === '1' && item.status === 'accepted');
+    assert.match(one?.detail ?? '', /^imagined left fist/);
   });
 });
 
 describe('Conversation: the command strip and the turn', () => {
   test('the chips name the true input', () => {
-    const chips = (input: InputKind) => PERSON_COMMANDS.map((name) => commandChipLabel(name, input));
-    assert.deepEqual(chips('headset'), ['YES, imagined right fist', 'NO, imagined left fist', 'CONFIRM, single jaw clench', 'STOP, held jaw clench']);
-    assert.deepEqual(chips('keyboard'), ['YES, key Y', 'NO, key N', 'CONFIRM, key C', 'STOP, key S']);
-    assert.deepEqual(chips('switch'), ['YES, short switch press', 'NO, not on the switch', 'CONFIRM, double switch press', 'STOP, long switch press']);
-    assert.deepEqual(chips('unknown'), ['YES', 'NO', 'CONFIRM', 'STOP']);
+    // The strip shows 1, 2, 3 and STOP: a double jaw clench means nothing (D21), so no gesture gives 4.
+    const chips = (input: InputKind) => SHOWN_COMMANDS.map((name) => commandChipLabel(name, input));
+    assert.deepEqual(chips('headset'), ['1, imagined left fist', '2, imagined right fist', '3, single jaw clench', 'STOP, held jaw clench']);
+    assert.deepEqual(chips('keyboard'), ['1, key 1', '2, key 2', '3, key 3', 'STOP, key S']);
+    assert.deepEqual(chips('switch'), ['1, short switch press', '2, double switch press', '3, not on the switch', 'STOP, long switch press']);
+    assert.deepEqual(chips('unknown'), ['1', '2', '3', 'STOP']);
   });
 
-  test('a picked errand waits for CONFIRM in the true input; the stopped cursor says Headset off only for the headset', () => {
-    const sentences: Record<InputKind, string> = {
-      headset: 'Waiting for CONFIRM, a single jaw clench. Nothing is sent yet.',
-      keyboard: 'Waiting for CONFIRM, key C. Nothing is sent yet.',
-      switch: 'Waiting for CONFIRM, a double switch press. Nothing is sent yet.',
-      unknown: 'Waiting for CONFIRM. Nothing is sent yet.',
-    };
+  test('a picked errand waits for the two-option confirm; the stopped cursor says Headset off only for the headset', () => {
     for (const input of INPUTS) {
       const view = conversationOf(errandWaiting(LABELS[input]));
-      assert.equal(view.agent?.sentence, sentences[input], input);
+      assert.equal(view.agent?.sentence, 'Waiting for 1 to send, 2 to cancel. Nothing is sent yet.', input);
       const off = conversationOf(inputOff(LABELS[input]));
       assert.equal(off.paused, 'headset_off');
       assert.equal(off.pausedWord, input === 'headset' ? 'Headset off' : 'Input off', input);
@@ -178,14 +176,14 @@ describe('Conversation: the command strip and the turn', () => {
 describe('Live data: the feed and the steps', () => {
   test('the feed names each command by the true input; HEADSET_OFF is the H test key in a keyboard test', () => {
     const gestures = [
-      ledger(610, 'gesture', 6_100, { command: 'YES', gestureId: 'g-yes', outcome: 'accepted:resume' }),
+      ledger(610, 'gesture', 6_100, { command: 'PICK_2', gestureId: 'g-yes', outcome: 'accepted:resume' }),
       ledger(611, 'gesture', 6_200, { command: 'HEADSET_OFF', gestureId: 'g-off', outcome: 'accepted:headset_off' }),
-      ledger(612, 'gesture', 6_300, { command: 'CONFIRM', gestureId: 'g-confirm', outcome: 'ignored:no_contact', reason: 'no_contact' }),
+      ledger(612, 'gesture', 6_300, { command: 'PICK_1', gestureId: 'g-confirm', outcome: 'ignored:no_contact', reason: 'no_contact' }),
     ];
     const expected: Record<InputKind, [string, string, string, string]> = {
       headset: ['imagined right fist', 'Headset off', 'system event, not a command', 'The headset contact was not good'],
-      keyboard: ['key Y', 'Input off', 'key H, a test', 'The input was not ready'],
-      switch: ['short switch press', 'Input off', 'system event, not a command', 'The input was not ready'],
+      keyboard: ['key 2', 'Input off', 'key H, a test', 'The input was not ready'],
+      switch: ['double switch press', 'Input off', 'system event, not a command', 'The input was not ready'],
       unknown: ['', 'Input off', 'system event, not a command', 'The input was not ready'],
     };
     for (const input of INPUTS) {
@@ -193,7 +191,8 @@ describe('Live data: the feed and the steps', () => {
       const feed = feedItems(rows.pipelineEvents, rows.commands, rows.errands, rows.calls, 40, rows.input);
       const byKey = new Map(feed.map((item) => [item.key, item]));
       const [yes, offName, offDetail, ignored] = expected[input];
-      assert.equal(byKey.get('command:g-yes')?.detail, yes, `${input}: YES`);
+      assert.equal(byKey.get('command:g-yes')?.name, '2', `${input}: the pick reads as its number`);
+      assert.equal(byKey.get('command:g-yes')?.detail, yes, `${input}: PICK_2`);
       assert.equal(byKey.get('command:g-off')?.name, offName, `${input}: HEADSET_OFF name`);
       assert.equal(byKey.get('command:g-off')?.detail, offDetail, `${input}: HEADSET_OFF detail`);
       assert.equal(byKey.get('command:g-confirm')?.detail, ignored, `${input}: ignored for contact`);
@@ -213,16 +212,10 @@ describe('Live data: the feed and the steps', () => {
     }
   });
 
-  test('the errand line waits for CONFIRM in the true input', () => {
-    const lines: Record<InputKind, string> = {
-      headset: 'Waiting for CONFIRM, a single jaw clench.',
-      keyboard: 'Waiting for CONFIRM, key C.',
-      switch: 'Waiting for CONFIRM, a double switch press.',
-      unknown: 'Waiting for CONFIRM.',
-    };
+  test('the errand line waits for the two-option confirm in every input', () => {
     for (const input of INPUTS) {
       const line = liveOf(errandWaiting(LABELS[input])).actions.find((action) => action.kind === 'errand');
-      assert.equal(line?.sentence, lines[input], input);
+      assert.equal(line?.sentence, 'Waiting for 1 to send, 2 to cancel.', input);
     }
   });
 
@@ -289,7 +282,7 @@ describe('the header chip and the banner', () => {
 
 describe('Agents: what the person did, in the true input', () => {
   test('confirmed, sent, connected, the STOP that stopped it, the pause, and the empty state', () => {
-    const phrase: Record<InputKind, string | null> = { headset: 'a single jaw clench', keyboard: 'key C', switch: 'a double switch press', unknown: null };
+    const phrase: Record<InputKind, string> = { headset: '1 (an imagined left fist)', keyboard: '1 (key 1)', switch: '1 (a short switch press)', unknown: '1' };
     const stop: Record<InputKind, string> = { headset: 'STOP, a held jaw clench', keyboard: 'STOP, key S', switch: 'STOP, a long switch press', unknown: 'STOP' };
     for (const input of INPUTS) {
       const rows = boardRows(
@@ -310,18 +303,14 @@ describe('Agents: what the person did, in the true input', () => {
         ),
       );
       const p = phrase[input];
-      assert.equal(errandHeadline(rows.errands[0]!, 'ok', rows.input).text, p ? `Confirmed with ${p}. Sending the form.` : 'Confirmed. Sending the form.', input);
-      assert.equal(
-        errandHeadline({ ...rows.errands[0]!, status: 'sent' }, 'ok', rows.input).text,
-        p ? `Sent after the person confirmed with ${p}.` : 'Sent after the person confirmed.',
-        input,
-      );
+      assert.equal(errandHeadline(rows.errands[0]!, 'ok', rows.input).text, `Confirmed with ${p}. Sending the form.`, input);
+      assert.equal(errandHeadline({ ...rows.errands[0]!, status: 'sent' }, 'ok', rows.input).text, `Sent after the person confirmed with ${p}.`, input);
       const [connected, stopped, off] = rows.calls;
       assert.equal(callHeadline(connected!, 'ok', rows.input).text, `On the phone with Contact. ${input === 'unknown' ? 'STOP hangs up.' : `${stop[input]}, hangs up.`}`, input);
       assert.equal(stopReason(stopped!, rows.commands, rows.input), `The person used ${stop[input]}.`, input);
       assert.equal(stopReason(off!, rows.commands, rows.input), input === 'headset' ? 'The headset lost contact.' : 'The input went off.', input);
       assert.equal(pauseWords('headset_off', rows.input), input === 'headset' ? 'Headset off.' : 'Input off.');
-      assert.equal(agentsEmptySentence(rows.input).endsWith(`Nothing is sent without ${p ?? 'a CONFIRM'}.`), true, input);
+      assert.equal(agentsEmptySentence(rows.input).endsWith(`Nothing is sent without a read-back and a fresh ${p}: 1 to send, 2 to cancel.`), true, input);
       if (input !== 'headset') {
         const all = [
           errandHeadline(rows.errands[0]!, 'headset_off', rows.input),
@@ -342,7 +331,7 @@ describe('Partner phone: no jaw clench and no headset for keys or a switch', () 
       assert.equal(off.status.text, input === 'headset' ? PARTNER_TEXT.headsetOff : PARTNER_TEXT.inputOff, input);
       const waiting = partnerOf(errandWaiting(LABELS[input]));
       assert.equal(waiting.status.text, 'Waiting for them to confirm.');
-      assert.equal(waiting.hint, input === 'headset' ? 'Nothing is sent without their single jaw clench.' : 'Nothing is sent until they confirm.', input);
+      assert.equal(waiting.hint, input === 'headset' ? 'Nothing is sent until they pick 1 (an imagined left fist) to send it.' : 'Nothing is sent until they confirm.', input);
       if (input !== 'headset') assert.doesNotMatch(shown([off, waiting]), HEADSET_WORDS, input);
     }
   });

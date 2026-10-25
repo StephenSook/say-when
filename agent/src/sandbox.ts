@@ -88,6 +88,9 @@ export class SandboxMeter {
         const isMenu = row.origin === 'menu' && row.menuItem !== 'none';
         if (row.kind === 'options') return this.limits.usdPerPlan + (row.webSearchAllowed && !isMenu ? this.limits.usdPerSearch : 0);
         if (row.kind === 'errand_preview') return this.limits.usdPerErrand;
+        // Direct select (src/direct.ts): categories are one plan, a category search is a search and a plan.
+        if (row.kind === 'categories') return this.limits.usdPerPlan;
+        if (row.kind === 'category_search') return this.limits.usdPerPlan + this.limits.usdPerSearch;
         return 0;
     }
 

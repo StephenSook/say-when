@@ -28,13 +28,33 @@ CUES = {
     "clench": "CLENCH your JAW (bite down) - keep your hands still",
 }
 
-# ---------------------------------------------------------------- command map (docs/brain-mode-test.md)
-# The brain chooses, the jaw commits or stops.
-HAND_COMMAND = {"right": "YES", "left": "NO"}
-COMMANDS = ("YES", "NO", "CONFIRM", "STOP", "HEADSET_OFF")
-# PLAN D21 imagery rules, on the smoothed probabilities (eeg/hands.py). Each is a live.py flag.
-YES_THRESHOLD = 0.90         # --yes-threshold: an imagined RIGHT fist at or above this is YES at once
-NO_THRESHOLD = 0.96          # --no-threshold: an imagined LEFT fist at or above this is NO at once
+# ---------------------------------------------------------------- command map
+# Two maps, chosen with live.py --mode (docs/direct-select.md):
+#   direct (D18, the default): up to three options and STOP. Imagined LEFT fist = PICK_1, imagined RIGHT fist =
+#           PICK_2, single jaw clench = PICK_3, held jaw clench (LONG_CLENCH_S) = STOP, double jaw clench = nothing.
+#   scan   (D11 + D21, the say-when-demo database): right fist = YES, left fist = NO, single clench = CONFIRM,
+#           held clench = STOP, double clench = nothing (docs/brain-mode-test.md).
+# The jaw maps live in messages.py; HEADSET_OFF (the watchdog) is the same in both.
+MODES = ("direct", "scan")
+DEFAULT_MODE = "direct"
+HANDS = ("left", "right")
+HAND_COMMANDS = {
+    "direct": {"left": "PICK_1", "right": "PICK_2"},
+    "scan": {"right": "YES", "left": "NO"},
+}
+# The scan word per hand. eeg/hands.py reads it to give each hand its at-once threshold, the same in both maps:
+# the right fist uses YES_THRESHOLD and the left fist NO_THRESHOLD, whatever word the hand sends.
+HAND_COMMAND = HAND_COMMANDS["scan"]
+PICKS = ("PICK_1", "PICK_2", "PICK_3")   # a double clench sends nothing since D21, so there is no PICK_4
+MODE_COMMANDS = {
+    "direct": PICKS + ("STOP", "HEADSET_OFF"),
+    "scan": ("YES", "NO", "CONFIRM", "STOP", "HEADSET_OFF"),
+}
+COMMANDS = PICKS + ("YES", "NO", "CONFIRM", "STOP", "HEADSET_OFF")   # every word either map can send
+# PLAN D21 imagery rules, on the smoothed probabilities (eeg/hands.py), per hand and in both maps. Each is a live.py
+# flag.
+YES_THRESHOLD = 0.90         # --yes-threshold: an imagined RIGHT fist at or above this is sent at once (YES, PICK_2)
+NO_THRESHOLD = 0.96          # --no-threshold: an imagined LEFT fist at or above this is sent at once (NO, PICK_1)
 FALLBACK_S = 10.0            # --fallback-s: with no command for this long, the hand with more confident moments wins
 FALLBACK_THRESHOLD = 0.65    # --fallback-threshold: a prediction at or above this is a confident moment for its hand
 FALLBACK_MIN = 3             # --fallback-min: the winning hand needs at least this many (one noisy frame never picks)
@@ -77,9 +97,10 @@ JAW_RELEASE = 0.5                        # burst ends when power falls below JAW
 JAW_SMOOTH_S = 0.05                      # envelope smoothing (fast enough to see the gap in a double clench)
 MIN_BURST_S = 0.08                       # shorter bursts are blips and are ignored
 JAW_SLICE_S = 0.25                       # slice for "strongest spike" checks in recordings
-LONG_CLENCH_S = 0.8                      # a burst this long is a held clench (STOP, PLAN D21)
-DOUBLE_GAP_S = 0.7                       # a second short burst within this gap = double (no command; CONFIRM in --jaw-only)
-JAW_HOLDOFF_S = 1.0                      # no YES/NO from imagery during a clench and for this long after
+LONG_CLENCH_S = 0.8                      # a burst this long is a held clench (STOP in both maps, PLAN D21)
+DOUBLE_GAP_S = 0.7                       # a second short burst within this gap = double (no command, PLAN D21;
+                                         # --jaw-only: PICK_2 in direct, CONFIRM in scan)
+JAW_HOLDOFF_S = 1.0                      # no fist command from imagery during a clench and for this long after
 
 # ---------------------------------------------------------------- formats
 SESSION_FORMAT = "mi_session_v1"         # unchanged, so earlier recordings load as-is

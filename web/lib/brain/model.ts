@@ -2,15 +2,17 @@
  * Screen 1, the live brain: every rule and every word on the screen, with no React and no three.js, so a test can
  * check them. The brain glows only from measured numbers (the 8-12 Hz mu change at C3 and C4 against the wearer's
  * rest baseline). The decoder's guess is a separate event, and the jaw clench is a muscle signal that never touches
- * the brain. The brain has no yes area: we chose right fist = YES.
+ * the brain. The brain has no "option 1" area: direct select (D18) chose left fist = 1, right fist = 2; a single jaw
+ * clench is 3, a held clench (about 1 second) is STOP, and a double clench means nothing (PLAN D21, lib/commands.ts).
  */
+import { JAW_LANE_LEGEND } from '../commands';
 import { glowErd, type BaselineState, type Contact, type DecoderCommand, type VizMarker, type VizMeta, type VizMi } from './protocol';
 
 /* ---------- Colors: hue says which hand, brightness says how much ---------- */
 
-/** C3 patch: right-fist imagery, which Eleven maps to YES. */
+/** C3 patch: right-fist imagery, which Eleven maps to option 2 (PICK_2). */
 export const CYAN = '#38e1ff';
-/** C4 patch: left-fist imagery, mapped to NO. */
+/** C4 patch: left-fist imagery, mapped to option 1 (PICK_1). */
 export const AMBER = '#ffb020';
 
 /* ---------- Timing ---------- */
@@ -121,15 +123,17 @@ export const dot = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 export const LABELS = {
   title: 'Brain',
   subtitle: 'Template brain, not a scan. Glow = 8-12 Hz rhythm quieting vs rest.',
-  legendC3: 'C3 right-fist imagery (YES)',
-  legendC4: 'C4 left-fist imagery (NO)',
+  legendC3: '2: C3 right-fist imagery',
+  legendC4: '1: C4 left-fist imagery',
   /** The full honest legend, in the info dialog. */
   explain:
-    'Cyan: right-fist imagery (YES). Amber: left-fist imagery (NO). Glow = 8-12 Hz rhythm quieting vs rest. No yes area in the brain. Jaw lane = muscle, not brain.',
+    'Amber: left-fist imagery, option 1. Cyan: right-fist imagery, option 2. Glow = 8-12 Hz rhythm quieting vs rest. No option area in the brain. Jaw lane = muscle, not brain: 3 single clench, hold = STOP.',
   jawLane: 'Jaw muscle, not brain',
+  /** The jaw lane's gestures (D18), from the one legend in lib/commands.ts. */
+  jawLegend: JAW_LANE_LEGEND,
   muscle: 'Muscle detected. Brain readings paused.',
   headsetOff: 'Headset off. Nothing will be sent.',
-  testFailed: 'Brain test failed. YES is a jaw clench today.',
+  testFailed: 'Brain test failed. 1 and 2 are jaw clenches today.',
   notConnected: "Decoder not connected. This view reads the EEG laptop's local decoder.",
   synthetic: 'Synthetic test signal, not a measurement',
 } as const;
@@ -225,32 +229,52 @@ export function sourceText(source: string): string {
   return SOURCE_WORDS[source] ?? source;
 }
 
-/** Only an imagined YES or NO pulses on the brain; jaw, key and switch commands never do. */
-export function pulseSide(marker: Pick<VizMarker, 'command' | 'source'>): 'c3' | 'c4' | null {
-  if (marker.source !== 'imagery') return null;
-  if (marker.command === 'YES') return 'c3';
-  if (marker.command === 'NO') return 'c4';
+/** The fist a command names: the right fist is option 2 (scan: YES), the left fist option 1 (scan: NO). */
+export function fistOf(command: DecoderCommand): 'right' | 'left' | null {
+  if (command === 'PICK_2' || command === 'YES') return 'right';
+  if (command === 'PICK_1' || command === 'NO') return 'left';
   return null;
 }
 
-const JAW_COMMANDS: readonly DecoderCommand[] = ['CONFIRM', 'STOP'];
+/** Only an imagined fist (1 or 2) pulses on the brain; jaw, key and switch commands never do. */
+export function pulseSide(marker: Pick<VizMarker, 'command' | 'source'>): 'c3' | 'c4' | null {
+  if (marker.source !== 'imagery') return null;
+  const fist = fistOf(marker.command);
+  return fist === 'right' ? 'c3' : fist === 'left' ? 'c4' : null;
+}
+
+/** The jaw's commands: 3 (single clench), 4 (double), STOP (long); CONFIRM in the scan map. */
+const JAW_COMMANDS: readonly DecoderCommand[] = ['PICK_3', 'PICK_4', 'STOP', 'CONFIRM'];
 
 export function isJawCommand(command: DecoderCommand): boolean {
   return JAW_COMMANDS.includes(command);
 }
 
+/** A marker from the jaw: a jaw command, or any command in the jaw-only fallback (1 and 2 from the jaw). */
+export function isJawMarker(marker: Pick<VizMarker, 'command' | 'source'>): boolean {
+  return isJawCommand(marker.command) || marker.source === 'jaw';
+}
+
+/** "1" to "4" for a pick, else the word itself ("STOP", "YES"). */
+export function commandText(command: DecoderCommand): string {
+  const pick = /^PICK_([1-4])$/.exec(command);
+  return pick ? pick[1]! : command;
+}
+
 /** The guess pill: the decoder's guess, never a claim about what the person thinks. */
 export function guessText(marker: VizMarker): string {
   if (marker.command === 'HEADSET_OFF') return 'Headset off';
-  if (isJawCommand(marker.command)) return `Jaw ${marker.command}`;
-  if (marker.source === 'imagery') return marker.confidence === null ? `Guess ${marker.command}` : `Guess ${marker.command} ${marker.confidence.toFixed(2)}`;
-  return `${marker.command}, ${sourceText(marker.source)}`;
+  const word = commandText(marker.command);
+  if (isJawMarker(marker)) return `Jaw ${word}`;
+  if (marker.source === 'imagery') return marker.confidence === null ? `Guess ${word}` : `Guess ${word} ${marker.confidence.toFixed(2)}`;
+  return `${word}, ${sourceText(marker.source)}`;
 }
 
 /** The short pill on the strip's timeline. */
 export function eventPillText(marker: VizMarker): string {
-  if (isJawCommand(marker.command) || marker.confidence === null) return marker.command;
-  return `${marker.command} ${marker.confidence.toFixed(2)}`;
+  const word = commandText(marker.command);
+  if (isJawMarker(marker) || marker.confidence === null) return word;
+  return `${word} ${marker.confidence.toFixed(2)}`;
 }
 
 /* ---------- The screen state ---------- */

@@ -10,7 +10,7 @@
 #
 # docs/demo-runbook.md has the whole morning. Rules this script keeps:
 #
-# - Only say-when-dev and say-when-demo. The judge try sandbox (say-when-try) has its own service and caps.
+# - Only say-when-dev, say-when-demo and say-when-direct (direct select, D18). The judge try sandbox (say-when-try) has its own service and caps.
 # - Keys come from the macOS Keychain at run time, go only into the sidecar's environment, and are never printed,
 #   logged or written to a file. Settings files are skipped (AGENT_ENV_FILES=off); the call settings are copied from
 #   the repo's private .env.local by name, never printed.
@@ -31,7 +31,7 @@
 set -euo pipefail
 
 usage() {
-    echo "usage: $0 --db say-when-dev|say-when-demo [--calls] [--port N] [--moss-session NAME] [--no-warm] [--dry-run] [up|status|warm|stop|pair]" >&2
+    echo "usage: $0 --db say-when-dev|say-when-demo|say-when-direct [--calls] [--port N] [--moss-session NAME] [--no-warm] [--dry-run] [up|status|warm|stop|pair]" >&2
     exit 2
 }
 
@@ -62,8 +62,8 @@ done
 
 [ -n "$db" ] || usage
 case "$db" in
-    say-when-dev | say-when-demo) ;;
-    *) die "refusing database $db: this script runs only say-when-dev and say-when-demo (the try sandbox runs on its own service)." ;;
+    say-when-dev | say-when-demo | say-when-direct) ;;
+    *) die "refusing database $db: this script runs only say-when-dev, say-when-demo and say-when-direct (the try sandbox runs on its own service)." ;;
 esac
 
 case "$port" in

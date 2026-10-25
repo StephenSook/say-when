@@ -15,6 +15,9 @@ import { cliServer } from '../role/device';
 import type { CommandEntry, CommandEntryStatus } from './commands';
 import { decoderUrl, type DecoderHealthWord } from './decoder';
 import { KEYBOARD_LEGEND } from './keys';
+import { optionEarText } from './phrases';
+import { commandSignal, CONFIRM_SHORT, legendLine, optionBadge } from '../commands';
+import { GESTURE_PICKS, pickCommand } from '../data/types';
 import type { PauseReasonWord, StationSnapshot } from './snapshot';
 
 export const MODE_WORDS: Readonly<Record<InputMode, string>> = {
@@ -36,6 +39,63 @@ export function inputBanner(s: Pick<StationSnapshot, 'setup'>): string | null {
 export function keyboardLegend(s: Pick<StationSnapshot, 'setup'>): string | null {
   return s.setup.mode === 'keyboard' ? KEYBOARD_LEGEND : null;
 }
+
+/**
+ * The gesture legend for the session's input (D18, lib/commands.ts): "1 = imagined left fist · 2 = imagined right fist
+ * · 3 = single jaw clench · STOP = held jaw clench". The keyboard shows its keys instead.
+ */
+export function gestureLegendLine(s: Pick<StationSnapshot, 'setup'>): string | null {
+  switch (s.setup.mode) {
+    case 'headset':
+      return legendLine('headset');
+    case 'keyboard':
+      return KEYBOARD_LEGEND;
+    case 'switch':
+      return `${legendLine('switch')} · 3 is not on the switch`;
+    default:
+      return null;
+  }
+}
+
+/** One row of the live list on the station screen: "2  Thai place  imagined right fist". */
+export interface StationOptionRow {
+  key: string;
+  badge: string;
+  /** The short label or the words with sharing on; "Option 2" with it off. */
+  words: string;
+  /** How the person picks it in this input: "imagined right fist", "key 2", or null when unknown or not on the switch. */
+  gesture: string | null;
+  kind: string | null;
+  ready: boolean;
+}
+
+/** The current list, numbered, in rank order (D18). Words only while the room's sharing toggle is on. */
+export function stationOptionRows(s: Pick<StationSnapshot, 'options' | 'config' | 'setup'>): StationOptionRow[] {
+  const share = s.config?.shareText === true;
+  const input = s.setup.mode ?? 'unknown';
+  return [...s.options]
+    .sort((a, b) => a.rank - b.rank)
+    .map((o) => {
+      const command = pickCommand(o.rank);
+      const words = o.label.trim() !== '' ? o.label.trim() : o.text.trim();
+      return {
+        key: o.optionId.toString(),
+        badge: optionBadge(o.rank) || String(o.rank),
+        words: share && words !== '' ? words : `Option ${o.rank}`,
+        gesture: command ? commandSignal(command, input) : null,
+        kind: KIND_WORDS[o.kind] ?? null,
+        ready: o.ready,
+      };
+    });
+}
+
+const KIND_WORDS: Readonly<Record<string, string>> = {
+  Errand: 'request',
+  Call: 'phone call',
+  Search: 'web search',
+  Category: 'category',
+  Menu: 'menu item',
+};
 
 export function sessionLabel(mode: InputMode, purpose: 'demo' | 'test'): string {
   // The keyboard is only ever a test stand-in (docs/station.md 2.3).
@@ -99,10 +159,10 @@ export function cliTargetOf(settings: { host: string; db: string } | null): { se
 export function pauseSentence(reason: PauseReasonWord | null, mode: InputMode | null, idlePauseMs: number): string {
   switch (reason) {
     case 'stop':
-      return 'Paused. YES resumes.';
+      return 'Paused. 1 resumes.';
     case 'idle': {
       const minutes = Math.max(1, Math.round(idlePauseMs / 60_000));
-      return `Paused after ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}. YES resumes.`;
+      return `Paused after ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}. 1 resumes.`;
     }
     case 'operator':
       return 'Paused by a helper. Only the owner can resume.';
@@ -141,6 +201,10 @@ const ACTIVE_ERRAND: Readonly<Record<string, string>> = {
   Submitting: 'Sending',
 };
 
+const ACTIVE_SEARCH: Readonly<Record<string, string>> = {
+  Confirmed: 'Confirmed. Searching the web',
+};
+
 const ACTIVE_CALL: Readonly<Record<string, string>> = {
   Confirmed: 'Confirmed. Calling',
   Dialing: 'Phone call: dialing',
@@ -176,11 +240,11 @@ export function bigStatus(s: StationSnapshot, now: number): BigStatus {
 
   const rb = s.readback;
   if (rb.phase === 'preparing') return status('working', 'Getting the read-back ready');
-  if (rb.phase === 'playing') return status('working', 'Reading it back', 'Nothing is sent without a fresh CONFIRM after the read-back.');
+  if (rb.phase === 'playing') return status('working', 'Reading it back', `Nothing is sent without a fresh 1 after the read-back. ${CONFIRM_SHORT}.`);
   if (rb.phase === 'reporting' || rb.phase === 'hold') return status('waiting', 'Waiting for your confirm', 'The confirm window opens in a moment.');
   if (rb.phase === 'window') {
     const left = rb.windowStartedWall === null ? rb.windowMs : rb.windowMs - (now - rb.windowStartedWall);
-    return status('waiting', 'Waiting for your confirm', left > 0 ? `${formatSeconds(left)} left. Silence sends nothing.` : 'The window is closing. Nothing was sent.');
+    return status('waiting', 'Waiting for your confirm', left > 0 ? `${formatSeconds(left)} left. ${CONFIRM_SHORT}. Silence sends nothing.` : 'The window is closing. Nothing was sent.');
   }
   if (rb.phase === 'too_long') return status('stopped', 'Not sent: the read-back is too long.');
   if (rb.phase === 'late') return status('stopped', 'Not sent: the read-back took too long.');
@@ -190,6 +254,8 @@ export function bigStatus(s: StationSnapshot, now: number): BigStatus {
   if (errandWord) return status('working', errandWord);
   const callWord = s.work.call ? ACTIVE_CALL[s.work.call.status] : undefined;
   if (callWord) return status('working', callWord);
+  const searchWord = s.work.search ? ACTIVE_SEARCH[s.work.search.status] : undefined;
+  if (searchWord) return status('working', searchWord);
 
   if (!scan) return status('not_started', 'Idle. Nothing in the earpiece.', null, { chip: false });
   const of = scan.optionCount > 0 ? ` of ${scan.optionCount}` : '';
@@ -198,22 +264,31 @@ export function bigStatus(s: StationSnapshot, now: number): BigStatus {
     case 'preparing':
       return status('working', 'Getting options ready');
     case 'reading':
-      return status('working', scan.answerMode === 'yes_no' ? 'Reading: Yes or no?' : `Reading ${item} ${scan.cursor}${of}`);
+      return status('working', scan.answerMode === 'yes_no' ? 'Reading: Yes or no?' : `Reading ${item} ${scan.cursor}${of}`, 'Any number picks it, any time.');
     case 'window':
-      return status('working', scan.answerMode === 'yes_no' ? 'Window open for yes or no' : `Window open for ${item} ${scan.cursor}${of}`, 'NO skips. Silence repeats it.');
+      // Direct select (D18): the list was read once; the wait lasts until a pick or the idle pause (silence never
+      // picks, D19).
+      return status('working', 'Waiting for a pick', `${pickRange(scan.optionCount)} picks. Silence picks nothing.`);
     case 'veto': {
       const left = Math.max(0, scan.stepMs - (now - scan.arrivedWall));
       const saying = `Saying it in ${formatSeconds(left)}.`;
       // A yes or no answer is option 1 (yes) or 2 (no) in the module (spacetime/src/gesture.ts), never a pick.
       if (scan.answerMode === 'yes_no' && (scan.pickedRank === 1 || scan.pickedRank === 2)) {
-        return status('working', `Answered ${scan.pickedRank === 1 ? 'yes' : 'no'}. ${saying}`, 'NO or STOP cancels.');
+        return status('working', `Answered ${scan.pickedRank === 1 ? 'yes' : 'no'}. ${saying}`, 'STOP cancels.');
       }
       const which = scan.pickedRank !== null ? `${item} ${scan.pickedRank}` : 'the reply';
-      return status('working', `Picked ${which}. ${saying}`, 'NO or STOP cancels.');
+      return status('working', `Picked ${which}. ${saying}`, 'STOP cancels.');
     }
     case 'idle':
-      return status('not_started', 'Idle. Nothing in the earpiece.', s.config?.menuEnabled ? "YES opens the person's menu." : null, { chip: false });
+      return status('not_started', 'Idle. Nothing in the earpiece.', null, { chip: false });
   }
+}
+
+/** "1 to 3", "1 or 2", "1": the numbers a gesture can pick in the live list (no gesture gives 4, GESTURE_PICKS). */
+export function pickRange(count: number): string {
+  if (count <= 1) return '1';
+  if (count === 2) return '1 or 2';
+  return `1 to ${Math.min(GESTURE_PICKS, count)}`;
 }
 
 /** The newest errand or call that finished, as one line under the status, or null. */
@@ -258,17 +333,33 @@ export function earpieceHero(s: StationSnapshot, now: number): EarpieceHero {
     const item = scan.mode === 'menu' || option?.kind === 'Menu' ? 'Menu item' : 'Option';
     const of = scan.optionCount > 0 ? ` of ${scan.optionCount}` : '';
     const tone = option && option.tone.trim() !== '' ? `, ${option.tone.trim()}` : '';
-    const kind = option?.kind === 'Errand' ? ', a request' : option?.kind === 'Call' ? ', a phone call' : '';
+    const kind = KIND_SUFFIX[option?.kind ?? ''] ?? '';
     const waiting = s.earpiece.waitingFor !== null && option && s.earpiece.waitingFor === option.optionId;
+    // In the wait after the list (D18) the cursor rests on the last option: say what the person can do instead.
+    if (scan.phase === 'window') return { title: `Waiting for a pick: ${pickRange(scan.optionCount)}`, words: null, note: null, bar: scanBar(s, now) };
     return {
       title: `${item} ${scan.cursor}${of}${tone}${kind}`,
-      words: share && option ? option.text : null,
+      // With sharing on: what the earpiece says, "One: good.", then the full words the room would hear.
+      words: share && option ? earWords(option) : null,
       note: waiting ? 'Its voice is not ready yet. It plays the moment it is.' : null,
       bar: scanBar(s, now),
     };
   }
   if (s.playing === 'phrase') return { title: 'A spoken notice', words: null, note: null, bar: null };
   return { title: 'Nothing', words: null, note: null, bar: null };
+}
+
+const KIND_SUFFIX: Readonly<Record<string, string>> = {
+  Errand: ', a request',
+  Call: ', a phone call',
+  Search: ', a web search',
+  Category: ', a search category',
+};
+
+/** "One: good. I'm doing awesome, how about you?" with sharing on; the label alone when it is the text. */
+function earWords(option: { rank: number; label: string; text: string }): string {
+  const ear = optionEarText(option.rank, option.label, option.text);
+  return option.label.trim() === '' ? ear : `${ear} ${option.text}`;
 }
 
 function scanBar(s: StationSnapshot, now: number): EarpieceHero['bar'] {
@@ -279,7 +370,7 @@ function scanBar(s: StationSnapshot, now: number): EarpieceHero['bar'] {
     return { value: elapsed, max: scan.stepMs, label: 'Reading the option', valueText: `${formatSeconds(elapsed)} of ${formatSeconds(scan.stepMs)}`, tone: 'accent' };
   }
   const left = scan.stepMs - elapsed;
-  return { value: left, max: scan.stepMs, label: 'Time left to answer', valueText: `window, ${formatSeconds(left)} left`, tone: 'wait' };
+  return { value: left, max: scan.stepMs, label: 'Time left to pick', valueText: `waiting for a pick, ${formatSeconds(left)} left`, tone: 'wait' };
 }
 
 export interface SetupStep {
@@ -407,7 +498,7 @@ export interface CommandRow {
   note: string | null;
 }
 
-/** "YES  key  Picked option 2", newest first. HEADSET_OFF reads "HEADSET_OFF (test)" when it came from a key. */
+/** "PICK_2  key  Picked option 2", newest first. HEADSET_OFF reads "HEADSET_OFF (test)" when it came from a key. */
 export function commandRows(commands: readonly CommandEntry[]): CommandRow[] {
   return commands.map((c) => ({
     key: c.gestureId,
@@ -453,7 +544,9 @@ export const DECODER_PERMISSION_NOTE = 'Still looking for the decoder. If Chrome
 export function decoderNotes(s: Pick<StationSnapshot, 'decoder'>): string[] {
   const notes: string[] = [];
   if (s.decoder?.slowConnect && s.decoder.word === 'connecting') notes.push(DECODER_PERMISSION_NOTE);
-  if (s.decoder?.recentBad) notes.push(`Bad decoder message (${s.decoder.badMessages} so far).`);
+  if (s.decoder?.recentScanWord) {
+    notes.push('The decoder sent a scan word (YES, NO or CONFIRM). This database picks by number: restart it with python live.py --window --mode direct.');
+  } else if (s.decoder?.recentBad) notes.push(`Bad decoder message (${s.decoder.badMessages} so far).`);
   if (s.decoder?.recentIdReplaced) notes.push(`Decoder id replaced (${s.decoder.idsReplaced} so far). The command was still sent.`);
   return notes;
 }

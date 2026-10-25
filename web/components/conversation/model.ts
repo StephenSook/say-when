@@ -8,40 +8,42 @@
  *   person hears. Otherwise it follows the newest question.
  * - While a scan runs it shows the option version being read. A newer version waits for the end of
  *   the pass (docs/spacetime.md `pending_version`), so it is not shown early. Otherwise the newest.
- * - The cursor exists only while an option is read or its response window is open. It stops, with
- *   no clock, while the system is paused or the headset is off.
- * - YES on a reply starts a short veto before it is said out loud. YES on an errand or a call picks
- *   it at once; its own read-back and CONFIRM follow (PLAN D11). One line under the picked option
- *   says where that errand or call is; the Agents screen shows every step.
+ * - Direct select (D18): the options are read once, numbered, then the list waits for a pick. The
+ *   cursor is on an option only while it is read; during the wait it sits on the whole list (no
+ *   option id), with the time left to pick. It stops, with no clock, while paused or the headset is off.
+ * - A pick of a reply is said out loud at once. A pick of an errand or a call starts its read-back,
+ *   then a fresh "One: send it. Two: cancel." One line under the picked option says where that
+ *   errand or call is; the Agents screen shows every step.
  * - Free text (the question, the options) goes through maskPhoneNumbers: a projected screen never
  *   shows a phone number.
  */
-import { offWord, withSignal } from '../../lib/commands';
+import { CONFIRM_SHORT, offWord } from '../../lib/commands';
 import { latestOfStage, latestQuestion, optionUnderCursor, pickedOption, wordIndexAt } from '../../lib/data/derive';
-import type {
-  AnswerOption,
-  CallRequest,
-  Errand,
-  InputKind,
-  OptionKind,
-  PipelineEvent,
-  Question,
-  SafetyState,
-  ScanOutcome,
-  ScanPhase,
-  ScanState,
-  StageError,
-  WordTiming,
+import {
+  GESTURE_PICKS,
+  type AnswerOption,
+  type CallRequest,
+  type Errand,
+  type InputKind,
+  type OptionKind,
+  type PipelineEvent,
+  type Question,
+  type SafetyState,
+  type ScanOutcome,
+  type ScanPhase,
+  type ScanState,
+  type StageError,
+  type WordTiming,
 } from '../../lib/data/types';
 import { maskPhoneNumbers } from '../../lib/format';
 import { callStatusWord, statusFromCall, statusFromErrand, type RunStatus } from '../../lib/status';
 
 /** The line under the list while options are read (docs/ui.md "Screen 3"). */
-export const PICK_LEGEND = 'NO skips this one. STOP means none of these. Silence repeats it.';
+export const PICK_LEGEND = 'Pick any number, any time. STOP means none of these. Silence picks nothing.';
 /** The same line for the person's own menu. */
-export const MENU_LEGEND = 'NO skips this one. STOP closes the menu. Silence repeats it.';
-/** The same line for a yes or no question: one prompt, and YES or NO answers it. */
-export const YES_NO_LEGEND = 'YES answers yes. NO answers no. STOP means neither. Silence asks again.';
+export const MENU_LEGEND = 'Pick any number. STOP closes the menu. Silence picks nothing.';
+/** The same line for a yes or no question: one prompt, and 1 or 2 answers it. */
+export const YES_NO_LEGEND = '1 answers yes. 2 answers no. STOP means neither. Silence picks nothing.';
 /** The stock prompt the earpiece plays for a yes or no question (docs/spacetime.md 4.1). */
 export const YES_NO_PROMPT = 'Yes or no?';
 
@@ -54,6 +56,8 @@ export const KIND_WORDS: Readonly<Record<OptionKind, string | null>> = {
   reply: null,
   errand: 'Errand',
   call: 'Call',
+  search: 'Web search',
+  category: 'Category',
   menu: null,
 };
 
@@ -89,7 +93,7 @@ export interface Header {
 export function headerFor(question: Question, menu: boolean, listening: boolean): Header {
   const text = screenText(question.text);
   if (question.origin === 'menu') {
-    if (menu || question.number === 0) return { eyebrow: 'Opened with YES', lead: "The person's menu", quoted: false };
+    if (menu || question.number === 0) return { eyebrow: 'Opened by the person', lead: "The person's menu", quoted: false };
     if (text !== null) return { eyebrow: "From the person's menu", lead: text, quoted: true };
     return { eyebrow: "From the person's menu", lead: `Question ${question.number}`, quoted: false };
   }
@@ -102,8 +106,10 @@ export function headerFor(question: Question, menu: boolean, listening: boolean)
 export type CursorPhase = 'reading' | 'window' | 'stopped';
 
 export interface CursorView {
-  /** The option under the cursor, or null for the yes or no prompt. */
+  /** The option under the cursor, or null for the yes or no prompt and for the wait for a pick after the list. */
   optionId: string | null;
+  /** Direct select: the list was read and waits for a pick, "1 to 3". null otherwise. */
+  waitingFor?: string | null;
   phase: CursorPhase;
   /** When the current scan phase started and when it is planned to end, for the word mark and the time left. */
   startedAt: number;
@@ -268,7 +274,7 @@ export function errandStatus(errand: Errand | null, input: InputKind): AgentStat
       sentence = 'Reading it back to the person. Nothing is sent yet.';
       break;
     case 'awaiting_confirm':
-      sentence = `Waiting for ${withSignal('CONFIRM', input)}. Nothing is sent yet.`;
+      sentence = `Waiting for ${CONFIRM_SHORT}. Nothing is sent yet.`;
       break;
     case 'confirmed':
     case 'submitting':
@@ -309,7 +315,7 @@ export function callStatus(call: CallRequest | null, input: InputKind): AgentSta
       sentence = 'Reading the call back to the person. No call yet.';
       break;
     case 'awaiting_confirm':
-      sentence = `Waiting for ${withSignal('CONFIRM', input)}. No call yet.`;
+      sentence = `Waiting for ${CONFIRM_SHORT}. No call yet.`;
       break;
     case 'confirmed':
       sentence = 'Confirmed. Starting the call.';
@@ -371,9 +377,18 @@ function cursorFor(
   const phase: CursorPhase = live && !paused ? (run.phase === 'reading' ? 'reading' : 'window') : 'stopped';
   const timing = { startedAt: run.stepStartedAt, endsAt: run.stepEndsAt };
   if (yesNo) return { optionId: null, phase, words: null, ...timing };
+  // Direct select (D18): after the list is read, the wait is for any of its numbers, not for one option.
+  if (run.phase === 'window') return { optionId: null, phase, words: null, waitingFor: pickRangeWords(shown.length), ...timing };
   const option = live ? optionUnderCursor(run, shown) : (shown.find((o) => o.rank === run.cursor) ?? null);
   if (option === null) return null;
   return { optionId: option.id, phase, words: wordsFor(events, option.id), ...timing };
+}
+
+/** "1 to 3", "1 or 2", "1": the numbers a gesture picks in a list of this many options (no gesture gives 4). */
+export function pickRangeWords(count: number): string {
+  if (count <= 1) return '1';
+  if (count === 2) return '1 or 2';
+  return `1 to ${Math.min(GESTURE_PICKS, count)}`;
 }
 
 /** Everything the screen draws for one question. */

@@ -1,6 +1,7 @@
 import time
 
 import numpy as np
+import pytest
 
 from eeg import config, messages
 from eeg.engine import Engine
@@ -77,15 +78,21 @@ def test_live_prints_the_imagery_settings_at_startup():
     line = live.imagery_settings(HandConfig())
     for part in (">= 0.90 (right fist)", ">= 0.96 (left fist)", "every 10 s", ">= 0.65", "at least 3"):
         assert part in line, part
+    # Direct select is the default: the same per-hand thresholds, named by the word each hand sends.
+    assert line.startswith("Imagery: PICK_2 at once at >= 0.90 (right fist), PICK_1 at once at >= 0.96 (left fist);")
+    assert live.imagery_settings(HandConfig(), mode="scan").startswith(
+        "Imagery: YES at once at >= 0.90 (right fist), NO at once at >= 0.96 (left fist);")
     assert live.imagery_settings(HandConfig(), jaw_only=True) == "Imagery: off (--jaw-only)"
+    assert live.imagery_settings(HandConfig(), jaw_only=True, mode="scan") == "Imagery: off (--jaw-only)"
 
 
 def test_right_at_0_91_is_yes_at_once():
     dec = HandDecoder(HandConfig(ema=0.0))           # ema 0: the confidence is exactly the prediction
     events = run_frames(dec, [(0.0, REST), (0.1, REST), (0.2, p(right=0.91))])
     assert [(e["hand"], e["how"], e["t"]) for e in events] == [("right", "instant", 0.2)]
-    msg = messages.from_hand(events[0])
+    msg = messages.from_hand(events[0], mode="scan")
     assert msg["command"] == "YES" and msg["confidence"] == 0.91 and msg["source"] == "imagery"
+    assert messages.from_hand(events[0])["command"] == "PICK_2"     # direct select, the default
 
 
 def test_left_needs_0_96_to_be_no_at_once():
@@ -94,7 +101,8 @@ def test_left_needs_0_96_to_be_no_at_once():
     assert run_frames(dec, seq) == []
     events = run_frames(dec, [(3.1, p(left=0.97))])
     assert [(e["hand"], e["how"], e["t"]) for e in events] == [("left", "instant", 3.1)]
-    assert messages.from_hand(events[0])["command"] == "NO"
+    assert messages.from_hand(events[0], mode="scan")["command"] == "NO"
+    assert messages.from_hand(events[0])["command"] == "PICK_1"     # direct select, the default
 
 
 def test_fallback_after_10_s_picks_the_hand_with_more_confident_moments():
@@ -112,7 +120,8 @@ def test_fallback_after_10_s_picks_the_hand_with_more_confident_moments():
     assert (ev["hand"], ev["how"], ev["t"]) == ("right", "fallback", 10.0)   # the window started at 0.0
     assert ev["counts"] == {"left": 4, "right": 10}
     assert ev["onset"] == 9.5 and ev["confidence"] == 0.7                     # the last counted moment, its mean
-    assert messages.from_hand(ev)["command"] == "YES"
+    assert messages.from_hand(ev, mode="scan")["command"] == "YES"
+    assert messages.from_hand(ev)["command"] == "PICK_2"             # direct select, the default
 
 
 def test_fallback_tie_or_too_few_sends_nothing():
@@ -180,23 +189,62 @@ def test_jaw_single_double_long_and_quiet():
     assert [k for k, _ in run_jaw([(1.0, 0.25), (1.6, 0.25)])] == ["double"]
     assert [k for k, _ in run_jaw([(1.0, 1.3)])] == ["long"]
     assert [k for k, _ in run_jaw([(1.0, 0.25), (4.0, 0.25)])] == ["single", "single"]
+    # A short clench then a held one is one STOP, never also a pick (D18: STOP must not pick option 3 first).
+    assert [k for k, _ in run_jaw([(1.0, 0.25), (1.6, 1.2)])] == ["long"]
 
 
-def test_jaw_messages_follow_the_command_map():
-    # PLAN D21: a single clench is CONFIRM, a held one is STOP, and a double sends nothing.
+def test_jaw_messages_follow_the_direct_map_by_default():
+    # D18 direct select with PLAN D21: single = PICK_3, a held clench = STOP, a double sends nothing (no PICK_4).
     ev = {"kind": "single", "onset": 10.0, "t": 10.6, "strength": 50.0}
     m = messages.from_jaw(ev, now=10.7)
-    assert m["type"] == "gesture" and m["command"] == "CONFIRM" and m["source"] == "jaw" and m["onsetAgeMs"] == 700
+    assert m["type"] == "gesture" and m["command"] == "PICK_3" and m["source"] == "jaw" and m["onsetAgeMs"] == 700
     assert messages.from_jaw(dict(ev, kind="double")) is None
+    assert messages.from_jaw(dict(ev, kind="double"), mode="direct") is None
     assert messages.from_jaw(dict(ev, kind="long"))["command"] == "STOP"
-    assert messages.JAW_COMMAND == {"single": "CONFIRM", "long": "STOP"}
-    # The jaw-only fallback keeps its own map: single is YES, double is CONFIRM, and there is no STOP gesture.
-    assert messages.from_jaw(dict(ev, kind="long"), jaw_only=True) is None
-    assert messages.from_jaw(dict(ev, kind="single"), jaw_only=True)["command"] == "YES"
-    assert messages.from_jaw(dict(ev, kind="double"), jaw_only=True)["command"] == "CONFIRM"
-    assert messages.from_hand({"hand": "right", "onset": 1.0, "confidence": .8}, now=2.0)["command"] == "YES"
-    assert messages.from_hand({"hand": "left", "onset": 1.0, "confidence": .8}, now=2.0)["command"] == "NO"
+    assert messages.from_jaw(dict(ev, kind="single"), mode="direct")["command"] == "PICK_3"
+    assert messages.JAW_COMMAND["direct"] == {"single": "PICK_3", "long": "STOP"}
+    assert "PICK_4" not in config.COMMANDS and config.PICKS == ("PICK_1", "PICK_2", "PICK_3")
+    # The fists pick options 1 and 2: left is 1, right is 2.
+    assert messages.from_hand({"hand": "left", "onset": 1.0, "confidence": .8}, now=2.0)["command"] == "PICK_1"
+    assert messages.from_hand({"hand": "right", "onset": 1.0, "confidence": .8}, now=2.0)["command"] == "PICK_2"
+    assert messages.from_hand({"hand": "right", "onset": 1.0, "confidence": .8}, now=2.0)["source"] == "imagery"
+    # Jaw-only in direct select: the jaw takes the two confirm picks, a held clench is STOP.
+    assert messages.from_jaw(dict(ev, kind="single"), jaw_only=True)["command"] == "PICK_1"
+    assert messages.from_jaw(dict(ev, kind="double"), jaw_only=True)["command"] == "PICK_2"
+    assert messages.from_jaw(dict(ev, kind="long"), jaw_only=True)["command"] == "STOP"
     assert messages.health(True) == {"type": "health", "decoderHealthy": True}
+
+
+def test_jaw_messages_follow_the_scan_map():
+    # PLAN D21 (say-when-demo): a single clench is CONFIRM (D17), a held one is STOP, and a double sends nothing.
+    ev = {"kind": "single", "onset": 10.0, "t": 10.6, "strength": 50.0}
+    m = messages.from_jaw(ev, now=10.7, mode="scan")
+    assert m["command"] == "CONFIRM" and m["source"] == "jaw" and m["onsetAgeMs"] == 700
+    assert messages.from_jaw(dict(ev, kind="double"), mode="scan") is None
+    assert messages.from_jaw(dict(ev, kind="long"), mode="scan")["command"] == "STOP"
+    assert messages.JAW_COMMAND["scan"] == {"single": "CONFIRM", "long": "STOP"}
+    # The scan jaw-only fallback keeps its own map: single is YES, double is CONFIRM, and there is no STOP gesture.
+    assert messages.from_jaw(dict(ev, kind="long"), jaw_only=True, mode="scan") is None
+    assert messages.from_jaw(dict(ev, kind="single"), jaw_only=True, mode="scan")["command"] == "YES"
+    assert messages.from_jaw(dict(ev, kind="double"), jaw_only=True, mode="scan")["command"] == "CONFIRM"
+    assert messages.from_hand({"hand": "right", "onset": 1.0, "confidence": .8}, now=2.0, mode="scan")["command"] == "YES"
+    assert messages.from_hand({"hand": "left", "onset": 1.0, "confidence": .8}, now=2.0, mode="scan")["command"] == "NO"
+
+
+def test_every_map_sends_only_its_own_words():
+    ev = {"onset": 1.0, "t": 1.5, "strength": 50.0, "confidence": .8}
+    for mode in config.MODES:
+        sent = {messages.from_hand(dict(ev, hand=h), mode=mode)["command"] for h in config.HANDS}
+        for jaw_only in (False, True):
+            for kind in ("single", "double", "long"):
+                m = messages.from_jaw(dict(ev, kind=kind), jaw_only=jaw_only, mode=mode)
+                if m:
+                    sent.add(m["command"])
+        assert sent <= set(config.MODE_COMMANDS[mode]), (mode, sent)
+    with pytest.raises(ValueError):
+        messages.from_jaw(dict(ev, kind="single"), mode="sideways")
+    with pytest.raises(ValueError):
+        messages.gesture("MAYBE", 1.0, 0.5, "imagery")
 
 
 def test_strongest_spike_needs_a_lead_in():
@@ -206,8 +254,9 @@ def test_strongest_spike_needs_a_lead_in():
     assert with_lead < config.JAW_RATIO
 
 
-def run_engine(tmp_path, bursts):
-    """Replays a synthetic recording, with jaw bursts appended, through the live engine; returns the commands."""
+def run_engine(tmp_path, bursts, mode=None):
+    """Replays a synthetic recording, with jaw bursts appended, through the live engine; returns the commands and
+    the raw clench kinds."""
     s = load_session(fake_recording(tmp_path, per_class=10, seed=4))
     ep = make_epochs([s], ["left", "right", "rest"])
     meta = {"classes": ["left", "right", "rest"], "fs": FS, "window_s": 2.0}
@@ -220,32 +269,49 @@ def run_engine(tmp_path, bursts):
         state["i"] += 13
         return raw[:, i:i + 13], ts[i:i + 13]
 
+    extra = {} if mode is None else {"mode": mode}
     eng = Engine(make("fbcsp_lda").fit(ep.X, ep.y), meta, HandConfig(), settle_s=0, log=lambda *a: None,
-                 reader=reader, opener=lambda: object(), closer=lambda b: None)
+                 reader=reader, opener=lambda: object(), closer=lambda b: None, **extra)
     eng.start()
     cmds, jaw = [], []
     while state["i"] < raw.shape[1]:
         up = eng.poll()
         cmds += [m["command"] for m in up.commands]
         jaw += [e["kind"] for e in up.jaw_events]
-    assert all(c in config.COMMANDS for c in cmds)
+    assert all(c in config.MODE_COMMANDS[eng.mode] for c in cmds), (eng.mode, cmds)
     return cmds, jaw
 
 
 def test_engine_end_to_end_with_a_fake_headset(tmp_path):
-    """A held clench at the end is STOP (PLAN D21)."""
+    """Direct select, the default: the fists are PICK_1 and PICK_2, a held clench at the end is STOP (PLAN D21)."""
     cmds, jaw = run_engine(tmp_path, [(1.0, 1.3)])
-    assert {"YES", "NO"} <= set(cmds)          # synthetic data is easy; real EEG is not
+    assert {"PICK_1", "PICK_2"} <= set(cmds)  # synthetic data is easy; real EEG is not
     assert jaw == ["long"] and cmds[-1] == "STOP"   # the recording has no clench trials, so this is the only one
+    assert cmds.count("STOP") == 1 and "PICK_3" not in cmds
+
+
+def test_engine_end_to_end_with_the_scan_map(tmp_path):
+    """A held clench at the end is STOP (PLAN D21)."""
+    cmds, jaw = run_engine(tmp_path, [(1.0, 1.3)], mode="scan")
+    assert {"YES", "NO"} <= set(cmds)
+    assert jaw == ["long"] and cmds[-1] == "STOP"
     assert cmds.count("STOP") == 1 and "CONFIRM" not in cmds
 
 
-def test_engine_double_clench_sends_nothing(tmp_path):
-    """A double clench at the end is detected but sends no command, and does not crash (PLAN D21)."""
-    cmds, jaw = run_engine(tmp_path, [(1.0, 0.25), (1.6, 0.25)])
-    assert {"YES", "NO"} <= set(cmds)
+@pytest.mark.parametrize("mode", ["direct", "scan"])
+def test_engine_double_clench_sends_nothing(tmp_path, mode):
+    """A double clench at the end is detected but sends no command in either map, and does not crash (PLAN D21)."""
+    cmds, jaw = run_engine(tmp_path, [(1.0, 0.25), (1.6, 0.25)], mode=mode)
+    assert set(config.HAND_COMMANDS[mode].values()) <= set(cmds)
     assert jaw == ["double"]
-    assert "STOP" not in cmds and "CONFIRM" not in cmds
+    assert not {"STOP", "CONFIRM", "PICK_3", "PICK_4"} & set(cmds)
+
+
+def test_engine_refuses_an_unknown_mode():
+    meta = {"classes": ["left", "right"], "fs": FS, "window_s": 2.0}
+    with pytest.raises(ValueError):
+        Engine(make("majority").fit({b: np.zeros((2, 8, 250)) for b in config.BANDS}, np.array([0, 1])), meta,
+               settle_s=0, log=lambda *a: None, mode="sideways")
 
 
 class SteadyModel:
@@ -255,8 +321,20 @@ class SteadyModel:
         return np.array([[0.05, 0.70, 0.25]])   # left, right, rest
 
 
-def run_steady(bursts, total_s=26.0):
-    """The live engine on quiet EEG with jaw bursts, a model stuck at right 0.70; returns (stream time, command)."""
+class ScriptModel:
+    """Rest for the first rest_n predictions, then p (left, right, rest) for good."""
+
+    def __init__(self, p, rest_n=10):
+        self.p, self.rest_n, self.k = np.array([p]), rest_n, 0
+
+    def proba(self, _bands):
+        self.k += 1
+        return np.array([[0.05, 0.05, 0.90]]) if self.k <= self.rest_n else self.p
+
+
+def run_steady(bursts, total_s=26.0, model=None, mode=None):
+    """The live engine on quiet EEG with jaw bursts and a scripted model (default: stuck at right 0.70); returns
+    (stream time, command) pairs."""
     meta = {"classes": ["left", "right", "rest"], "fs": FS, "window_s": 2.0}
     raw = burst_signal(bursts, total_s=total_s, seed=5)
     ts = 1000.0 + np.arange(raw.shape[1]) / FS
@@ -267,8 +345,9 @@ def run_steady(bursts, total_s=26.0):
         state["i"] += 13
         return raw[:, i:i + 13], ts[i:i + 13]
 
-    eng = Engine(SteadyModel(), meta, HandConfig(), settle_s=0, log=lambda *a: None,
-                 reader=reader, opener=lambda: object(), closer=lambda b: None)
+    extra = {} if mode is None else {"mode": mode}
+    eng = Engine(model or SteadyModel(), meta, HandConfig(), settle_s=0, log=lambda *a: None,
+                 reader=reader, opener=lambda: object(), closer=lambda b: None, **extra)
     eng.start()
     out = []
     while state["i"] < raw.shape[1]:
@@ -277,17 +356,30 @@ def run_steady(bursts, total_s=26.0):
     return out
 
 
-def test_a_jaw_command_restarts_the_imagery_window():
+@pytest.mark.parametrize("mode, right, single", [("scan", "YES", "CONFIRM"), ("direct", "PICK_2", "PICK_3")])
+def test_a_jaw_command_restarts_the_imagery_window(mode, right, single):
     # Without a clench: the window starts with the first prediction (about 2 s in, after the warm-up) and the
-    # fallback sends YES 10 s later, then every 10 s while the model stays at 0.70 (the trade-off in PLAN D21).
-    alone = run_steady([])
-    assert [c for _, c in alone] == ["YES", "YES"]
+    # fallback sends the right fist 10 s later, then every 10 s while the model stays at 0.70 (the trade-off in
+    # PLAN D21).
+    alone = run_steady([], mode=mode)
+    assert [c for _, c in alone] == [right, right]
     assert 11.5 < alone[0][0] < 12.5 and 9.5 < alone[1][0] - alone[0][0] < 10.5
-    # A single clench at 6 s is CONFIRM about 7 s in; the window starts again there, so the YES waits 10 s more.
-    clench = run_steady([(6.0, 0.25)])
-    assert [c for _, c in clench][:2] == ["CONFIRM", "YES"]
-    (t_confirm, _), (t_yes, _) = clench[:2]
-    assert 6.5 < t_confirm < 7.5 and 9.9 < t_yes - t_confirm < 10.5
+    # A single clench at 6 s is sent about 7 s in; the window starts again there, so the fist waits 10 s more.
+    clench = run_steady([(6.0, 0.25)], mode=mode)
+    assert [c for _, c in clench][:2] == [single, right]
+    (t_jaw, _), (t_fist, _) = clench[:2]
+    assert 6.5 < t_jaw < 7.5 and 9.9 < t_fist - t_jaw < 10.5
+
+
+@pytest.mark.parametrize("mode, right, left", [("direct", "PICK_2", "PICK_1"), ("scan", "YES", "NO")])
+def test_each_hand_keeps_its_own_threshold_in_both_maps(mode, right, left):
+    # The right fist at 0.92 clears its 0.90 (--yes-threshold): sent at once, well under a second after the rest.
+    out = run_steady([], total_s=6.0, model=ScriptModel((0.03, 0.92, 0.05)), mode=mode)
+    assert [c for _, c in out] == [right] and out[0][0] < 4.5
+    # The left fist at 0.95 is under its 0.96 (--no-threshold): nothing at once in either map, so it waits for the
+    # 10 s fallback window (it counts there, at 0.65 or more).
+    out = run_steady([], total_s=14.0, model=ScriptModel((0.95, 0.03, 0.02)), mode=mode)
+    assert [c for _, c in out] == [left] and 11.5 < out[0][0] < 12.5
 
 
 def test_watchdog_sends_headset_off():

@@ -72,12 +72,12 @@ export class FakeApi implements MessagesApi {
     constructor(private readonly trace?: Trace) {}
 
     reply(json: PlanReply | Record<string, unknown>, overrides: Record<string, unknown> = {}): this {
-        this.queue.push(message(JSON.stringify(json), overrides));
+        this.queue.push(message(JSON.stringify(withLabels(json)), overrides));
         return this;
     }
 
-    replyWith(fn: (params: CreateParams) => PlanReply): this {
-        this.queue.push((params) => message(JSON.stringify(fn(params))));
+    replyWith(fn: (params: CreateParams) => PlanReply | Record<string, unknown>): this {
+        this.queue.push((params) => message(JSON.stringify(withLabels(fn(params)))));
         return this;
     }
 
@@ -115,8 +115,27 @@ export class FakeApi implements MessagesApi {
 
 type ReplyOption = PlanReply['options'][number];
 
+/** A test option's earpiece label when it names none: its first three words, without punctuation. */
+export function labelOf(text: string): string {
+    return text.replace(/[^\p{L}\p{N}' ]+/gu, ' ').replace(/\s+/g, ' ').trim().split(' ').slice(0, 3).join(' ');
+}
+
 export function reply(option: Partial<ReplyOption> & { text: string }): ReplyOption {
-    return { kind: 'reply', tone: 'neutral', laugh: false, sources: [], errand: null, call: null, ...option };
+    return { kind: 'reply', label: labelOf(option.text), query: '', tone: 'neutral', laugh: false, sources: [], errand: null, call: null, ...option };
+}
+
+/** Gives every option of a reply written before direct select its label and query, as the planner now always sends them. */
+function withLabels(json: PlanReply | Record<string, unknown>): PlanReply | Record<string, unknown> {
+    const options = (json as { options?: unknown }).options;
+    if (!Array.isArray(options)) return json;
+    return {
+        ...json,
+        options: options.map((o: unknown) => {
+            if (!o || typeof o !== 'object') return o;
+            const option = o as Record<string, unknown>;
+            return { label: labelOf(typeof option.text === 'string' ? option.text : ''), query: '', ...option };
+        }),
+    };
 }
 
 /** A valid four-option pick reply. */
@@ -530,6 +549,8 @@ export interface HarnessOptions {
     admit?: OrchestratorOptions['admit'];
     /** Run as the judge try sandbox (AGENT_TRY): the errand runner keeps no past request. Off by default. */
     sandbox?: boolean;
+    /** Direct select (JobDeps.direct). Off by default here, so the older tests keep the scan path. */
+    direct?: boolean;
 }
 
 export function harness(options: HarnessOptions = {}): Harness {
@@ -578,6 +599,7 @@ export function harness(options: HarnessOptions = {}): Harness {
         leaseHeartbeatMs: options.leaseHeartbeatMs,
         yesNoFast: options.yesNoFast,
         draftFirst: options.draftFirst,
+        direct: options.direct,
     };
     // Short retry waits so the tests of claims that never reached the module run fast.
     const callRunner = new CallRunner({

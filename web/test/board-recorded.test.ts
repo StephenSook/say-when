@@ -109,9 +109,11 @@ describe('boardRows over rows recorded from say-when-dev', () => {
     assert.equal(rows.safety.state, 'ok', 'the smoke station was online and healthy');
     assert.deepEqual(rows.pipelineEvents.map((e) => `${e.stage} ${e.status}`), ['listen ok', 'plan started', 'plan ok', 'speak started']);
     const { conversation, partner, live } = views(rows);
-    assert.equal(conversation.cursor?.optionId, '52');
+    // These rows were recorded on the scan database; this branch reads a Window as direct select's wait for a pick.
+    assert.equal(conversation.cursor?.optionId, null);
+    assert.equal(conversation.cursor?.waitingFor, '1 to 3', 'no gesture gives 4 (D21)');
     assert.equal(conversation.cursor?.phase, 'window');
-    assert.equal(partner.status.text, 'They are choosing, option 2 of 4.');
+    assert.equal(partner.status.text, 'They are choosing from 4 options.');
     assert.equal(live.firstOption?.kind, 'final');
     const heardToFirst = rows.pipelineEvents[3]!.at - rows.pipelineEvents[0]!.at;
     assert.deepEqual(live.firstOption, { kind: 'final', ms: heardToFirst });
@@ -132,21 +134,14 @@ describe('boardRows over rows recorded from say-when-dev', () => {
     assert.equal(conversation.picked?.id, '61');
     // The recorded session's label is "smoke", which names no input mode, so no jaw clench is claimed (W1).
     assert.equal(rows.input, 'unknown');
-    assert.equal(conversation.agent?.sentence, 'Waiting for CONFIRM. Nothing is sent yet.');
+    assert.equal(conversation.agent?.sentence, 'Waiting for 1 to send, 2 to cancel. Nothing is sent yet.');
     assert.equal(partner.status.text, 'Waiting for them to confirm.');
     // Question 1 ended with no pick: its old "no pick" select step names no option, so it is not shown as a pick.
     const selects = rows.pipelineEvents.filter((e) => e.stage === 'select');
     assert.deepEqual(selects.map((e) => [e.questionId, e.detail.optionId, e.detail.kind]), [['19', '55', 'reply'], ['20', '57', 'reply'], ['21', '61', 'errand']]);
-    assert.deepEqual(
-      rows.commands.map((c) => [c.command, c.accepted, c.ignoredReason]),
-      [
-        ['YES', true, null],
-        ['YES', true, null],
-        ['YES', true, null],
-        ['YES', false, 'YES does not confirm. Only CONFIRM sends'],
-        ['CONFIRM', false, 'The read-back had not finished'],
-      ],
-    );
+    // Recorded on the scan database (YES and CONFIRM): those words are not direct select commands (D18), so this
+    // branch's feed drops them, as it drops any retired name, instead of showing them as picks.
+    assert.deepEqual(rows.commands, []);
     for (const view of [conversation, partner, live]) assert.doesNotMatch(JSON.stringify(view), BROKEN);
     assert.doesNotMatch(JSON.stringify(rows), PRIVATE_WORDS);
   });
@@ -170,7 +165,9 @@ describe('boardRows over rows recorded from say-when-dev', () => {
     assert.equal(errand.readBackText, 'Smoke form. Item: water. Nothing will be sent anywhere.');
     assert.equal(errand.confirmationText, 'Smoke test: the gate released it; nothing was sent anywhere.');
     const confirm = rows.commands.find((c) => c.id === errand.confirmCommandId);
-    assert.deepEqual([confirm?.command, confirm?.accepted], ['CONFIRM', true]);
+    // The scan CONFIRM that released it is not a direct select command, so the feed has no row for it (see above).
+    assert.equal(confirm, undefined);
+    assert.ok(errand.confirmCommandId, 'the errand row still names the gesture that confirmed it');
     const { conversation, live } = views(rows);
     assert.deepEqual(conversation.header, { eyebrow: 'The partner typed', lead: 'Smoke test [errand]: send the request?', quoted: true });
     assert.equal(conversation.agent?.sentence, 'Sent: Smoke form.');

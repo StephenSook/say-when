@@ -12,7 +12,7 @@
 // bindings plug in at one place, src/db/bindings.ts. Every view, reducer and field name comes from
 // src/contract.ts, which test/contract.test.ts checks against docs/spacetime.md and the generated bindings.
 
-import { camel, DEVICE_STATUS, REDUCERS, VIEWS, type ViewName } from '../contract.js';
+import { camel, DEVICE_STATUS, DIRECT, REDUCERS, VIEWS, type ViewName } from '../contract.js';
 import type { Logger } from '../log.js';
 import type {
     AgentConsent,
@@ -505,7 +505,14 @@ function oneOf<T extends string>(value: string, allowed: readonly T[], what: str
     throw new ContractError(`unknown ${what} ${value}`);
 }
 
-const JOB_KINDS: readonly JobKind[] = ['options', 'errand_preview', 'remember'];
+/** The module's job kind, through the direct select name map (src/contract.ts DIRECT), so a rename is one edit. */
+export function jobKindOf(value: unknown): JobKind {
+    const tag = tagOf(value);
+    const kinds: Readonly<Record<string, JobKind>> = DIRECT.jobKindTags;
+    const kind = Object.hasOwn(kinds, tag) ? kinds[tag] : undefined;
+    if (kind === undefined) throw new ContractError(`unknown job kind ${tag}`);
+    return kind;
+}
 const JOB_STATUSES: readonly JobStatus[] = ['pending', 'claimed', 'done', 'failed', 'cancelled'];
 const ORIGINS: readonly Origin[] = ['partner', 'menu'];
 const MENU_ITEMS: readonly MenuItem[] = ['none', 'need', 'request', 'call', 'say'];
@@ -537,7 +544,7 @@ const CALL_STATUSES: readonly CallStatus[] = [
 export function toAgentQueueRow(row: Record<string, unknown>): AgentQueueRow {
     return {
         jobId: u64Of(field(row, 'job_id')),
-        kind: oneOf(tagOf(field(row, 'kind')), JOB_KINDS, 'job kind'),
+        kind: jobKindOf(field(row, 'kind')),
         status: oneOf(tagOf(field(row, 'status')), JOB_STATUSES, 'job status'),
         attempt: u32Of(field(row, 'attempt')),
         claimedByMe: boolOf(field(row, 'claimed_by_me')),
@@ -556,6 +563,10 @@ export function toAgentQueueRow(row: Record<string, unknown>): AgentQueueRow {
         replyText: strOf(field(row, 'reply_text')),
         recentErrandTitle: strOf(field(row, 'recent_errand_title')),
         recentErrandSentAtMs: millisOf(optionalField(row, 'recent_errand_sent_at')),
+        // Direct select (src/contract.ts DIRECT): the original question of a follow-up turn, and the picked category.
+        parentQuestionId: u64Of(field(row, 'parent_question_id')),
+        parentQuestionText: strOf(field(row, 'parent_question_text')),
+        category: strOf(field(row, DIRECT.categoryField)),
         createdAtMs: millisOf(field(row, 'created_at')) ?? 0,
     };
 }

@@ -22,6 +22,7 @@ import spacetimedb, {
   pipelineEvent,
   QuestionStatus,
   ScanOutcome,
+  SearchStatus,
   SourceRef,
   wordTiming,
   type AgentJob,
@@ -54,6 +55,18 @@ const SessionCall = t.object('SessionCall', {
   reason: t.string(),
 });
 
+/** D18: the web search waiting for its read-back or confirm. `readBackText` is the module's fixed sentence. */
+const SessionSearch = t.object('SessionSearch', {
+  searchId: t.u64(),
+  status: SearchStatus,
+  readBackText: t.string(),
+  digest: t.string(),
+  confirmOpensAt: t.option(t.timestamp()),
+  confirmClosesAt: t.option(t.timestamp()),
+  reasonCode: t.string(),
+  reason: t.string(),
+});
+
 const SessionReply = t.object('SessionReply', {
   questionId: t.u64(),
   text: t.string(),
@@ -75,6 +88,8 @@ const SessionView = t.row('SessionView', {
   lastGestureId: t.string(),
   lastGestureOutcome: t.string(),
   reply: t.option(SessionReply),
+  /** D18: the newest search request of the session (Prepared or AwaitingConfirm while it waits). */
+  search: t.option(SessionSearch),
 });
 
 const StationOption = t.row('StationOption', {
@@ -89,6 +104,8 @@ const StationOption = t.row('StationOption', {
   laugh: t.bool(),
   clipMs: t.option(t.u32()),
   current: t.bool(),
+  /** D18: the earpiece label; empty means read `text`. */
+  label: t.string(),
 });
 
 const PartnerQuestion = t.row('PartnerQuestion', {
@@ -128,6 +145,13 @@ const AgentQueueItem = t.row('AgentQueueItem', {
   recentErrandTitle: t.string(),
   recentErrandSentAt: t.option(t.timestamp()),
   createdAt: t.timestamp(),
+  /**
+   * D18, for `Categories` and `Search` jobs: the person's original question (its id and words; `questionText` is the
+   * same words) and, for a `Search` job, the category picked. 0 and empty for every other job.
+   */
+  parentQuestionId: t.u64(),
+  parentQuestionText: t.string(),
+  category: t.string(),
 });
 
 const ErrandQueueItem = t.row('ErrandQueueItem', {
@@ -173,6 +197,8 @@ const BoardOption = t.object('BoardOption', {
   provenance: t.string(),
   sources: t.array(SourceRef),
   clipMs: t.option(t.u32()),
+  /** D18: the earpiece label ("Good", or the text when the label is empty); "Option N" while sharing is off. */
+  shortLabel: t.string(),
 });
 
 const BoardQuestion = t.row('BoardQuestion', {
@@ -193,6 +219,9 @@ const BoardQuestion = t.row('BoardQuestion', {
   releasedAt: t.option(t.timestamp()),
   spokenAt: t.option(t.timestamp()),
   askedAt: t.timestamp(),
+  /** D18: the original question of a categories or search turn (0 for any other), and the category (shared only). */
+  parentQuestionId: t.u64(),
+  category: t.string(),
 });
 
 const BoardPayload = t.row('BoardPayload', {
@@ -230,6 +259,29 @@ const BoardErrand = t.row('BoardErrand', {
   screenshotUrl: t.string(),
   /** Module v2. The errand option the person picked. */
   optionId: t.u64(),
+});
+
+/** D18: a web search request, content-free (the read-back is the module's own fixed sentence). */
+const BoardSearch = t.row('BoardSearch', {
+  searchId: t.u64().primaryKey(),
+  sessionId: t.u64(),
+  questionId: t.u64(),
+  optionId: t.u64(),
+  status: SearchStatus,
+  digest: t.string(),
+  readBackText: t.string(),
+  reasonCode: t.string(),
+  reason: t.string(),
+  confirmGestureId: t.string(),
+  stopGestureId: t.string(),
+  followUpQuestionId: t.u64(),
+  createdAt: t.timestamp(),
+  readbackDoneAt: t.option(t.timestamp()),
+  confirmOpensAt: t.option(t.timestamp()),
+  confirmClosesAt: t.option(t.timestamp()),
+  confirmedAt: t.option(t.timestamp()),
+  endedAt: t.option(t.timestamp()),
+  updatedAt: t.timestamp(),
 });
 
 const BoardCallLine = t.object('BoardCallLine', {
@@ -354,6 +406,8 @@ function partnerAction(db: ReadDb, q: Question): string {
   if (e) return `errand:${snake(e.status.tag)}`;
   const c = newestBy(db.callRequest.callBySession.filter(q.sessionId), (r) => r.questionId === q.id);
   if (c) return `call:${snake(c.status.tag)}`;
+  const w = newestBy(db.searchRequest.searchBySession.filter(q.sessionId), (r) => r.questionId === q.id);
+  if (w) return `search:${snake(w.status.tag)}`;
   return '';
 }
 
@@ -380,6 +434,7 @@ export const mySession = spacetimedb.view({ public: true }, t.option(SessionView
     lastGestureId: '',
     lastGestureOutcome: '',
     reply: undefined,
+    search: undefined,
   };
   if (role === 'Speaker') {
     const q = newestBy(ctx.db.question.questionBySession.filter(sessionId), (r) => r.status.tag === 'Released');
@@ -394,6 +449,7 @@ export const mySession = spacetimedb.view({ public: true }, t.option(SessionView
   const q = scan && scan.questionId !== 0n ? ctx.db.question.id.find(scan.questionId) : undefined;
   const e = newestBy(ctx.db.errand.errandBySession.filter(sessionId));
   const c = newestBy(ctx.db.callRequest.callBySession.filter(sessionId));
+  const w = newestBy(ctx.db.searchRequest.searchBySession.filter(sessionId));
   let last: { id: string; outcome: string; at: bigint } | undefined;
   for (const g of ctx.db.gestureLog.gestureBySession.filter(sessionId)) {
     const at = g.receivedAt.microsSinceUnixEpoch;
@@ -433,6 +489,18 @@ export const mySession = spacetimedb.view({ public: true }, t.option(SessionView
       : undefined,
     lastGestureId: last?.id ?? '',
     lastGestureOutcome: last?.outcome ?? '',
+    search: w
+      ? {
+          searchId: w.id,
+          status: w.status,
+          readBackText: w.readBackText,
+          digest: w.digest,
+          confirmOpensAt: w.confirmOpensAt,
+          confirmClosesAt: w.confirmClosesAt,
+          reasonCode: w.reasonCode,
+          reason: w.reason,
+        }
+      : undefined,
   };
 });
 
@@ -460,6 +528,7 @@ export const myOptions = spacetimedb.view({ public: true }, t.array(StationOptio
         laugh: o.laugh,
         clipMs: o.clipMs,
         current,
+        label: o.label,
       });
     }
   }
@@ -491,6 +560,7 @@ function queueItem(db: ReadDb, j: AgentJob, me: ViewContext['sender'], sessionId
   const q = db.question.id.find(j.questionId);
   const e = j.errandId !== 0n ? db.errand.id.find(j.errandId) : undefined;
   const recent = sessionId === 0n ? undefined : newestBy(db.errand.errandBySession.filter(sessionId), (r) => r.status.tag === 'Submitted');
+  const parent = q && q.parentQuestionId !== 0n ? db.question.id.find(q.parentQuestionId) : undefined;
   return {
     jobId: j.id,
     kind: j.kind,
@@ -513,6 +583,9 @@ function queueItem(db: ReadDb, j: AgentJob, me: ViewContext['sender'], sessionId
     recentErrandTitle: recent?.formTitle ?? '',
     recentErrandSentAt: recent?.submittedAt,
     createdAt: j.createdAt,
+    parentQuestionId: q?.parentQuestionId ?? 0n,
+    parentQuestionText: parent?.text ?? '',
+    category: q?.category ?? '',
   };
 }
 
@@ -631,12 +704,15 @@ export const publicBoard = spacetimedb.anonymousView({ public: true }, t.array(B
         provenance: o.provenance,
         sources: share ? o.sources : [],
         clipMs: o.clipMs,
+        shortLabel: share ? (o.label !== '' ? o.label : o.text) : `Option ${o.rank}`,
       })),
       pickedOptionId: q.pickedOptionId,
       replyText: share ? (q.replyText ?? '') : '',
       releasedAt: q.releasedAt,
       spokenAt: q.spokenAt,
       askedAt: q.askedAt,
+      parentQuestionId: q.parentQuestionId,
+      category: share ? q.category : '',
     }));
 });
 
@@ -737,6 +813,33 @@ export const boardCalls = spacetimedb.anonymousView({ public: true }, t.array(Bo
     confirmGestureId: c.confirmGestureId,
     stopGestureId: c.stopGestureId,
     held: isHeld(c),
+  }));
+});
+
+/** D18: every web search request of the session. Content-free, so the same with sharing on or off. */
+export const boardSearches = spacetimedb.anonymousView({ public: true }, t.array(BoardSearch), (ctx: AnonContext) => {
+  const sessionId = boardSessionId(ctx.db);
+  if (sessionId === 0n) return [];
+  return [...ctx.db.searchRequest.searchBySession.filter(sessionId)].map((r) => ({
+    searchId: r.id,
+    sessionId: r.sessionId,
+    questionId: r.questionId,
+    optionId: r.optionId,
+    status: r.status,
+    digest: r.digest,
+    readBackText: r.readBackText,
+    reasonCode: publicCode(r.reasonCode, snake(r.status.tag)),
+    reason: publicReason(r.reasonCode, false).replace('Nothing was sent.', 'No search was started.'),
+    confirmGestureId: r.confirmGestureId,
+    stopGestureId: r.stopGestureId,
+    followUpQuestionId: r.followUpQuestionId,
+    createdAt: r.createdAt,
+    readbackDoneAt: r.readbackDoneAt,
+    confirmOpensAt: r.confirmOpensAt,
+    confirmClosesAt: r.confirmClosesAt,
+    confirmedAt: r.confirmedAt,
+    endedAt: r.endedAt,
+    updatedAt: r.updatedAt,
   }));
 });
 

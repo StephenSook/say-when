@@ -246,8 +246,10 @@ export const STOCK_PROVENANCE = 'stock' as const;
  * distinct tones the planner's own yes or no options must have.
  */
 export function stockYesNo(): OptionInput[] {
-    const option = (text: string, tone: OptionInput['tone']): OptionInput => ({
+    const option = (label: string, text: string, tone: OptionInput['tone']): OptionInput => ({
         kind: 'reply',
+        // Direct select reads "One: yes. Two: no." in the earpiece; the room voice says the text.
+        label,
         text,
         tone,
         laugh: false,
@@ -256,5 +258,5 @@ export function stockYesNo(): OptionInput[] {
         memoryRefs: [],
         actionJson: '',
     });
-    return [option('Yes.', 'neutral'), option('No.', 'calm')];
+    return [option('Yes', 'Yes.', 'neutral'), option('No', 'No.', 'calm')];
 }

@@ -30,6 +30,7 @@ import {
   applyDueIdle,
   clearScanTimers,
   closeQuestion,
+  directStepEnd,
   endPass,
   enterPreparing,
   enterReading,
@@ -39,6 +40,7 @@ import {
   isScanActive,
   isSignalPause,
   optionsOf,
+  pausedCode,
   pause,
   pushIdle,
   recordWordTimings,
@@ -48,7 +50,7 @@ import {
   scanPolicy,
   startScan,
 } from './clock';
-import { applyTiming, defaultConfig, getConfig } from './config';
+import { applyTiming, defaultConfig, getConfig, isDirect } from './config';
 import {
   addCallLine as addCallLineImpl,
   attachPreview,
@@ -60,11 +62,12 @@ import {
   hasConsent,
   readbackDone,
   reportCallStatus as reportCallStatusImpl,
+  searchTimedOut,
   stopUncovered,
   voidPending,
 } from './consent';
 import { handleGesture } from './gesture';
-import { claimJob, createJob, endJob, requireFencedJob } from './jobs';
+import { claimJob, createJob, endJob, isOptionJob, requireFencedJob } from './jobs';
 import {
   contactGoodFor,
   contactIsGood,
@@ -85,6 +88,7 @@ import spacetimedb, {
   OptionInput,
   pairingTimer,
   scanTimer,
+  searchTimer,
   SmokeResult,
   VoiceToken,
   type Role,
@@ -99,6 +103,7 @@ import {
   isAfter,
   msBetween,
   onceAt,
+  parseInputMode,
   parseRole,
   parseScope,
   plusMs,
@@ -123,6 +128,7 @@ export {
   boardEvents,
   boardLedger,
   boardPayloads,
+  boardSearches,
   boardSessionLedger,
   boardWordTimings,
   callQueue,
@@ -291,6 +297,18 @@ export const setTiming = spacetimedb.reducer({ json: t.string() }, (ctx, { json 
   appendLedger(ctx, activeSession(ctx.db)?.id ?? 0n, 'timing', 'Owner', { reason: changed.join(',').slice(0, 200) });
 });
 
+/**
+ * Owner: how the person answers (D18), `direct` (four gestures pick four options) or `scan` (the cursor with YES, NO
+ * and CONFIRM): `spacetime call <db> set_input_mode direct`. Only between sessions, so a session never changes mode.
+ */
+export const setInputMode = spacetimedb.reducer({ mode: t.string() }, (ctx, { mode }) => {
+  const cfg = requireOwner(ctx);
+  const next = parseInputMode(mode);
+  if (activeSession(ctx.db)) throw new SenderError('a session is active: end it first');
+  ctx.db.config.id.update({ ...cfg, inputMode: next });
+  appendLedger(ctx, 0n, 'timing', 'Owner', { outcome: `input_mode:${mode}` });
+});
+
 /** The room's privacy toggle. Turning it on needs an active `board_text` consent row. */
 export const setBoardSharing = spacetimedb.reducer({ on: t.bool() }, (ctx, { on }) => {
   const who = requireOwnerOrCaregiver(ctx);
@@ -456,6 +474,10 @@ export const purgeSession = spacetimedb.reducer({ sessionId: t.u64() }, (ctx, { 
     for (const r of [...ctx.db.callTimer.callId.filter(c.id)]) ctx.db.callTimer.scheduledId.delete(r.scheduledId);
     ctx.db.callRequest.id.delete(c.id);
   }
+  for (const r of [...ctx.db.searchRequest.searchBySession.filter(sessionId)]) {
+    for (const tm of [...ctx.db.searchTimer.searchId.filter(r.id)]) ctx.db.searchTimer.scheduledId.delete(tm.scheduledId);
+    ctx.db.searchRequest.id.delete(r.id);
+  }
 });
 
 // ---------- The partner (3.3) ----------
@@ -505,10 +527,13 @@ export const askQuestion = spacetimedb.reducer(
       releasedAt: undefined,
       spokenAt: undefined,
       endedAt: undefined,
+      parentQuestionId: 0n,
+      category: '',
     });
     createJob(ctx, 'Options', {
       sessionId: session.id,
       questionId: q.id,
+      // In Direct mode (D18) this means the agent may OFFER a Search option; it makes no web call in an Options job.
       webSearchAllowed: hasConsent(ctx.db, 'WebSearch', ''),
       memoryAllowed: hasConsent(ctx.db, 'Memory', ''),
     });
@@ -539,7 +564,7 @@ export const askQuestion = spacetimedb.reducer(
       if (older.id === q.id || !['Drafting', 'Ready', 'Scanning'].includes(older.status.tag)) continue;
       ctx.db.question.id.update({ ...older, status: { tag: 'Cancelled' }, outcome: { tag: 'Cancelled' }, endedAt: ctx.timestamp });
       for (const j of [...ctx.db.agentJob.jobByQuestion.filter(older.id)]) {
-        if (j.kind.tag === 'Options' && (j.status.tag === 'Pending' || j.status.tag === 'Claimed')) endJob(ctx, j, 'Cancelled', 'superseded');
+        if (isOptionJob(j) && (j.status.tag === 'Pending' || j.status.tag === 'Claimed')) endJob(ctx, j, 'Cancelled', 'superseded');
       }
       appendLedger(ctx, session.id, 'question', 'Partner', { questionId: older.id, outcome: 'cancelled', reason: 'superseded' });
     }
@@ -749,6 +774,8 @@ export const agentClaim = spacetimedb.reducer({ jobId: t.u64() }, (ctx, { jobId 
   requireRole(ctx, 'Agent');
   const job = ctx.db.agentJob.id.find(jobId);
   const sessionId = job ? (ctx.db.question.id.find(job.questionId)?.sessionId ?? 0n) : 0n;
+  // D18: a web search never starts while the person's session is paused (a pause also cancels its search turns).
+  if (job && job.kind.tag === 'Search' && pausedCode(ctx.db, sessionId)) throw new SenderError('session paused');
   claimJob(ctx, jobId, sessionId);
 });
 
@@ -891,6 +918,10 @@ export const scanTick = spacetimedb.reducer({ onSchedule: scanTimer }, { job: sc
   if (!session || session.endedAt !== undefined) return;
   switch (job.kind.tag) {
     case 'StepEnd':
+      if (isDirect(ctx.db)) {
+        directStepEnd(ctx, s); // D18: each option once, then the wait for a pick
+        return;
+      }
       if (s.phase.tag === 'Reading') {
         enterWindow(ctx, s);
       } else if (s.phase.tag === 'Window') {
@@ -974,6 +1005,12 @@ export const errandTimeout = spacetimedb.reducer({ onSchedule: errandLease }, { 
 export const callTimeout = spacetimedb.reducer({ onSchedule: callTimer }, { job: callTimer.rowType }, (ctx, { job }) => {
   requireScheduler(ctx);
   callTimedOut(ctx, job.callId, job.kind.tag, job.seq);
+});
+
+/** D18: a search request's read-back deadline or confirm window ran out (a timeout means no). */
+export const searchTimeout = spacetimedb.reducer({ onSchedule: searchTimer }, { job: searchTimer.rowType }, (ctx, { job }) => {
+  requireScheduler(ctx);
+  searchTimedOut(ctx, job.searchId, job.kind.tag, job.seq);
 });
 
 export const pairingExpired = spacetimedb.reducer({ onSchedule: pairingTimer }, { job: pairingTimer.rowType }, (ctx, { job }) => {

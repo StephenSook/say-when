@@ -1,8 +1,9 @@
-"""Live decoder: headset -> YES / NO / CONFIRM / STOP / HEADSET_OFF messages.
+"""Live decoder: headset -> command messages.
 
-  python live.py                 # headless: JSON lines on stdout, logs on stderr
+  python live.py                 # headless: JSON lines on stdout, logs on stderr (direct select, the default)
   python live.py --window        # same, plus a window with live bars
-  python live.py --jaw-only      # fallback from docs/brain-mode-test.md: single clench = YES, silence = NO
+  python live.py --mode scan     # the older scan map, for the say-when-demo database
+  python live.py --jaw-only      # fallback from docs/brain-mode-test.md, imagery off (maps below)
   python live.py --log events.jsonl
 
 Output (PLAN.md decoder contract), as JSON lines on stdout and on ws://127.0.0.1:8765 for the station page
@@ -11,13 +12,17 @@ and the /eeg page of the web app (--no-serve turns the server off):
   {"type": "health", "decoderHealthy"}   every 250 ms
   {"type": "eeg", ...}                   about 10 per second, server only: per-electrode change, model bars, jaw
 
-Right fist imagined = YES, left = NO, single jaw clench = CONFIRM, held jaw clench (LONG_CLENCH_S, about 0.8 s)
-= STOP, a double jaw clench = nothing, no packets for 0.5 s = HEADSET_OFF (PLAN D21). Imagery is ignored during a
-clench and for 1 s after it.
+--mode direct (D18, docs/direct-select.md, the default): imagined LEFT fist = PICK_1, imagined RIGHT fist = PICK_2,
+single jaw clench = PICK_3, held jaw clench (LONG_CLENCH_S, about 0.8 s) = STOP, a double jaw clench = nothing.
+--mode scan (D11 + D21): right fist = YES, left fist = NO, single jaw clench = CONFIRM, held jaw clench = STOP,
+a double jaw clench = nothing.
+--jaw-only: direct single = PICK_1, double = PICK_2, held = STOP (option 3 from the station key);
+            scan single = YES, double = CONFIRM, silence = NO, no STOP.
+No packets for 0.5 s = HEADSET_OFF in both. Imagery is ignored during a clench and for 1 s after it.
 
-Imagery rules (PLAN D21, eeg/hands.py), on the smoothed model probabilities, each a flag:
-  --yes-threshold 0.90        a right fist at or above this is YES at once
-  --no-threshold 0.96         a left fist at or above this is NO at once
+Imagery rules (PLAN D21, eeg/hands.py), the same in both maps, on the smoothed model probabilities, each a flag:
+  --yes-threshold 0.90        a right fist at or above this is sent at once (scan YES, direct PICK_2)
+  --no-threshold 0.96         a left fist at or above this is sent at once (scan NO, direct PICK_1)
   --fallback-s 10             otherwise, after this long with no command (imagery, jaw or HEADSET_OFF) ...
   --fallback-threshold 0.65   ... the hand with more predictions at or above this wins (a tie sends nothing) ...
   --fallback-min 3            ... if it has at least this many; then the window starts again
@@ -46,15 +51,27 @@ def _jaw_base(engine):
     return getattr(jaw, "baseline", None)
 
 
-def imagery_settings(cfg: HandConfig, jaw_only: bool = False) -> str:
-    """The imagery rules in one line, printed at startup so the run's settings are on record."""
+def command_map(mode: str, jaw_only: bool = False, use_jaw: bool = True) -> dict:
+    """What each signal sends in this run, for the startup log line."""
+    out = {} if jaw_only else {f"imagined {h} fist": c for h, c in sorted(config.HAND_COMMANDS[mode].items())}
+    if use_jaw or jaw_only:
+        table = (messages.JAW_ONLY_COMMAND if jaw_only else messages.JAW_COMMAND)[mode]
+        out.update({f"{k} jaw clench": v for k, v in table.items()})
+    out["no packets"] = "HEADSET_OFF"
+    return out
+
+
+def imagery_settings(cfg: HandConfig, jaw_only: bool = False, mode: str = config.DEFAULT_MODE) -> str:
+    """The imagery rules in one line, printed at startup so the run's settings are on record. The thresholds are per
+    hand, the same in both maps; only the word each hand sends follows the map."""
     if jaw_only:
         return "Imagery: off (--jaw-only)"
+    word = config.HAND_COMMANDS[mode]
     fallback = (f"fallback every {cfg.fallback_s:g} s with no command: the hand with more predictions >= "
                 f"{cfg.fallback_threshold:.2f} wins, at least {cfg.fallback_min}, a tie sends nothing"
                 if cfg.fallback_s > 0 else "fallback off")
-    return (f"Imagery: YES at once at >= {cfg.yes_threshold:.2f} (right fist), NO at once at >= "
-            f"{cfg.no_threshold:.2f} (left fist); {fallback}; ema {cfg.ema:g}, refractory {cfg.refractory_s:g} s")
+    return (f"Imagery: {word['right']} at once at >= {cfg.yes_threshold:.2f} (right fist), {word['left']} at once at "
+            f">= {cfg.no_threshold:.2f} (left fist); {fallback}; ema {cfg.ema:g}, refractory {cfg.refractory_s:g} s")
 
 
 def make_viz(args, fs: float, source: str):
@@ -100,7 +117,7 @@ def windowed(engine: Engine, out: messages.Output, title: str):
     head.setStyleSheet("font-size: 26px; font-weight: bold;")
     lay.addWidget(head)
     cfg = engine.hands.cfg
-    bars = {c: Bar(c, cfg.instant(c) if c in config.HAND_COMMAND else None) for c in engine.classes}
+    bars = {c: Bar(c, cfg.instant(c) if c in config.HANDS else None) for c in engine.classes}
     jaw = Bar("jaw", 1.0, "jaw")
     for b in list(bars.values()) + [jaw]:
         lay.addWidget(b)
@@ -145,7 +162,12 @@ def main():
     ap.add_argument("--port", default=config.SERIAL_PORT)
     ap.add_argument("--board-id", type=int, default=config.BOARD_ID)
     ap.add_argument("--window", action="store_true", help="show live bars")
-    ap.add_argument("--jaw-only", action="store_true", help="fallback: single clench = YES, imagery off")
+    ap.add_argument("--mode", choices=config.MODES, default=config.DEFAULT_MODE,
+                    help="direct (default): fists and a single jaw clench pick options 1 to 3, held clench = STOP, "
+                         "double clench = nothing; scan: YES / NO / CONFIRM / STOP for the say-when-demo database")
+    ap.add_argument("--jaw-only", action="store_true",
+                    help="fallback, imagery off: direct single clench = PICK_1, double = PICK_2, held = STOP; "
+                         "scan single = YES, double = CONFIRM")
     ap.add_argument("--no-jaw", action="store_true", help="imagery only")
     ap.add_argument("--log", help="also append every message to this .jsonl file")
     ap.add_argument("--no-serve", action="store_true", help="do not open ws://127.0.0.1:8765 for the web app")
@@ -154,9 +176,11 @@ def main():
                     help="another web origin allowed to connect (default: localhost:3000 and the Vercel site)")
     ap.add_argument("--step", type=float, default=0.1, help="seconds between imagery predictions")
     ap.add_argument("--yes-threshold", type=float, default=config.YES_THRESHOLD,
-                    help="right fist: YES at once at or above this smoothed confidence (default 0.90)")
+                    help="right fist (scan YES, direct PICK_2): sent at once at or above this smoothed confidence "
+                         "(default 0.90)")
     ap.add_argument("--no-threshold", type=float, default=config.NO_THRESHOLD,
-                    help="left fist: NO at once at or above this smoothed confidence (default 0.96)")
+                    help="left fist (scan NO, direct PICK_1): sent at once at or above this smoothed confidence "
+                         "(default 0.96)")
     ap.add_argument("--fallback-s", type=float, default=config.FALLBACK_S,
                     help="seconds with no command before the fallback picks a hand; 0 turns it off (default 10)")
     ap.add_argument("--fallback-threshold", type=float, default=config.FALLBACK_THRESHOLD,
@@ -164,7 +188,7 @@ def main():
     ap.add_argument("--fallback-min", type=int, default=config.FALLBACK_MIN,
                     help="the fallback's winning hand needs at least this many counts (default 3)")
     ap.add_argument("--ema", type=float, default=0.5, help="smoothing: weight of the previous value")
-    ap.add_argument("--refractory", type=float, default=2.0, help="seconds with no imagery after a YES or NO")
+    ap.add_argument("--refractory", type=float, default=2.0, help="seconds with no imagery after a fist command")
     ap.add_argument("--allow-unusable", action="store_true", help="run a model that failed the chance check")
     ap.add_argument("--demo", action="store_true", help="no headset: fake signals and commands, to try the web page")
     args = ap.parse_args()
@@ -172,8 +196,8 @@ def main():
     if args.demo:
         from brain_view import DemoEngine
         server = None if args.no_serve else DecoderServer(origins=ALLOWED_ORIGINS + args.allow_origin, log=log).start()
-        log("DEMO: fake signals cycling rest / left / rest / right / jaw clench, 5 s each")
-        demo = DemoEngine()
+        log(f"DEMO ({args.mode} map): fake signals cycling rest / left / rest / right / jaw clench, 5 s each")
+        demo = DemoEngine(mode=args.mode)
         return headless(demo, messages.Output(args.log, server=server, viz=make_viz(args, demo.fs, "synthetic")))
     try:
         model, meta, folder = store.load(args.models)
@@ -186,9 +210,11 @@ def main():
     hand_cfg = HandConfig(yes_threshold=args.yes_threshold, no_threshold=args.no_threshold,
                           fallback_s=args.fallback_s, fallback_threshold=args.fallback_threshold,
                           fallback_min=args.fallback_min, ema=args.ema, refractory_s=args.refractory)
-    log(imagery_settings(hand_cfg, args.jaw_only))
+    log(imagery_settings(hand_cfg, args.jaw_only, args.mode))
     engine = Engine(model, meta, hand_cfg, step_s=args.step, port=args.port, board_id=args.board_id,
-                    use_jaw=not args.no_jaw, jaw_only=args.jaw_only, log=log)
+                    use_jaw=not args.no_jaw, jaw_only=args.jaw_only, log=log, mode=args.mode)
+    log(f"Command map: {args.mode}{' (jaw-only)' if args.jaw_only else ''}: " + ", ".join(
+        f"{k} = {v}" for k, v in command_map(args.mode, args.jaw_only, not args.no_jaw).items()))
     server = None if args.no_serve else DecoderServer(origins=ALLOWED_ORIGINS + args.allow_origin, log=log).start()
     out = messages.Output(args.log, server=server, viz=make_viz(args, float(meta["fs"]), "live"))
     if args.window:

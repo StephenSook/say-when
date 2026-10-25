@@ -14,7 +14,11 @@ export type VizSource = 'live' | 'replay' | 'synthetic';
 export type BaselineState = 'none' | 'recording' | 'set';
 export type BrainTestState = 'not_run' | 'passed' | 'failed';
 export type Contact = 'good' | 'fair' | 'poor' | 'off';
-export type DecoderCommand = 'YES' | 'NO' | 'CONFIRM' | 'STOP' | 'HEADSET_OFF';
+/**
+ * The 8765 words the decoder republishes as markers (tools/VIZ_PROTOCOL.md 3.5): direct select (D18, `live.py --mode
+ * direct`) sends PICK_1 to PICK_4, STOP and HEADSET_OFF; the scan map (`--mode scan`) sends YES, NO, CONFIRM, STOP.
+ */
+export type DecoderCommand = 'PICK_1' | 'PICK_2' | 'PICK_3' | 'PICK_4' | 'YES' | 'NO' | 'CONFIRM' | 'STOP' | 'HEADSET_OFF';
 export type Side = 'c3' | 'c4';
 
 /** One band of the decoder's filter bank, in display order. */
@@ -111,7 +115,7 @@ const SOURCES: readonly VizSource[] = ['live', 'replay', 'synthetic'];
 const BASELINE_STATES: readonly BaselineState[] = ['none', 'recording', 'set'];
 const BRAIN_TEST_STATES: readonly BrainTestState[] = ['not_run', 'passed', 'failed'];
 const CONTACTS: readonly Contact[] = ['good', 'fair', 'poor', 'off'];
-const COMMANDS: readonly DecoderCommand[] = ['YES', 'NO', 'CONFIRM', 'STOP', 'HEADSET_OFF'];
+const COMMANDS: readonly DecoderCommand[] = ['PICK_1', 'PICK_2', 'PICK_3', 'PICK_4', 'YES', 'NO', 'CONFIRM', 'STOP', 'HEADSET_OFF'];
 
 /** Bounds that keep a broken bridge from drawing nonsense. ERD% below -100 is impossible; a huge rise is clipped. */
 const ERD_MIN = -100;

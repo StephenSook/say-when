@@ -40,27 +40,55 @@ export const STAGES: readonly Stage[] = ['listen', 'search', 'retrieve', 'plan',
 export type PipelineStatus = 'started' | 'ok' | 'error';
 
 /**
- * PLAN.md D11 command names. The person gives four of them:
- * - YES (imagine squeezing the right fist): pick this option, or answer yes. While idle, it opens the person's menu.
- * - NO (imagine squeezing the left fist): skip this option, or answer no.
- * - CONFIRM (single jaw clench, PLAN D17): the only way anything leaves the room, after the read-back.
- * - STOP (held jaw clench, PLAN D21; a double clench means nothing): cancel, none of these, hang up, pause.
+ * Direct select command names (D18, docs/direct-select.md). The person's gestures give four of them:
+ * - PICK_1 (imagine squeezing the left fist): pick option 1. In a confirm, "One: send it". While paused, resume.
+ * - PICK_2 (imagine squeezing the right fist): pick option 2. In a confirm, "Two: cancel".
+ * - PICK_3 (single jaw clench): pick option 3.
+ * - STOP (held jaw clench, about 1 second, PLAN D21): cancel, none of these, hang up, pause.
+ * A double jaw clench means nothing (PLAN D21), so no gesture gives PICK_4; it stays a command because the module
+ * takes up to 4 options and key 4 picks option 4 in a keyboard test.
+ * Nothing leaves the room (a request, a call, a web search) without a read-back and a fresh PICK_1.
  * HEADSET_OFF is a system event, not a command: the headset lost contact. Like the 2-minute idle
- * auto-pause, it cancels anything pending.
+ * auto-pause, it cancels anything pending. The scan words (YES, NO, CONFIRM; PLAN D11, D17, D21) are main's map for
+ * the `say-when-demo` database; the station and the screens here speak direct select.
  */
-export type CommandName = 'YES' | 'NO' | 'CONFIRM' | 'STOP' | 'HEADSET_OFF';
+export type PickCommand = 'PICK_1' | 'PICK_2' | 'PICK_3' | 'PICK_4';
+export type CommandName = PickCommand | 'STOP' | 'HEADSET_OFF';
 
-/** The four commands a person gives on purpose. */
+/** The five commands a person can give on purpose (PICK_4 only by key 4 in a keyboard test). */
 export type PersonCommand = Exclude<CommandName, 'HEADSET_OFF'>;
 
-/** The person's four commands, in the order the command strip shows them. */
-export const PERSON_COMMANDS: readonly PersonCommand[] = ['YES', 'NO', 'CONFIRM', 'STOP'];
+/** The four picks, in rank order. */
+export const PICK_COMMANDS: readonly PickCommand[] = ['PICK_1', 'PICK_2', 'PICK_3', 'PICK_4'];
+
+/** The person's five commands, in rank order, STOP last. */
+export const PERSON_COMMANDS: readonly PersonCommand[] = [...PICK_COMMANDS, 'STOP'];
+
+/** The highest option number a gesture picks: 3, since a double jaw clench means nothing (PLAN D21). */
+export const GESTURE_PICKS = 3;
+
+/** The commands the screens present, in the order the gesture legend and the command strip show them: 1, 2, 3, STOP. */
+export const SHOWN_COMMANDS: readonly PersonCommand[] = [...PICK_COMMANDS.slice(0, GESTURE_PICKS), 'STOP'];
 
 /** Every command event name, the system's HEADSET_OFF included. */
 export const COMMANDS: readonly CommandName[] = [...PERSON_COMMANDS, 'HEADSET_OFF'];
 
-/** 'reply', 'errand' and 'call' are offered by Claude; 'menu' items are made by the module (the person's own menu). */
-export type OptionKind = 'reply' | 'errand' | 'call' | 'menu';
+/** The option number a pick names (PICK_3 is 3), or null for STOP and HEADSET_OFF. */
+export function pickRank(command: string): number | null {
+  const index = (PICK_COMMANDS as readonly string[]).indexOf(command);
+  return index < 0 ? null : index + 1;
+}
+
+/** The pick for an option number, or null outside 1 to 4. */
+export function pickCommand(rank: number): PickCommand | null {
+  return PICK_COMMANDS[rank - 1] ?? null;
+}
+
+/**
+ * 'reply', 'errand', 'call' and 'search' are offered by Claude; 'category' is a search category after a confirmed web
+ * search (D18); 'menu' items are made by the module (the person's own menu).
+ */
+export type OptionKind = 'reply' | 'errand' | 'call' | 'search' | 'category' | 'menu';
 
 /** One sentence for the screen plus the raw error text for a `title` tooltip (docs/ui.md). */
 export interface StageError {
@@ -282,16 +310,21 @@ export type PipelineEvent = {
 export type PipelineEventOf<S extends Stage> = Extract<PipelineEvent, { stage: S }>;
 
 /**
- * PLAN.md Option row. Errands and calls are options too (D11): Claude offers them as follow-up
- * options, YES picks one, the read-back plays, and only a fresh CONFIRM sends it.
+ * PLAN.md Option row. Errands, calls and web searches are options too (D18): the person picks one by its number,
+ * the read-back plays, and only a fresh PICK_1 ("One: send it") sends it.
  */
 export interface AnswerOption {
   id: string;
   questionId: string;
   version: number;
-  /** 1-based reading order. */
+  /** 1-based reading order, and the number the person picks it by (PICK_1 to PICK_4). */
   rank: number;
   text: string;
+  /**
+   * The short earpiece words (1 to 3 words, D18), read as "One: good." Empty when the module has none (then the
+   * screens use `text`). With sharing off the board sends "Option N" here, like `text`.
+   */
+  label?: string;
   kind: OptionKind;
   /** Cartesia tone for this option (PLAN D10): 'neutral', 'calm', 'warm', 'sad' or 'firm'. draft */
   tone: string | null;

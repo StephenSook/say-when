@@ -57,8 +57,8 @@ class HeadsetInput:
             for ev in up.jaw_events:
                 self.q.put(ev["kind"])
             for msg in up.commands:
-                if msg["source"] == "imagery":
-                    self.q.put("right" if msg["command"] == "YES" else "left")
+                if msg["source"] == "imagery":  # right fist: YES (scan map) or PICK_2 (direct map)
+                    self.q.put("right" if msg["command"] in ("YES", "PICK_2") else "left")
                 elif msg["command"] == "HEADSET_OFF":
                     self.q.put("headset_off")
 

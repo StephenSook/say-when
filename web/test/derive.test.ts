@@ -1,6 +1,20 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { COMMAND_INFO, commandChipLabel, commandWord } from '../lib/commands';
+import {
+  cancelPick,
+  COMMAND_INFO,
+  commandChipLabel,
+  commandPhrase,
+  commandWord,
+  CONFIRM_PROMPT,
+  CONFIRM_SHORT,
+  confirmPick,
+  gestureLegend,
+  JAW_LANE_LEGEND,
+  legendLine,
+  optionBadge,
+  optionLabel,
+} from '../lib/commands';
 import {
   COMMAND_ECHO_MS,
   hitDisplay,
@@ -19,7 +33,11 @@ import { replayRowsAt } from '../lib/data/replay';
 import { isCommand, parseDetail, timestampToMillis, withoutMemoryText } from '../lib/data/spacetime-map';
 import {
   COMMANDS,
+  GESTURE_PICKS,
   PERSON_COMMANDS,
+  SHOWN_COMMANDS,
+  pickCommand,
+  pickRank,
   type AnswerOption,
   type CommandEvent,
   type MossHit,
@@ -56,7 +74,7 @@ describe('option helpers', () => {
     assert.deepEqual(latestOptions(options, 'missing'), []);
   });
 
-  test('optionUnderCursor follows the scan only while reading or in the window; pickedOption follows YES', () => {
+  test('optionUnderCursor follows the scan only while an option is read (D18: the wait is on no option); pickedOption follows the pick', () => {
     const options = [option({ id: 'v1r1', version: 1, rank: 1 }), option({ id: 'v1r2', version: 1, rank: 2 })];
     const scan: ScanState = {
       questionId: 'q',
@@ -73,7 +91,7 @@ describe('option helpers', () => {
       pickedOptionId: null,
     };
     assert.equal(optionUnderCursor(scan, options)?.id, 'v1r2');
-    assert.equal(optionUnderCursor({ ...scan, phase: 'window' }, options)?.id, 'v1r2');
+    assert.equal(optionUnderCursor({ ...scan, phase: 'window' }, options), null, 'the wait after the list is for any number');
     assert.equal(optionUnderCursor({ ...scan, outcome: 'none', cursor: null }, options), null);
     assert.equal(optionUnderCursor({ ...scan, phase: 'veto', pickedOptionId: 'v1r2' }, options), null, 'nothing new plays in the veto');
     assert.equal(optionUnderCursor({ ...scan, phase: 'paused' }, options), null);
@@ -147,49 +165,77 @@ describe('stage helpers', () => {
 
 describe('command echo', () => {
   test('litCommand lights the newest accepted person command for 1.2 s', () => {
-    const commands = [command({ id: 'c1', command: 'NO', at: 1_000 }), command({ id: 'c2', command: 'YES', at: 5_000 })];
+    const commands = [command({ id: 'c1', command: 'PICK_1', at: 1_000 }), command({ id: 'c2', command: 'PICK_3', at: 5_000 })];
     assert.equal(COMMAND_ECHO_MS, 1_200);
-    assert.equal(litCommand(commands, 5_000), 'YES');
-    assert.equal(litCommand(commands, 6_199), 'YES');
+    assert.equal(litCommand(commands, 5_000), 'PICK_3');
+    assert.equal(litCommand(commands, 6_199), 'PICK_3');
     assert.equal(litCommand(commands, 6_200), null);
-    assert.equal(litCommand(commands, 4_700), 'YES', 'stamped slightly ahead of this clock: just arrived');
-    assert.equal(litCommand(commands, 1_500), 'YES', 'only the newest command matters, never an older one');
+    assert.equal(litCommand(commands, 4_700), 'PICK_3', 'stamped slightly ahead of this clock: just arrived');
+    assert.equal(litCommand(commands, 1_500), 'PICK_3', 'only the newest command matters, never an older one');
     assert.equal(litCommand([], 0), null);
   });
 
   test('ignored repeats and HEADSET_OFF never light a chip', () => {
-    const ignored = [command({ id: 'c1', command: 'YES', at: 1_000, accepted: false, ignoredReason: 'Repeat inside the refractory time' })];
+    const ignored = [command({ id: 'c1', command: 'PICK_2', at: 1_000, accepted: false, ignoredReason: 'Repeat inside the refractory time' })];
     assert.equal(litCommand(ignored, 1_100), null);
     const headsetOff = [command({ id: 'c1', command: 'STOP', at: 1_000 }), command({ id: 'c2', command: 'HEADSET_OFF', at: 1_100, confidence: null })];
     assert.equal(litCommand(headsetOff, 1_200), 'STOP');
   });
 });
 
-describe('the D11 command map', () => {
-  test('the person gives YES, NO, CONFIRM and STOP; HEADSET_OFF is a system event', () => {
-    assert.deepEqual(PERSON_COMMANDS, ['YES', 'NO', 'CONFIRM', 'STOP']);
-    assert.deepEqual(COMMANDS, ['YES', 'NO', 'CONFIRM', 'STOP', 'HEADSET_OFF']);
+describe('the direct select command map (D18, with D21: a double jaw clench means nothing)', () => {
+  test('the gestures give 1, 2, 3 and STOP; 4 has no gesture; HEADSET_OFF is a system event', () => {
+    assert.deepEqual(PERSON_COMMANDS, ['PICK_1', 'PICK_2', 'PICK_3', 'PICK_4', 'STOP']);
+    assert.deepEqual(SHOWN_COMMANDS, ['PICK_1', 'PICK_2', 'PICK_3', 'STOP']);
+    assert.equal(GESTURE_PICKS, 3);
+    assert.deepEqual(COMMANDS, ['PICK_1', 'PICK_2', 'PICK_3', 'PICK_4', 'STOP', 'HEADSET_OFF']);
     assert.equal(COMMAND_INFO.HEADSET_OFF.kind, 'system');
-    assert.equal(COMMAND_INFO.YES.kind, 'imagined');
-    assert.equal(COMMAND_INFO.NO.kind, 'imagined');
-    assert.equal(COMMAND_INFO.CONFIRM.kind, 'jaw');
+    assert.equal(COMMAND_INFO.PICK_1.kind, 'imagined');
+    assert.equal(COMMAND_INFO.PICK_2.kind, 'imagined');
+    assert.equal(COMMAND_INFO.PICK_3.kind, 'jaw');
+    assert.equal(COMMAND_INFO.PICK_4.kind, 'none');
     assert.equal(COMMAND_INFO.STOP.kind, 'jaw');
+    assert.deepEqual([pickRank('PICK_3'), pickRank('STOP'), pickCommand(4), pickCommand(5)], [3, null, 'PICK_4', null]);
   });
 
-  test('chip labels and feed words', () => {
-    assert.deepEqual(PERSON_COMMANDS.map((name) => commandChipLabel(name, 'headset')), [
-      'YES, imagined right fist',
-      'NO, imagined left fist',
-      'CONFIRM, single jaw clench',
+  test('chip labels and feed words: one legend for every screen', () => {
+    assert.deepEqual(SHOWN_COMMANDS.map((name) => commandChipLabel(name, 'headset')), [
+      '1, imagined left fist',
+      '2, imagined right fist',
+      '3, single jaw clench',
       'STOP, held jaw clench',
     ]);
+    // No gesture gives 4, so the headset names no signal for it; key 4 is a keyboard test key.
+    assert.equal(commandChipLabel('PICK_4', 'headset'), '4');
+    assert.equal(commandChipLabel('PICK_4', 'keyboard'), '4, key 4');
+    assert.deepEqual(gestureLegend('headset').map((row) => `${row.label} = ${row.signal}`), [
+      '1 = imagined left fist',
+      '2 = imagined right fist',
+      '3 = single jaw clench',
+      'STOP = held jaw clench',
+    ]);
+    assert.equal(legendLine('keyboard'), '1 = key 1 · 2 = key 2 · 3 = key 3 · STOP = key S');
+    assert.equal(JAW_LANE_LEGEND, '3 single clench, hold = STOP');
+    assert.doesNotMatch(legendLine('headset'), /double|4/);
+    assert.equal(CONFIRM_PROMPT, 'One: send it. Two: cancel.');
+    assert.equal(CONFIRM_SHORT, '1 to send, 2 to cancel');
+    assert.equal(confirmPick('headset'), '1 (an imagined left fist)');
+    assert.equal(confirmPick('keyboard'), '1 (key 1)');
+    assert.equal(confirmPick('unknown'), '1');
+    assert.equal(cancelPick('switch'), '2 (a double switch press)');
     assert.equal(commandWord('HEADSET_OFF', 'headset'), 'Headset off');
-    assert.equal(commandWord('CONFIRM', 'headset'), 'CONFIRM');
+    assert.equal(commandWord('PICK_3', 'headset'), '3');
+    assert.equal(commandPhrase('PICK_3', 'headset'), 'Pick 3');
+    assert.equal(commandWord('STOP', 'headset'), 'STOP');
+    assert.equal(optionBadge(2), '2');
+    assert.equal(optionBadge(5), '');
+    assert.equal(optionLabel({ label: 'Good', text: "I'm doing awesome" }), 'Good');
+    assert.equal(optionLabel({ label: '', text: "I'm doing awesome" }), "I'm doing awesome");
   });
 
-  test('the mapping accepts only the D11 names', () => {
+  test('the mapping accepts only the direct select names; the scan words are retired here', () => {
     for (const name of COMMANDS) assert.ok(isCommand(name), name);
-    for (const retired of ['SELECT', 'ERRAND', 'CALL', 'PAUSE', 'yes', '']) assert.equal(isCommand(retired), false, retired);
+    for (const retired of ['SELECT', 'ERRAND', 'CALL', 'PAUSE', 'YES', 'NO', 'CONFIRM', 'pick_1', '']) assert.equal(isCommand(retired), false, retired);
   });
 });
 

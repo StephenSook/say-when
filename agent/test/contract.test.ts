@@ -11,7 +11,8 @@ import { describe, it } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { CONFIRM_MAX_AGE_MS, finalReport, lateReason } from '../src/calls.js';
-import { CALL_CLAIM_MS, camel, DEVICE_STATUS, MODULE_EVENT_KEY, REDUCERS, VIEWS } from '../src/contract.js';
+import { CALL_CLAIM_MS, camel, DEVICE_STATUS, DIRECT, LABEL_LIMITS, LIMITS, MODULE_EVENT_KEY, REDUCERS, VIEWS } from '../src/contract.js';
+import { KINDS_FOR_JOB } from '../src/db/memory-db.js';
 import type { CallOutcome } from '../src/ports.js';
 import type { ReducerArgs, ReducerName } from '../src/types.js';
 
@@ -204,7 +205,65 @@ describe('the call and event rules against the module source (module v2)', () =>
         assert.equal(sourceCapture(MODULE_AGENT, /const MODULE_KEY_RE = \/(.+)\/;/, 'MODULE_KEY_RE'), MODULE_EVENT_KEY.source);
         // The sidecar's own keys: `${jobId}:${attempt}:${seq}:${stage}:${status}` (src/pipeline.ts).
         for (const key of ['7:1:1:plan:started', '12:3:9:errand:ok', '1:1:1:search:error']) assert.doesNotMatch(key, MODULE_EVENT_KEY);
-        for (const key of ['s8:read:3', 'q12:select', 'c4:dialing', 'e2:submit', 'listen:1']) assert.match(key, MODULE_EVENT_KEY);
+        for (const key of ['s8:read:3', 'q12:select', 'c4:dialing', 'e2:submit', 'listen:1', 'w5:confirm']) assert.match(key, MODULE_EVENT_KEY);
+    });
+});
+
+/** The quoted words of the first `t.enum('<name>', [...])` in the module schema. */
+function moduleEnum(source: string, name: string): string[] {
+    const list = new RegExp(`t\\.enum\\('${name}', \\[([^\\]]*)\\]`).exec(source)?.[1];
+    assert.ok(list, `spacetime/src/schema.ts has no ${name} enum`);
+    return [...list.matchAll(/'([A-Za-z]+)'/g)].map((m) => m[1] ?? '');
+}
+
+const snakeTag = (tag: string) => tag.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
+
+describe('direct select (D18) against the module source and the generated bindings', () => {
+    const MODULE_SCHEMA = join(REPO, 'spacetime/src/schema.ts');
+
+    it('every module job kind maps to one sidecar job kind, and the follow-up kinds are the module\'s', (t) => {
+        if (!existsSync(MODULE_SCHEMA)) return t.skip('spacetime/src/schema.ts does not exist yet');
+        const tags = moduleEnum(readFileSync(MODULE_SCHEMA, 'utf8'), 'JobKind');
+        assert.deepEqual(tags.map(snakeTag).sort(), Object.keys(DIRECT.jobKindTags).sort());
+        assert.equal(DIRECT.jobKindTags.categories, 'categories');
+        assert.equal(DIRECT.jobKindTags.search, 'category_search');
+    });
+
+    it('the module takes the option kinds the sidecar writes, with a label of at most the same length', (t) => {
+        if (!existsSync(MODULE_AGENT) || !existsSync(MODULE_SCHEMA)) return t.skip('the module source does not exist yet');
+        const parseKind = objectAfter(readFileSync(MODULE_AGENT, 'utf8'), 'function parseKind(value: string): OptionKind');
+        assert.ok(parseKind, 'parseKind is not in spacetime/src/agent.ts');
+        const wire = [...parseKind.matchAll(/if \(value === '([a-z]+)'\) return \{ tag: '([A-Za-z]+)' \}/g)].map((m) => m[1] ?? '');
+        assert.deepEqual(wire.sort(), ['call', 'category', 'errand', 'reply', 'search']);
+        assert.ok(moduleEnum(readFileSync(MODULE_SCHEMA, 'utf8'), 'OptionKind').includes('Search'));
+        assert.equal(Number(sourceCapture(MODULE_AGENT, /export const MAX_LABEL = (\d+);/, 'MAX_LABEL')), LIMITS.optionLabel);
+        assert.ok(LABEL_LIMITS.chars <= LIMITS.optionLabel, 'the planner never writes a label the module refuses');
+        const input = objectAfter(readFileSync(MODULE_SCHEMA, 'utf8'), "export const OptionInput = t.object('OptionInput', ");
+        assert.ok(input && topKeys(input).includes('label'), 'OptionInput takes a label');
+    });
+
+    it('MemoryDb lets each job publish exactly the option kinds the module does', (t) => {
+        if (!existsSync(MODULE_AGENT)) return t.skip('spacetime/src/agent.ts does not exist yet');
+        const body = objectAfter(readFileSync(MODULE_AGENT, 'utf8'), 'const KINDS_FOR_JOB');
+        assert.ok(body, 'KINDS_FOR_JOB is not in spacetime/src/agent.ts');
+        const module: Record<string, string[]> = {};
+        for (const m of body.matchAll(/([A-Za-z]+): \[([^\]]*)\]/g)) {
+            const kind = DIRECT.jobKindTags[snakeTag(m[1] ?? '') as keyof typeof DIRECT.jobKindTags];
+            module[kind] = [...(m[2] ?? '').matchAll(/'([A-Za-z]+)'/g)].map((k) => snakeTag(k[1] ?? '')).sort();
+        }
+        const ours = Object.fromEntries(Object.entries(KINDS_FOR_JOB).map(([kind, kinds]) => [kind, [...(kinds ?? [])].sort()]));
+        assert.deepEqual(ours, module);
+    });
+
+    it('agent_queue carries the original question and the category, in views.ts and in the bindings', async (t) => {
+        if (!existsSync(MODULE_VIEWS) || !existsSync(BINDINGS)) return t.skip('the module source or the bindings do not exist yet');
+        const views = readFileSync(MODULE_VIEWS, 'utf8');
+        const row = objectAfter(views, "const AgentQueueItem = t.row('AgentQueueItem', ");
+        assert.ok(row, 'AgentQueueItem is not in views.ts');
+        for (const field of DIRECT.agentQueueFields) assert.ok(topKeys(row).includes(camel(field)), `agent_queue.${field} drifted in views.ts`);
+        const generated = (await import(pathToFileURL(join(BINDINGS, 'agent_queue_table.ts')).href)) as { default: { row?: Record<string, unknown> } };
+        const columns = Object.keys(generated.default.row ?? {});
+        for (const field of DIRECT.agentQueueFields) assert.ok(columns.includes(camel(field)), `agent_queue.${field} is missing from the bindings`);
     });
 });
 

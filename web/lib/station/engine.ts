@@ -7,7 +7,7 @@
  *  keyboard or USB switch --------> keys ------------+--> CommandSender ---> gesture(...)
  *  scan_state, my_options --------> HeardLog <-------+        (heard step and option at the onset)
  *  scan_state, my_options, cues --> Earpiece, CueSpeaker (two channels, chimes)
- *  my_session.errand / .call -----> Readback ---> report_readback_done
+ *  my_session.errand/.call/.search > Readback ---> report_readback_done
  *  worker tick every heartbeat_ms -> Heartbeat ---> heartbeat(beat_seq, decoder_healthy)
  *
  * Row callbacks are registered once per connection object (lib/role/connection.ts), never in a render. The SDK runs
@@ -42,9 +42,9 @@ import { DecoderBridge } from './decoder';
 import { Channel, Earpiece, type OptionRowLite, type ScanLite, type SynthJob } from './earpiece';
 import { HeardLog, type HeardPhase } from './heard';
 import { Heartbeat, heartbeatInterval, inputHealthy, workerTicker, FOCUS_GRACE_MS, type Ticker } from './heartbeat';
-import { canLearnSwitchKey, isTypingTarget, keyboardCommand, SwitchPattern } from './keys';
+import { canLearnSwitchKey, isPickKey, isTypingTarget, keyboardCommand, SwitchPattern } from './keys';
 import { cliTargetOf, SESSION_LABEL_RE, sessionLabel } from './model';
-import { isMenuItemText, MENU_ITEM_TEXTS, phraseText, warmPhraseKeys, type PhraseKey } from './phrases';
+import { isMenuItemText, MENU_ITEM_TEXTS, optionEarText, phraseText, warmPhraseKeys, type PhraseKey } from './phrases';
 import { indexedDbClipStore, persistentSynth, type ClipStore } from './phrase-store';
 import { Readback, readbackSegments, type WorkLite } from './readback';
 import type { Ownership, PauseReasonWord, Purpose, ScanView, StationSnapshot } from './snapshot';
@@ -211,7 +211,7 @@ export class StationEngine {
 
     this.readback = new Readback<Clip>({
       now: perfNow,
-      synth: (text) => this.speak(utterance({ kind: 'readback', segments: readbackSegments(text, this.mode ?? 'headset') }, this.profile)),
+      synth: (text, kind) => this.speak(utterance({ kind: 'readback', segments: readbackSegments(text, this.mode ?? 'headset', kind) }, this.profile)),
       channel: this.optionsChannel,
       report: (args) => {
         const conn = this.conn();
@@ -647,8 +647,8 @@ export class StationEngine {
     if (row) {
       this.sender.noteOutcome(row.lastGestureId, row.lastGestureOutcome);
       if (row.questionId !== 0n) this.earpiece.setAnswerHint(row.questionId, row.answerMode.tag === 'YesNo' ? 'yes_no' : 'pick');
-      const [errand, call] = this.workRows(row);
-      if (this.sessionRuns()) this.readback.update(errand, call, perfNow());
+      const [errand, call, search] = this.workRows(row);
+      if (this.sessionRuns()) this.readback.update(errand, call, perfNow(), search);
     }
     this.changed();
   }
@@ -667,6 +667,8 @@ export class StationEngine {
       rank: r.rank,
       kind: r.kind.tag,
       text: r.text,
+      // A row from a module before D18 has no label: the earpiece then reads the text.
+      label: r.label ?? '',
       tone: r.tone,
       laugh: r.laugh,
       current: r.current,
@@ -734,9 +736,10 @@ export class StationEngine {
 
   private lastScanStep: bigint | null = null;
 
-  private workRows(row: SessionRow): [WorkLite | null, WorkLite | null] {
+  private workRows(row: SessionRow): [WorkLite | null, WorkLite | null, WorkLite | null] {
     const e = row.errand;
     const c = row.call;
+    const w = row.search;
     const errand: WorkLite | null = e
       ? {
           kind: 'errand',
@@ -763,7 +766,21 @@ export class StationEngine {
           reason: c.reason,
         }
       : null;
-    return [errand, call];
+    // D18: a web search waits for the same read-back and two-option confirm as an errand or a call.
+    const search: WorkLite | null = w
+      ? {
+          kind: 'search',
+          id: w.searchId,
+          status: w.status.tag,
+          readBackText: w.readBackText,
+          digest: w.digest,
+          confirmOpensAt: micros(w.confirmOpensAt),
+          confirmClosesAt: micros(w.confirmClosesAt),
+          reasonCode: w.reasonCode,
+          reason: w.reason,
+        }
+      : null;
+    return [errand, call, search];
   }
 
   private workLite() {
@@ -772,6 +789,7 @@ export class StationEngine {
     return {
       errand: row.errand ? { errandId: row.errand.errandId, status: row.errand.status.tag } : null,
       call: row.call ? { callId: row.call.callId, status: row.call.status.tag } : null,
+      search: row.search ? { searchId: row.search.searchId, status: row.search.status.tag } : null,
     };
   }
 
@@ -843,11 +861,12 @@ export class StationEngine {
       if (!event.repeat && this.sessionRuns()) this.switchPattern.down(event.timeStamp);
       return;
     }
-    // While a session runs, the dashboard's screen keys (1, 2, 3) must not navigate away from the station: leaving the
-    // page stops the earpiece and the heartbeat. The shell skips a key whose default was prevented.
-    if (this.sessionRuns() && /^[123]$/.test(event.key) && !event.metaKey && !event.ctrlKey && !event.altKey && !isTypingTarget(event.target)) {
+    // While a session runs, the dashboard's screen keys (1 to 5) must not navigate away from the station: leaving the
+    // page stops the earpiece and the heartbeat. The shell skips a key whose default was prevented. In the keyboard
+    // test, 1 to 4 are the picks (D18) and go on to the relay below.
+    if (this.sessionRuns() && /^[1-5]$/.test(event.key) && !event.metaKey && !event.ctrlKey && !event.altKey && !isTypingTarget(event.target)) {
       event.preventDefault();
-      return;
+      if (!(this.mode === 'keyboard' && isPickKey(event.key))) return;
     }
     const command = keyboardCommand(event);
     if (!command || isTypingTarget(event.target)) return;
@@ -1082,6 +1101,14 @@ export class StationEngine {
     return utterance({ kind: 'option', text: row.text, tone: row.tone, laugh: row.laugh }, this.profile);
   }
 
+  /**
+   * One option in the earpiece (D18): "One: good." in the reply voice with the option's tone, no laugh (the number
+   * comes first). The room hears the full text only once the person picks it.
+   */
+  private earUtterance(row: Pick<OptionRowLite, 'rank' | 'label' | 'text' | 'tone'>): Utterance {
+    return this.optionUtterance({ text: optionEarText(row.rank, row.label, row.text), tone: row.tone, laugh: false });
+  }
+
   private phraseClip(key: PhraseKey): Promise<Clip> {
     if (!this.cache) return Promise.reject(new Error('The voice is not ready.'));
     return this.cache.get(this.promptUtterance(key));
@@ -1096,10 +1123,10 @@ export class StationEngine {
   private speakOption(row: OptionRowLite): SynthJob<Clip> {
     if (row.kind === 'Menu' && isMenuItemText(row.text)) {
       if (!this.cache) throw new Error('The voice is not ready.');
-      // Menu items were cached at start in the reply voice, by their text.
-      return { done: this.cache.get(this.optionUtterance({ text: row.text, tone: '', laugh: false })), cancel: () => {} };
+      // Menu items were cached at start in the reply voice, numbered, by their text.
+      return { done: this.cache.get(this.earUtterance({ rank: row.rank, label: '', text: row.text, tone: '' })), cancel: () => {} };
     }
-    return this.speak(this.optionUtterance(row));
+    return this.speak(this.earUtterance(row));
   }
 
   /** Say one stock sentence when the earpiece is free. */
@@ -1130,7 +1157,7 @@ export class StationEngine {
     const mode = this.mode;
     const list: Array<{ u: Utterance; key: PhraseKey | null }> = [
       ...warmPhraseKeys(mode).map((key) => ({ u: this.promptUtterance(key), key })),
-      ...MENU_ITEM_TEXTS.map((text) => ({ u: this.optionUtterance({ text, tone: '', laugh: false }), key: null })),
+      ...MENU_ITEM_TEXTS.map((text, i) => ({ u: this.earUtterance({ rank: i + 1, label: '', text, tone: '' }), key: null })),
     ];
     const cache = this.cache;
     const run = ++this.warmRun;
@@ -1202,6 +1229,7 @@ export class StationEngine {
               badMessages: decoderState.badMessages,
               idsReplaced: decoderState.idsReplaced,
               recentBad: decoderState.lastBadAt !== null && now - decoderState.lastBadAt < NOTE_MS,
+              recentScanWord: decoderState.lastScanWordAt !== null && now - decoderState.lastScanWordAt < NOTE_MS,
               recentIdReplaced: decoderState.lastIdReplacedAt !== null && now - decoderState.lastIdReplacedAt < NOTE_MS,
               errorText: decoderState.errorText,
               slowConnect: decoderState.slowConnect,
@@ -1232,13 +1260,14 @@ export class StationEngine {
         origin: row && row.questionId !== 0n ? (row.origin.tag === 'Menu' ? 'menu' : 'partner') : null,
       },
       scan: this.scanView,
-      options: current.map((o) => ({ optionId: o.optionId, rank: o.rank, text: o.text, tone: o.tone, kind: o.kind, ready: this.earpiece.clipOf(o.optionId) !== undefined })),
+      options: current.map((o) => ({ optionId: o.optionId, rank: o.rank, text: o.text, label: o.label, tone: o.tone, kind: o.kind, ready: this.earpiece.clipOf(o.optionId) !== undefined })),
       earpiece: this.earpiece.getState(),
       playing: this.optionsChannel.use() ?? (this.promptsChannel.busy() ? 'phrase' : null),
       readback: { ...rb, windowStartedWall: rb.windowStartedAt === null ? null : Date.now() - (now - rb.windowStartedAt) },
       work: {
         errand: row?.errand ? { status: row.errand.status.tag, formTitle: row.errand.formTitle, reason: row.errand.reason } : null,
         call: row?.call ? { status: row.call.status.tag, contactName: row.call.contactName, reason: row.call.reason } : null,
+        search: row?.search ? { status: row.search.status.tag, reason: row.search.reason } : null,
       },
       commands: this.sender.entries(),
       heartbeat: this.heartbeat.getState(),

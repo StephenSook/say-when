@@ -9,6 +9,11 @@
 //   window, veto); 4. a live call or a submitting errand; 5. idle. STOP is the exception that adds, not orders: it
 //   always hangs up every live call, then does what it does in 1 to 5.
 // Before deciding, a due idle pause is applied (`applyDueIdle`), as if its late timer had run on time.
+//
+// Direct select (D18, docs/direct-select.md section 4): in Direct mode the commands are PICK_1 to PICK_4, STOP and
+// HEADSET_OFF; YES, NO and CONFIRM are recorded as `ignored:direct_mode`, and in Scan mode a PICK is
+// `ignored:scan_mode`. The same precedence holds for a PICK: a pause, then a read-back and confirm (PICK_1 confirms,
+// PICK_2 cancels), then the live list, then idle.
 import { SenderError } from 'spacetimedb/server';
 import { activeSession, requireRole } from './auth';
 import {
@@ -16,6 +21,8 @@ import {
   cancelVeto,
   closeQuestion,
   enterReading,
+  openCategories,
+  pickDirect,
   endPass,
   enterVeto,
   finishScan,
@@ -33,16 +40,18 @@ import { getConfig } from './config';
 import {
   confirmCall,
   confirmErrand,
+  confirmSearch,
   pendingWork,
   requestCallCancel,
   stopCall,
   stopErrand,
+  stopSearch,
   type PendingWork,
 } from './consent';
 import type { Ctx } from './ctx';
 import { contactGoodFor } from './liveness';
 import type { AnswerOption, Command, Config, ScanState, Session } from './schema';
-import { appendLedger, commandWire, emitCue, msBetween, parseCommand, requireMatch, u32 } from './util';
+import { appendLedger, commandWire, emitCue, msBetween, parseCommand, pickRank, requireMatch, u32 } from './util';
 
 export interface GestureArgs {
   gestureId: string;
@@ -147,7 +156,11 @@ export function handleGesture(ctx: Ctx, a: GestureArgs): void {
 }
 
 function decide(ctx: Ctx, cfg: Config, session: Session, command: Command, a: GestureArgs): Decision {
-  const refractable = command.tag === 'Yes' || command.tag === 'No' || command.tag === 'Confirm';
+  const rank = pickRank(command);
+  const direct = cfg.inputMode.tag === 'Direct';
+  if (direct && (command.tag === 'Yes' || command.tag === 'No' || command.tag === 'Confirm')) return ignored('direct_mode');
+  if (!direct && rank > 0) return ignored('scan_mode');
+  const refractable = command.tag === 'Yes' || command.tag === 'No' || command.tag === 'Confirm' || rank > 0;
   if (refractable && session.lastAcceptedAt && msBetween(ctx.timestamp, session.lastAcceptedAt) < cfg.refractoryMs) {
     return ignored('refractory');
   }
@@ -166,6 +179,11 @@ function decide(ctx: Ctx, cfg: Config, session: Session, command: Command, a: Ge
       return onNo(ctx, cfg, s, p, a);
     case 'Confirm':
       return onConfirm(ctx, s, p, session, a);
+    case 'Pick1':
+    case 'Pick2':
+    case 'Pick3':
+    case 'Pick4':
+      return onPick(ctx, cfg, s, p, session, rank, a);
   }
 }
 
@@ -190,6 +208,10 @@ function onStop(ctx: Ctx, s: ScanState, p: PendingWork, a: GestureArgs): Decisio
   if (p.call) {
     stopCall(ctx, p.call, 'stop', { actor: 'Station', gestureId: a.gestureId });
     return accepted(`stop_call${also}`, { callId: p.call.id, questionId: p.call.questionId });
+  }
+  if (p.search) {
+    stopSearch(ctx, p.search, 'stop', { actor: 'Station', gestureId: a.gestureId });
+    return accepted(`stop_search${also}`, { questionId: p.search.questionId, optionId: p.search.optionId, callId: hungUp?.id });
   }
   const q = ctx.db.question.id.find(s.questionId) ?? undefined;
   switch (s.phase.tag) {
@@ -244,6 +266,10 @@ function onYes(ctx: Ctx, cfg: Config, s: ScanState, p: PendingWork, session: Ses
     }
     return ignored('busy', { callId: p.call.id });
   }
+  if (p.search) {
+    emitCue(ctx, s.sessionId, 'say_confirm', { questionId: p.search.questionId });
+    return ignored('yes_is_not_confirm', { questionId: p.search.questionId });
+  }
   switch (s.phase.tag) {
     case 'Preparing':
       emitCue(ctx, s.sessionId, 'not_ready', { questionId: s.questionId });
@@ -289,6 +315,10 @@ function onNo(ctx: Ctx, cfg: Config, s: ScanState, p: PendingWork, a: GestureArg
   if (p.call) {
     stopCall(ctx, p.call, 'no', { actor: 'Station', gestureId: a.gestureId });
     return accepted('stop_call', { callId: p.call.id, questionId: p.call.questionId });
+  }
+  if (p.search) {
+    stopSearch(ctx, p.search, 'no', { actor: 'Station', gestureId: a.gestureId });
+    return accepted('stop_search', { questionId: p.search.questionId, optionId: p.search.optionId });
   }
   switch (s.phase.tag) {
     case 'Preparing':
@@ -341,7 +371,74 @@ function onConfirm(ctx: Ctx, s: ScanState, p: PendingWork, session: Session, a: 
     const reason = confirmCall(ctx, session, c, g);
     return reason ? ignored(reason, { callId: c.id, questionId: c.questionId }) : accepted('confirm', { callId: c.id, questionId: c.questionId });
   }
+  if (p.search) return confirmSearchPick(ctx, session, p.search, g);
   return ignored('nothing_to_confirm');
+}
+
+/** CONFIRM (Scan) or PICK_1 (Direct) on a search: confirmed once, and the categories turn opens. */
+function confirmSearchPick(ctx: Ctx, session: Session, r: NonNullable<PendingWork['search']>, g: { gestureId: string; onsetAgeMs: number; heardDigest: string }): Decision {
+  if (r.status.tag === 'Prepared') return ignored('readback_not_done', { questionId: r.questionId });
+  const reason = confirmSearch(ctx, session, r, g);
+  if (reason) return ignored(reason, { questionId: r.questionId, optionId: r.optionId });
+  const follow = openCategories(ctx, session.id, ctx.db.searchRequest.id.find(r.id) ?? r);
+  return accepted('confirm_search', { questionId: follow?.id ?? r.questionId, optionId: r.optionId });
+}
+
+// ---------- PICK_1 to PICK_4 (Direct mode, D18) ----------
+
+/**
+ * While paused: PICK_1 resumes (as YES did in Scan mode), any other rank is `ignored:paused`. While a read-back or
+ * confirm is pending: PICK_1 confirms with the heard digest (every errand, call and search rule holds), PICK_2
+ * cancels, PICK_3 and PICK_4 are out of range. On the live list (Reading or the wait after it): the rank picks the
+ * option, if the station heard a step of this list. Otherwise there is no list.
+ */
+function onPick(ctx: Ctx, cfg: Config, s: ScanState, p: PendingWork, session: Session, rank: number, a: GestureArgs): Decision {
+  if (s.phase.tag === 'Paused') {
+    if (rank !== 1) return ignored('paused', { questionId: s.questionId });
+    const reason = s.pauseReason?.tag;
+    if (reason === 'Operator') return ignored('operator_pause');
+    if (isSignalPause(s.pauseReason) && !contactGoodFor(ctx.db, s.sessionId, ctx.timestamp, cfg.resumeGoodContactMs, s.pausedAt)) {
+      return ignored('no_contact');
+    }
+    resume(ctx, s, 'Station', a.gestureId);
+    return accepted('resume', { questionId: s.questionId });
+  }
+  if (p.errand || p.call || p.search) {
+    if (rank > 2) return ignored('rank_out_of_range', { errandId: p.errand?.id, callId: p.call?.id, cursor: rank });
+    if (rank === 2) {
+      if (p.errand) {
+        stopErrand(ctx, p.errand, 'no', { actor: 'Station', gestureId: a.gestureId });
+        return accepted('stop_errand', { errandId: p.errand.id, questionId: p.errand.questionId });
+      }
+      if (p.call) {
+        stopCall(ctx, p.call, 'no', { actor: 'Station', gestureId: a.gestureId });
+        return accepted('stop_call', { callId: p.call.id, questionId: p.call.questionId });
+      }
+      stopSearch(ctx, p.search!, 'no', { actor: 'Station', gestureId: a.gestureId });
+      return accepted('stop_search', { questionId: p.search!.questionId, optionId: p.search!.optionId });
+    }
+    return onConfirm(ctx, s, p, session, a);
+  }
+  switch (s.phase.tag) {
+    case 'Reading':
+    case 'Window': {
+      // The list the person heard: a step of this list, from its first option's read to now.
+      if (a.heardStepSeq < s.listStartSeq || a.heardStepSeq > s.stepSeq || s.listStartSeq === 0n) {
+        return ignored('stale_question', { questionId: s.questionId, cursor: rank });
+      }
+      if (rank > s.optionCount) return ignored('rank_out_of_range', { questionId: s.questionId, cursor: rank });
+      const q = ctx.db.question.id.find(s.questionId);
+      const o = q ? optionAt(ctx.db, q.id, s.version, rank) : undefined;
+      if (!q || !o) return ignored('rank_out_of_range', { questionId: s.questionId, cursor: rank });
+      const out = pickDirect(ctx, s, session, q, o, a.gestureId);
+      if ('ignore' in out) return ignored(out.ignore, { questionId: q.id, optionId: o.id, cursor: rank });
+      return accepted(out.action, { questionId: q.id, optionId: o.id, cursor: rank });
+    }
+    default:
+      if (p.liveCall) return ignored('busy', { callId: p.liveCall.id });
+      if (p.submitting) return ignored('busy', { errandId: p.submitting.id });
+      return ignored('no_list', { questionId: s.questionId, cursor: rank });
+  }
 }
 
 // ---------- Which option did the person hear? ----------

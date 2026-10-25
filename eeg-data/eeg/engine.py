@@ -1,4 +1,7 @@
-"""Live decoding loop: headset -> filters -> imagery model + jaw detector -> YES/NO/CONFIRM/STOP.
+"""Live decoding loop: headset -> filters -> imagery model + jaw detector -> commands.
+
+The command words follow `mode` (config.MODES): direct sends PICK_1..PICK_3 and STOP, scan sends YES/NO/CONFIRM/STOP.
+The imagery rules (PLAN D21, eeg/hands.py) are the same in both: each hand's at-once threshold and the fallback window.
 
 Used by live.py (headless or with a window) and quiz.py. Call start() once, then poll() in a loop;
 each poll returns an Update with the latest probabilities and any new command messages.
@@ -35,8 +38,10 @@ class Engine:
     def __init__(self, model, meta: dict, hand_cfg: HandConfig = None, step_s: float = 0.1,
                  settle_s: float = 5.0, port: str = config.SERIAL_PORT, board_id: int = config.BOARD_ID,
                  use_imagery: bool = True, use_jaw: bool = True, jaw_only: bool = False, log=print,
-                 reader=None, opener=None, closer=None):
-        self.model, self.meta = model, meta
+                 reader=None, opener=None, closer=None, mode: str = config.DEFAULT_MODE):
+        if mode not in config.MODES:
+            raise ValueError(f"unknown mode {mode}; use one of {', '.join(config.MODES)}")
+        self.model, self.meta, self.mode = model, meta, mode
         self.classes = list(meta["classes"])
         self.fs = float(meta["fs"])
         self.n_win = int(round(meta["window_s"] * self.fs))
@@ -44,7 +49,7 @@ class Engine:
         self.settle_s, self.port, self.board_id, self.log = settle_s, port, board_id, log
         self.use_imagery = use_imagery and not jaw_only
         self.use_jaw, self.jaw_only = use_jaw or jaw_only, jaw_only
-        self.hands = HandDecoder(hand_cfg, hands=[c for c in self.classes if c in config.HAND_COMMAND])
+        self.hands = HandDecoder(hand_cfg, hands=[c for c in self.classes if c in config.HANDS])
         self.bank = FilterBank(self.fs)
         self.jaw = JawDetector(self.fs)
         self.buf = None
@@ -111,7 +116,7 @@ class Engine:
         if self.use_jaw:
             for ev in self.jaw.process(eeg, ts):
                 up.jaw_events.append(ev)
-                msg = messages.from_jaw(ev, self.jaw_only, now)
+                msg = messages.from_jaw(ev, self.jaw_only, now, mode=self.mode)
                 if msg:
                     up.commands.append(msg)
                     self.hands.restart(float(ev["t"]))  # any command restarts the imagery fallback window
@@ -128,10 +133,10 @@ class Engine:
             up.proba = {c: float(v) for c, v in zip(self.classes, p)}
             ev = self.hands.update(float(ts[-1]), up.proba)
             if ev:
-                up.commands.append(messages.from_hand(ev, now))
+                msg = messages.from_hand(ev, now, mode=self.mode)
+                up.commands.append(msg)
                 how = f"fallback, counts {ev['counts']}" if ev["how"] == "fallback" else "at once"
-                self.log(f"{config.HAND_COMMAND[ev['hand']]} from {ev['hand']} fist imagery, {how}, "
-                         f"confidence {ev['confidence']:.2f}")
+                self.log(f"{msg['command']} from {ev['hand']} fist imagery, {how}, confidence {ev['confidence']:.2f}")
         up.smoothed, up.status = dict(self.hands.smoothed), self.hands.status
         up.votes = dict(self.hands.counts)
         return up

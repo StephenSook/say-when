@@ -3,24 +3,36 @@
  * sender: the decoder (headset mode), the keyboard test keys, or a USB switch.
  *
  * 1. Play the command's tick at once. It says "your signal reached the station", not "it counted".
- * 2. Build the arguments: the heard step and option at the onset (lib/station/heard.ts), the read-back digest for
- *    CONFIRM, the source, and `onset_age_ms` = now - onset + the one-way estimate (a larger age only makes the
- *    module's quiet-hold check stricter, so the error falls on the safe side).
- * 3. Call `gesture`. A SenderError is never retried. A DisconnectedError or UnknownCallResultError is sent again with
- *    the same id once the connection is back, while the onset is under 3 s old (YES, NO, CONFIRM) or 30 s (STOP,
- *    HEADSET_OFF); a repeated id with the same command returns quietly in the module.
+ * 2. Build the arguments (direct select, D18): the heard step at the onset (lib/station/heard.ts; the module needs a
+ *    step of the live list, `list_start_seq <= heard_step_seq <= step_seq`), option id 0 for a pick (the rank picks),
+ *    the read-back digest on PICK_1 (in a confirm it is "One: send it"), the source, and `onset_age_ms` = now - onset
+ *    + the one-way estimate (a larger age only makes the module's quiet-hold check stricter, so the error falls on
+ *    the safe side).
+ * 3. Call `gesture` with the exact command word (PICK_1 to PICK_4, STOP, HEADSET_OFF). A SenderError is never
+ *    retried. A DisconnectedError or UnknownCallResultError is sent again with the same id once the connection is
+ *    back, while the onset is under 3 s old (a pick) or 30 s (STOP, HEADSET_OFF); a repeated id with the same command
+ *    returns quietly in the module.
  * 4. Read the outcome from `my_session.last_gesture_id` and `last_gesture_outcome`, waiting at most 1 s for it.
  */
 import { ignoredReasonWords } from '../data/spacetime-map';
+import { PICK_COMMANDS, pickRank } from '../data/types';
 import { callErrorKind, callErrorText, isSenderMessage, SENDER_MESSAGES, sendWithResend } from '../role/calls';
 import type { ChimeName } from '../voice/audio';
 import type { Heard } from './heard';
 
-export const STATION_COMMANDS = ['YES', 'NO', 'CONFIRM', 'STOP', 'HEADSET_OFF'] as const;
+export const STATION_COMMANDS = [...PICK_COMMANDS, 'STOP', 'HEADSET_OFF'] as const;
 export type StationCommand = (typeof STATION_COMMANDS)[number];
 
 export function isStationCommand(value: unknown): value is StationCommand {
   return typeof value === 'string' && (STATION_COMMANDS as readonly string[]).includes(value);
+}
+
+/** The scan map's words (D11 + D17, `main`). A decoder sending one runs `--mode scan` against this direct database. */
+export const SCAN_WORDS: readonly string[] = ['YES', 'NO', 'CONFIRM'];
+
+/** PICK_1 carries the read-back digest: in a confirm it is "One: send it" (the module's CONFIRM rules hold). */
+export function carriesDigest(command: StationCommand): boolean {
+  return command === 'PICK_1';
 }
 
 /** The module's checks (spacetime/src/gesture.ts GESTURE_ID_RE and SOURCE_RE). */
@@ -38,11 +50,15 @@ export function resendWindowMs(command: StationCommand): number {
 /** How long to wait for `my_session` to name this command's outcome after the call resolved. */
 export const OUTCOME_WAIT_MS = 1_000;
 
-/** The tick each command plays when it reaches the station (Appendix A). HEADSET_OFF uses the STOP tone. */
+/**
+ * The tick each command plays when it reaches the station (Appendix A): a high tick for 1 (left fist), a low one for
+ * 2 (right fist), the double tick for a jaw pick (3, 4). HEADSET_OFF uses the STOP tone.
+ */
 export const COMMAND_CHIME: Readonly<Record<StationCommand, ChimeName>> = {
-  YES: 'yes',
-  NO: 'no',
-  CONFIRM: 'confirm',
+  PICK_1: 'yes',
+  PICK_2: 'no',
+  PICK_3: 'confirm',
+  PICK_4: 'confirm',
   STOP: 'stop',
   HEADSET_OFF: 'stop',
 };
@@ -102,37 +118,44 @@ export function buildGestureArgs(input: CommandInput, gestureId: string, heard: 
     gestureId,
     command: input.command,
     heardStepSeq: heard.stepSeq,
-    heardOptionId: heard.optionId,
-    heardDigest: input.command === 'CONFIRM' ? digest.slice(0, 64) : '',
+    // A pick names its rank; the module ignores the option id for list picks, so it gets 0.
+    heardOptionId: pickRank(input.command) !== null ? 0n : heard.optionId,
+    heardDigest: carriesDigest(input.command) ? digest.slice(0, 64) : '',
     confidence: clampConfidence(input.confidence),
     source: SOURCE_RE.test(input.source) ? input.source : 'decoder',
     onsetAgeMs: onsetAge(now, input.onsetLocal, oneWayMs),
   };
 }
 
-// ---------- The read-back digest for CONFIRM ----------
+// ---------- The read-back digest for PICK_1 in a confirm ----------
 
-/** `my_session.errand` and `.call`, reduced to what the digest choice needs (status tags as the bindings name them). */
+/** `my_session.errand`, `.call` and `.search`, reduced to what the digest choice needs (status tags as the bindings name them). */
 export interface PendingWorkLite {
   errand?: { errandId: bigint; status: string } | null;
   call?: { callId: bigint; status: string } | null;
+  search?: { searchId: bigint; status: string } | null;
 }
 
 const ERRAND_CONFIRMABLE = new Set(['Drafted', 'Previewed', 'AwaitingConfirm', 'Confirmed']);
 const CALL_CONFIRMABLE = new Set(['Prepared', 'AwaitingConfirm', 'Confirmed']);
+const SEARCH_CONFIRMABLE = new Set(['Prepared', 'AwaitingConfirm', 'Confirmed']);
 
-export function readbackKey(kind: 'errand' | 'call', id: bigint): string {
+export type ReadbackKind = 'errand' | 'call' | 'search';
+
+export function readbackKey(kind: ReadbackKind, id: bigint): string {
   return `${kind}:${id.toString()}`;
 }
 
 /**
- * The digest of the read-back this station finished playing for the errand (first) or the call, in the module's own
- * order (spacetime/src/gesture.ts `onConfirm`). '' when none finished, which the module refuses: fail closed.
+ * The digest of the read-back this station finished playing for the errand (first), the call, or the web search, in
+ * the module's own order (spacetime/src/gesture.ts `onConfirm`). '' when none finished, which the module refuses:
+ * fail closed.
  */
 export function confirmDigest(work: PendingWorkLite | null, played: ReadonlyMap<string, string>): string {
   if (!work) return '';
   if (work.errand && ERRAND_CONFIRMABLE.has(work.errand.status)) return played.get(readbackKey('errand', work.errand.errandId)) ?? '';
   if (work.call && CALL_CONFIRMABLE.has(work.call.status)) return played.get(readbackKey('call', work.call.callId)) ?? '';
+  if (work.search && SEARCH_CONFIRMABLE.has(work.search.status)) return played.get(readbackKey('search', work.search.searchId)) ?? '';
   return '';
 }
 
@@ -144,6 +167,10 @@ export function outcomeWords(outcome: string, rank: number | null): string {
   if (outcome.startsWith('ignored:')) return `Ignored: ${ignoredReasonWords(outcome.slice('ignored:'.length)).replace(/\.$/, '')}`;
   if (!outcome.startsWith('accepted:')) return outcome === '' ? 'Sent' : outcome;
   const action = outcome.slice('accepted:'.length);
+  if (action === 'pick_reply') return `Picked ${option}. Saying it`;
+  if (action === 'pick_search') return `Picked ${option}, a web search`;
+  if (action === 'pick_category') return `Picked ${option}, a category`;
+  if (action === 'confirm_search') return 'Confirmed the web search';
   if (action === 'pick') return `Picked ${option}`;
   if (action === 'pick_errand') return `Picked ${option}, a request`;
   if (action === 'pick_call') return `Picked ${option}, a phone call`;
@@ -159,6 +186,7 @@ export function outcomeWords(outcome: string, rank: number | null): string {
   if (action === 'hang_up') return 'Hung up';
   if (action.startsWith('stop_errand')) return 'Stopped the request';
   if (action.startsWith('stop_call')) return 'Stopped the phone call';
+  if (action.startsWith('stop_search')) return 'Stopped the web search';
   if (action.startsWith('stop_reply')) return 'Cancelled. Nothing was said';
   if (action.startsWith('none')) return 'None of these';
   if (action.startsWith('stop')) return 'Stopped';
@@ -179,6 +207,10 @@ export function outcomeFeedback(outcome: string): OutcomeFeedback {
     case 'ignored:heard_mismatch':
     case 'ignored:no_contact':
     case 'ignored:digest_mismatch':
+    // Direct select (D18): no list live, an old list, or a number the list does not have.
+    case 'ignored:no_list':
+    case 'ignored:stale_question':
+    case 'ignored:rank_out_of_range':
       return { chime: 'notCounted' };
     default:
       return null;
@@ -282,8 +314,9 @@ export class CommandSender {
     const gestureId = input.gestureId ?? newGestureId();
     this.deps.chime(COMMAND_CHIME[input.command]);
     const heard = this.deps.heardAt(input.onsetLocal);
-    const digest = input.command === 'CONFIRM' ? this.deps.digest() : '';
-    const rank = heard.optionId !== 0n ? this.deps.rankOf(heard.optionId) : null;
+    const digest = carriesDigest(input.command) ? this.deps.digest() : '';
+    // A pick's number is its rank; the heard option names the rank of anything else.
+    const rank = pickRank(input.command) ?? (heard.optionId !== 0n ? this.deps.rankOf(heard.optionId) : null);
     const entry: CommandEntry = {
       gestureId,
       command: input.command,

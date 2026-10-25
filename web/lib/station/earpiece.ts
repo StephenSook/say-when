@@ -3,8 +3,10 @@
  * scan itself.
  *
  * Synthesis ("prefetch" means every clip is ready before the cursor reaches it):
- *   1. The current version's options in rank order, one at a time, when its answer mode is Pick. Menu items come
- *      from the phrase cache by their text.
+ *   1. The current version's options in rank order, one at a time, when its answer mode is Pick. Since direct select
+ *      (D18) each clip is the option's number and short label, "One: good." (lib/station/phrases.ts optionEarText),
+ *      and the module reads them once, in rank order, then waits for a pick. Menu items come from the phrase cache by
+ *      their text.
  *   2. After each clip: `report_clip_ready(option_id, clip_ms, synth_ms)` once per option id. `clip_ms` must be 1 to
  *      30000, so a 0 ms clip is not reported and the scan starts at `clip_deadline_ms` with an estimate.
  *   3. Then the pending version, so a better version can switch in without a wait.
@@ -89,7 +91,7 @@ export class Channel<Clip extends ClipLike = ClipLike> {
   }
 }
 
-/** A `my_options` row, reduced. `kind` is the binding's tag: Reply, Errand, Call or Menu. */
+/** A `my_options` row, reduced. `kind` is the binding's tag: Reply, Errand, Call, Search, Category or Menu. */
 export interface OptionRowLite {
   optionId: bigint;
   questionId: bigint;
@@ -97,6 +99,8 @@ export interface OptionRowLite {
   rank: number;
   kind: string;
   text: string;
+  /** The short earpiece words (D18), read as "One: good."; '' means read `text`. */
+  label: string;
   tone: string;
   laugh: boolean;
   current: boolean;

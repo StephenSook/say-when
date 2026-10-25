@@ -9,7 +9,7 @@ import { EMPTY_ROWS, type CommandEvent, type DataRows } from '../lib/data/types'
 
 const command = (id: string, at: number): CommandEvent => ({
   id,
-  command: 'YES',
+  command: 'PICK_1',
   at,
   accepted: true,
   ignoredReason: null,
@@ -74,10 +74,10 @@ describe('clock offset', () => {
   });
 
   test('planned times are not events: a scan step that ends later never counts as the newest', () => {
-    const rows = replayRowsAt(1_000_000, 1_000_000 + 15_000);
+    const rows = replayRowsAt(1_000_000, 1_000_000 + 10_000);
     const newest = newestEventTime(rows);
-    assert.ok(newest !== null && newest <= 1_000_000 + 15_000);
-    assert.ok(rows.scan && rows.scan.stepEndsAt > 1_000_000 + 15_000, 'the scan step ends in the future');
+    assert.ok(newest !== null && newest <= 1_000_000 + 10_000);
+    assert.ok(rows.scan && rows.scan.stepEndsAt > 1_000_000 + 10_000, 'the scan step ends in the future');
   });
 });
 

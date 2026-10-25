@@ -5,7 +5,7 @@
 import type { PreparedCall } from '@say-when/cartesia/server';
 import type { CandidateOption, Recall } from '@say-when/moss';
 
-import { LIMITS } from './contract.js';
+import { DIRECT, LIMITS } from './contract.js';
 import type { MemoryContext, Plan, PlannedOption, WebContext } from './planner/types.js';
 import { MIN_PICK_OPTIONS } from './planner/validate.js';
 import type { CallContact, OptionInput, Provenance, SourceRef, Tone } from './types.js';
@@ -68,7 +68,9 @@ export function buildOptions(plan: Plan, memory: readonly MemoryContext[], web: 
         }
 
         let actionJson = '';
-        if (planned.kind === 'errand' && planned.errand) {
+        if (planned.kind === 'category' && DIRECT.categoryActionJson && planned.query) {
+            actionJson = JSON.stringify({ query: planned.query });
+        } else if (planned.kind === 'errand' && planned.errand) {
             const { form, fields } = planned.errand;
             actionJson = JSON.stringify({ formKey: form.formKey, formUrl: form.formUrl, formTitle: form.formTitle, fields });
         } else if (planned.kind === 'call' && planned.call) {
@@ -90,6 +92,7 @@ export function buildOptions(plan: Plan, memory: readonly MemoryContext[], web: 
         const id = `o${options.length + 1}`;
         options.push({
             kind: planned.kind,
+            label: planned.label.slice(0, LIMITS.optionLabel),
             text: planned.text.slice(0, LIMITS.optionText),
             tone: planned.tone,
             laugh: planned.laugh,
@@ -106,18 +109,18 @@ export function buildOptions(plan: Plan, memory: readonly MemoryContext[], web: 
             if (options.length >= MIN_PICK_OPTIONS) break;
             if (options.some((o) => o.tone === pad.tone || o.text.toLowerCase() === pad.text.toLowerCase())) continue;
             candidates.push({ id: `o${options.length + 1}`, text: pad.text, support: 0 });
-            options.push({ kind: 'reply', text: pad.text, tone: pad.tone, laugh: false, provenance: 'stock', sources: [], memoryRefs: [], actionJson: '' });
+            options.push({ kind: 'reply', label: pad.label, text: pad.text, tone: pad.tone, laugh: false, provenance: 'stock', sources: [], memoryRefs: [], actionJson: '' });
         }
     }
     return { options, candidates, droppedCalls };
 }
 
-/** Stock replies that fill a pick question back up to two options, each in its own tone. */
-const PAD_REPLIES: readonly { text: string; tone: Tone }[] = [
-    { text: 'Not now.', tone: 'calm' },
-    { text: 'Ask me again later.', tone: 'neutral' },
-    { text: 'Let me think about it.', tone: 'warm' },
-    { text: 'No, thank you.', tone: 'firm' },
+/** Stock replies that fill a pick question back up to two options, each in its own tone, with an earpiece label. */
+const PAD_REPLIES: readonly { label: string; text: string; tone: Tone }[] = [
+    { label: 'Not now', text: 'Not now.', tone: 'calm' },
+    { label: 'Ask later', text: 'Ask me again later.', tone: 'neutral' },
+    { label: 'Let me think', text: 'Let me think about it.', tone: 'warm' },
+    { label: 'No thanks', text: 'No, thank you.', tone: 'firm' },
 ];
 
 /** Reorders options by a moss ordering of their candidate ids (`o1`, `o2`, ...). Unknown ids keep their place. */
@@ -152,6 +155,8 @@ export function memoryFirstOptions(recall: Recall, max: number): OptionInput[] |
             .slice(0, SOURCE_LIMITS.memoryRefs);
         return {
             kind: 'reply' as const,
+            // Scan mode only (no search runs in a direct select options job): the module reads the text.
+            label: '',
             text,
             tone: MEMORY_TONES[i] ?? '',
             laugh: false,

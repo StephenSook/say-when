@@ -30,8 +30,9 @@ class DemoEngine:
     """Fake headset: cycles rest -> imagine left -> rest -> imagine right -> jaw clench, 5 s each."""
     PHASES = ["rest", "left", "rest", "right", "clench"]
 
-    def __init__(self, step=0.1):
+    def __init__(self, step=0.1, mode=config.DEFAULT_MODE):
         self.classes, self.fs, self.step, self.n = ["left", "right", "rest"], 125.0, step, 250
+        self.mode = mode
         self.total_samples, self.t0 = 0, None
         self.rng = np.random.default_rng(0)
 
@@ -59,7 +60,7 @@ class DemoEngine:
         window = {"0.05-5": slow, "8-12": mu, "12-16": beta, "16-20": beta, "20-26": beta, "26-30": 0.6 * beta,
                   config.COV_BAND: mu + beta}
         raw = mu + beta + slow + (jaw / 4.0) * self.rng.normal(0, 1, (8, self.n))
-        # Imagery phases sit above the at-once thresholds (PLAN D21: right 0.90 for YES, left 0.96 for NO).
+        # Imagery phases sit above the at-once thresholds (PLAN D21: right fist 0.90, left fist 0.96, in both maps).
         target = {"rest": [0.1, 0.1, 0.8], "left": [0.97, 0.015, 0.015], "right": [0.035, 0.93, 0.035],
                   "clench": [0.3, 0.3, 0.4]}
         p = np.clip(np.array(target[phase]) + self.rng.normal(0, 0.05, 3), 0.01, None)
@@ -69,11 +70,14 @@ class DemoEngine:
         n_phase = int(el // 5)
         if phase in ("left", "right") and el % 5 >= 1.5 and self._sent_phase != n_phase:
             self._sent_phase = n_phase  # one fake command per imagery phase, like the real decoder
-            commands.append(messages.gesture("YES" if phase == "right" else "NO", time.time() - 1.0,
-                                             0.93 if phase == "right" else 0.97, "imagery"))
+            # right: PICK_2 (scan: YES) at 0.93, left: PICK_1 (scan: NO) at 0.97, both above their at-once thresholds
+            commands.append(messages.from_hand({"hand": phase, "onset": time.time() - 1.0,
+                                                "confidence": 0.93 if phase == "right" else 0.97}, mode=self.mode))
         if phase == "clench" and el % 5 >= 1.0 and self._sent_phase != n_phase:
             self._sent_phase = n_phase
-            commands.append(messages.gesture("CONFIRM", time.time() - 0.5, 0.9, "jaw"))
+            # one single clench: PICK_3 in the direct map, CONFIRM in the scan map
+            commands.append(messages.from_jaw({"kind": "single", "onset": time.time() - 0.5,
+                                               "strength": 1.8 * config.JAW_RATIO}, mode=self.mode))
         return Update(commands=commands, t=time.time(), proba=dict(zip(self.classes, p)), smoothed=dict(zip(self.classes, p)),
                       status=phase.upper(), jaw_level=jaw * (1 + 0.1 * math.sin(el)), window=window, raw=raw,
                       samples=self.total_samples)
