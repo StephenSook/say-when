@@ -82,7 +82,9 @@ class VizBridge:
         """Republish an 8765 gesture (already sent there) as a viz.marker with the same id."""
         if gesture.get("type") != "gesture" or not self.loop:
             return
-        jaw = gesture.get("command") in ("CONFIRM", "STOP")
+        # The 8765 source says which signal it was: a jaw command (PICK_3, PICK_4, STOP; scan CONFIRM, STOP; any
+        # command in the jaw-only fallback) has no model confidence, so the marker carries null for it.
+        jaw = gesture.get("source") == "jaw" or gesture.get("command") in ("CONFIRM", "STOP")
         msg = {"type": "viz.marker", "t": round(time.time(), 3), "id": gesture["id"], "command": gesture["command"],
                "confidence": None if jaw or gesture.get("command") == "HEADSET_OFF" else gesture.get("confidence"),
                "source": "jaw" if jaw else gesture.get("source", "imagery")}

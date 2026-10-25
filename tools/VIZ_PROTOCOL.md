@@ -144,15 +144,15 @@ The synthetic tool uses a Welch PSD over the last 2 s (1 s Hann segments, so 1 H
 ### 3.5 `viz.marker` (a decoded command), on each event
 
 ```json
-{"type":"viz.marker","t":1792867896.912,"id":"0b6f3c1e-3f43-4f53-9b0e-6c2a3c8f6d21","command":"YES","confidence":0.82,"source":"imagery"}
+{"type":"viz.marker","t":1792867896.912,"id":"0b6f3c1e-3f43-4f53-9b0e-6c2a3c8f6d21","command":"PICK_2","confidence":0.82,"source":"imagery"}
 ```
 
 | Field | Meaning |
 |---|---|
 | `id` | a UUID4 string, unique per marker. From the real decoder: the same id as the matching 8765 `gesture`. |
-| `command` | `"YES"`, `"NO"`, `"CONFIRM"`, `"STOP"` or `"HEADSET_OFF"` (the same five words as 8765) |
-| `confidence` | `YES` and `NO`: a number from 0 to 1. `CONFIRM` and `STOP`: `null`. `HEADSET_OFF`: `null` or 0 to 1. |
-| `source` | `YES` and `NO`: `"imagery"`. `CONFIRM` and `STOP`: `"jaw"`. `HEADSET_OFF`: whatever source the decoder put on 8765 (a short lowercase word matching `^[a-z_]{1,16}$`). |
+| `command` | the same word as the 8765 `gesture`. Direct select (D18, `live.py --mode direct`, the default): `"PICK_1"` (imagined left fist), `"PICK_2"` (imagined right fist), `"PICK_3"` (single jaw clench), `"PICK_4"` (double jaw clench), `"STOP"` (long jaw clench) or `"HEADSET_OFF"`. Scan (`--mode scan`): `"YES"`, `"NO"`, `"CONFIRM"`, `"STOP"` or `"HEADSET_OFF"`. |
+| `confidence` | a fist command from imagery (`PICK_1`, `PICK_2`, `YES`, `NO`): a number from 0 to 1. Any jaw command (`PICK_3`, `PICK_4`, `CONFIRM`, `STOP`, and every command in the jaw-only fallback): `null`. `HEADSET_OFF`: `null` or 0 to 1. |
+| `source` | `"imagery"` for a fist command, `"jaw"` for a jaw command (in the jaw-only fallback `PICK_1` and `PICK_2` come from the jaw too). `HEADSET_OFF`: whatever source the decoder put on 8765 (a short lowercase word matching `^[a-z_]{1,16}$`). |
 
 A marker is display only. The station acts on 8765, never on 8766.
 
@@ -181,16 +181,16 @@ A 24 s loop, starting when the baseline is set (seconds from the start of the lo
 |---|---|---|
 | 0 to 4 | rest | ERD near 0 in every band |
 | 4 to 7 | right-fist imagery, 0.5 s smooth rise and fall | C3 `b8_12` (and `mu`) to about -30, the other C3 bands as in the table below, C4 near 0 in every band (within about 5), laterality about +25 |
-| 6.4 | `viz.marker` `YES`, `imagery`, confidence about 0.8 | |
+| 6.4 | `viz.marker` `PICK_2` (`YES` with `--mode scan`), `imagery`, confidence about 0.8 | |
 | 7 to 11 | rest | |
 | 11 to 14 | left-fist imagery | the mirror image: C4 `b8_12` about -30, C3 near 0, laterality about -25 |
-| 13.4 | `viz.marker` `NO`, `imagery` | |
+| 13.4 | `viz.marker` `PICK_1` (scan: `NO`), `imagery` | |
 | 14 to 18 | rest; C4 contact `poor` from 15 to 17 | |
 | 18.0 and 18.4 | double jaw clench, two EMG spikes of 80 to 150 uV RMS | `emgGate` true for 1 or 2 frames per spike; in those frames `b20_26` and `b26_30` jump by +150 to +300 on both sides and `b16_20` by about +25 to +45 (so `beta` reads about +100 to +150) |
-| 18.8 | `viz.marker` `STOP`, `jaw`, confidence `null` (a double clench is STOP, PLAN D17) | |
+| 18.8 | `viz.marker` `PICK_4`, `jaw`, confidence `null` (a double clench is option 4, D18; scan: `STOP`, PLAN D17) | |
 | 18.8 to 21.8 | rest | |
 | 21.8 to 22.1 | single jaw clench | `emgGate` true for 2 or 3 frames, with the same band jump |
-| 22.3 | `viz.marker` `CONFIRM`, `jaw`, confidence `null` (a single clench is CONFIRM, PLAN D17) | |
+| 22.3 | `viz.marker` `PICK_3`, `jaw`, confidence `null` (a single clench is option 3, D18; scan: `CONFIRM`, PLAN D17) | |
 | 22.3 to 24 | rest, then the loop repeats | |
 
 Scripted change per band at full imagery, on the side opposite the imagined hand (C3 for the right fist, C4 for the left). The same side as the hand moves by a tenth of it. Each cycle scales the whole column by a random 0.9 to 1.1. The jaw clench column applies to both sides at once, whatever the imagery is doing.
@@ -240,4 +240,4 @@ python3 -m venv /path/to/viz-venv
 /path/to/viz-venv/bin/python tools/check_viz_bridge.py --seconds 30   # a full cycle, with the per-band table
 ```
 
-Options for the synthetic tool: `--port` (default 8766; 8765 is refused), `--baseline-seconds` (default 5), `--no-script`, `--no-contact-blips`, `--origin URL`. Any `--host` other than `127.0.0.1` is refused. It prints one line at startup and one status line every 10 s.
+Options for the synthetic tool: `--port` (default 8766; 8765 is refused), `--baseline-seconds` (default 5), `--no-script`, `--no-contact-blips`, `--mode direct|scan` (the marker words, default `direct`), `--origin URL`. Any `--host` other than `127.0.0.1` is refused. It prints one line at startup and one status line every 10 s.

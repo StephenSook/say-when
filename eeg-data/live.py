@@ -1,8 +1,9 @@
-"""Live decoder: headset -> YES / NO / CONFIRM / STOP / HEADSET_OFF messages.
+"""Live decoder: headset -> command messages.
 
-  python live.py                 # headless: JSON lines on stdout, logs on stderr
+  python live.py                 # headless: JSON lines on stdout, logs on stderr (direct select, the default)
   python live.py --window        # same, plus a window with live bars
-  python live.py --jaw-only      # fallback from docs/brain-mode-test.md: single clench = YES, silence = NO
+  python live.py --mode scan     # the older scan map, for the say-when-demo database
+  python live.py --jaw-only      # fallback from docs/brain-mode-test.md, imagery off (maps below)
   python live.py --log events.jsonl
 
 Output (PLAN.md decoder contract), as JSON lines on stdout and on ws://127.0.0.1:8765 for the station page
@@ -11,8 +12,12 @@ and the /eeg page of the web app (--no-serve turns the server off):
   {"type": "health", "decoderHealthy"}   every 250 ms
   {"type": "eeg", ...}                   about 10 per second, server only: per-electrode change, model bars, jaw
 
-Right fist imagined = YES, left = NO, single jaw clench = CONFIRM, double (or held) jaw clench = STOP
-(PLAN D17), no packets for 0.5 s = HEADSET_OFF. Imagery is ignored during a clench and for 1 s after it.
+--mode direct (D18, docs/direct-select.md, the default): imagined LEFT fist = PICK_1, imagined RIGHT fist = PICK_2,
+single jaw clench = PICK_3, double jaw clench = PICK_4, long jaw clench (held 0.8 s) = STOP.
+--mode scan (D11 + D17): right fist = YES, left fist = NO, single jaw clench = CONFIRM, double (or held) = STOP.
+--jaw-only: direct single = PICK_1, double = PICK_2, held = STOP (options 3 and 4 from the station keys);
+            scan single = YES, double = CONFIRM, silence = NO, no STOP.
+No packets for 0.5 s = HEADSET_OFF in both. Imagery is ignored during a clench and for 1 s after it.
 """
 import argparse
 import os
@@ -36,6 +41,16 @@ def log(*a):
 def _jaw_base(engine):
     jaw = getattr(engine, "jaw", None)
     return getattr(jaw, "baseline", None)
+
+
+def command_map(mode: str, jaw_only: bool = False, use_jaw: bool = True) -> dict:
+    """What each signal sends in this run, for the startup log line."""
+    out = {} if jaw_only else {f"imagined {h} fist": c for h, c in sorted(config.HAND_COMMANDS[mode].items())}
+    if use_jaw or jaw_only:
+        table = (messages.JAW_ONLY_COMMAND if jaw_only else messages.JAW_COMMAND)[mode]
+        out.update({f"{k} jaw clench": v for k, v in table.items()})
+    out["no packets"] = "HEADSET_OFF"
+    return out
 
 
 def make_viz(args, fs: float, source: str):
@@ -124,7 +139,12 @@ def main():
     ap.add_argument("--port", default=config.SERIAL_PORT)
     ap.add_argument("--board-id", type=int, default=config.BOARD_ID)
     ap.add_argument("--window", action="store_true", help="show live bars")
-    ap.add_argument("--jaw-only", action="store_true", help="fallback: single clench = YES, imagery off")
+    ap.add_argument("--mode", choices=config.MODES, default=config.DEFAULT_MODE,
+                    help="direct (default): fists and jaw pick options 1 to 4, held clench = STOP; "
+                         "scan: YES / NO / CONFIRM / STOP for the say-when-demo database")
+    ap.add_argument("--jaw-only", action="store_true",
+                    help="fallback, imagery off: direct single clench = PICK_1, double = PICK_2, held = STOP; "
+                         "scan single = YES, double = CONFIRM")
     ap.add_argument("--no-jaw", action="store_true", help="imagery only")
     ap.add_argument("--log", help="also append every message to this .jsonl file")
     ap.add_argument("--no-serve", action="store_true", help="do not open ws://127.0.0.1:8765 for the web app")
@@ -145,8 +165,8 @@ def main():
     if args.demo:
         from brain_view import DemoEngine
         server = None if args.no_serve else DecoderServer(origins=ALLOWED_ORIGINS + args.allow_origin, log=log).start()
-        log("DEMO: fake signals cycling rest / left / rest / right / jaw clench, 5 s each")
-        demo = DemoEngine()
+        log(f"DEMO ({args.mode} map): fake signals cycling rest / left / rest / right / jaw clench, 5 s each")
+        demo = DemoEngine(mode=args.mode)
         return headless(demo, messages.Output(args.log, server=server, viz=make_viz(args, demo.fs, "synthetic")))
     try:
         model, meta, folder = store.load(args.models)
@@ -158,7 +178,9 @@ def main():
         sys.exit("This model did not beat chance. Use --jaw-only (the fallback) or --allow-unusable for testing.")
     hand_cfg = HandConfig(args.threshold, args.margin, args.ema, args.dwell, args.refractory, args.rearm)
     engine = Engine(model, meta, hand_cfg, step_s=args.step, port=args.port, board_id=args.board_id,
-                    use_jaw=not args.no_jaw, jaw_only=args.jaw_only, log=log)
+                    use_jaw=not args.no_jaw, jaw_only=args.jaw_only, log=log, mode=args.mode)
+    log(f"Command map: {args.mode}{' (jaw-only)' if args.jaw_only else ''}: " + ", ".join(
+        f"{k} = {v}" for k, v in command_map(args.mode, args.jaw_only, not args.no_jaw).items()))
     server = None if args.no_serve else DecoderServer(origins=ALLOWED_ORIGINS + args.allow_origin, log=log).start()
     out = messages.Output(args.log, server=server, viz=make_viz(args, float(meta["fs"]), "live"))
     if args.window:

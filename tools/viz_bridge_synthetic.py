@@ -93,12 +93,22 @@ RAMP_S = 0.5  # rise and fall of the imagery suppression
 IMAGERY = ((4.0, 7.0, 0), (11.0, 14.0, 1))  # (start, end, contralateral channel index)
 CLENCHES = ((18.0, 0.2), (18.4, 0.2), (21.8, 0.3))  # (onset, length): double, then single
 CLENCH_EDGE_S = 0.04
-MARKERS = (
-    (6.4, "YES", "imagery"),
-    (13.4, "NO", "imagery"),
-    (18.8, "STOP", "jaw"),  # the double clench (PLAN D17)
-    (22.3, "CONFIRM", "jaw"),  # the single clench
-)
+# The words follow the decoder's map (eeg-data live.py --mode, docs/direct-select.md): direct is the default.
+MARKERS_BY_MODE = {
+    "direct": (
+        (6.4, "PICK_2", "imagery"),  # right fist = option 2 (D18)
+        (13.4, "PICK_1", "imagery"),  # left fist = option 1
+        (18.8, "PICK_4", "jaw"),  # the double clench = option 4
+        (22.3, "PICK_3", "jaw"),  # the single clench = option 3
+    ),
+    "scan": (
+        (6.4, "YES", "imagery"),
+        (13.4, "NO", "imagery"),
+        (18.8, "STOP", "jaw"),  # the double clench (PLAN D17)
+        (22.3, "CONFIRM", "jaw"),  # the single clench
+    ),
+}
+MARKERS = MARKERS_BY_MODE["direct"]
 CONTACT_BLIP = (15.0, 17.0)  # C4 reads "poor" in this window
 # Scripted change in band power on the side opposite the imagined hand, at full imagery,
 # as a fraction: negative is a drop (desynchronization), positive a rise. The slow
@@ -184,9 +194,10 @@ class Baseline:
 class Script:
     """The scripted ~24 s cycle: imagery suppression, jaw EMG, markers, contact blip."""
 
-    def __init__(self, enabled: bool, contact_blips: bool) -> None:
+    def __init__(self, enabled: bool, contact_blips: bool, mode: str = "direct") -> None:
         self.enabled = enabled
         self.contact_blips = contact_blips
+        self.markers = MARKERS_BY_MODE[mode]
         self.rng = random.Random()
         self.t0: float | None = None  # monotonic start of the cycle; None while paused
         self.prev_pos: float | None = None
@@ -270,9 +281,9 @@ class Script:
         if prev is None:
             return []
         if pos >= prev:
-            crossed = [m for m in MARKERS if prev < m[0] <= pos]
+            crossed = [m for m in self.markers if prev < m[0] <= pos]
         else:  # wrapped into a new cycle
-            crossed = [m for m in MARKERS if m[0] > prev or m[0] <= pos]
+            crossed = [m for m in self.markers if m[0] > prev or m[0] <= pos]
             self._roll_cycle()
         if not self.enabled:
             return []
@@ -287,7 +298,7 @@ class Bridge:
         self.port: int = args.port
         self.origins = None if not args.origin else [*args.origin, None]
         self.baseline = Baseline(args.baseline_seconds)
-        self.script = Script(enabled=not args.no_script, contact_blips=not args.no_contact_blips)
+        self.script = Script(enabled=not args.no_script, contact_blips=not args.no_contact_blips, mode=args.mode)
         self.note = NOTE_SCRIPTED if self.script.enabled else NOTE_RAW
         self.board_id = BoardIds.SYNTHETIC_BOARD.value
         self.srate = int(BoardShim.get_sampling_rate(self.board_id))
@@ -598,6 +609,8 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     ap.add_argument("--baseline-seconds", type=float, default=5.0, help="rest baseline length (1 to 120 s)")
     ap.add_argument("--no-script", action="store_true", help="no scripted cycle: raw synthetic ERD noise only")
     ap.add_argument("--no-contact-blips", action="store_true", help="no scripted 2 s 'C4 poor' blip per cycle")
+    ap.add_argument("--mode", choices=sorted(MARKERS_BY_MODE), default="direct",
+                    help="marker words: direct (PICK_1..PICK_4, the default) or scan (YES, NO, CONFIRM, STOP)")
     ap.add_argument(
         "--origin",
         action="append",

@@ -3,9 +3,11 @@
 Streaming: 30-55 Hz power averaged over channels, smoothed, compared with the wearer's resting
 baseline. A burst starts at JAW_RATIO x baseline and ends below JAW_RATIO * JAW_RELEASE x baseline.
 
-  long burst (>= LONG_CLENCH_S)              -> "long"    (STOP) fired as soon as it gets that long
-  two short bursts within DOUBLE_GAP_S       -> "double"  (STOP, PLAN D17; CONFIRM in the jaw-only fallback)
-  one short burst, nothing within the gap    -> "single"  (CONFIRM, PLAN D17; YES in the jaw-only fallback)
+  long burst (>= LONG_CLENCH_S)              -> "long"    STOP, fired as soon as it gets that long
+  two short bursts within DOUBLE_GAP_S       -> "double"  direct (D18): PICK_4; scan (D17): STOP
+  one short burst, nothing within the gap    -> "single"  direct (D18): PICK_3; scan (D17): CONFIRM
+
+The words per map, and the jaw-only fallback's, are in messages.JAW_COMMAND and messages.JAW_ONLY_COMMAND.
 """
 import math
 from typing import List, Optional

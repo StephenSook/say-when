@@ -18,7 +18,12 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def test_labels_and_command_map():
     assert {k: config.LABELS[k] for k in ("left", "right", "rest", "both")} == {"left": 0, "right": 1, "rest": 2, "both": 3}
-    assert config.HAND_COMMAND == {"right": "YES", "left": "NO"}  # docs/brain-mode-test.md
+    assert config.DEFAULT_MODE == "direct"  # D18, docs/direct-select.md
+    assert config.HAND_COMMANDS["direct"] == {"left": "PICK_1", "right": "PICK_2"}
+    assert config.HAND_COMMANDS["scan"] == {"right": "YES", "left": "NO"}  # docs/brain-mode-test.md
+    assert set(config.HANDS) == set(config.HAND_COMMANDS["direct"]) == set(config.HAND_COMMANDS["scan"])
+    for mode in config.MODES:
+        assert set(config.MODE_COMMANDS[mode]) <= set(config.COMMANDS)
     assert set(config.CUES) == set(config.LABELS)
     assert config.CHANNELS.index("C3") != config.CHANNELS.index("C4")
 

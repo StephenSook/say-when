@@ -4,7 +4,7 @@
   python quiz.py --demo       # fake signals, no headset
   python quiz.py --swap       # TRUE = LEFT instead
 
-TRUE = YES = imagine your RIGHT fist, FALSE = NO = imagine your LEFT fist (the Eleven command map).
+TRUE = imagine your RIGHT fist, FALSE = imagine your LEFT fist (YES and NO in the scan map; PICK_2 and PICK_1 in direct select).
 Each question: 1 s get-ready (not counted), then up to 10 s. RIGHT at 90%+ or LEFT at 97%+ answers at once;
 otherwise the hand with the most confident moments (65%+) wins. When REST is the top bar nothing counts.
 The result shows for 2 s, read aloud, then the next question. A log goes to data/quiz_logs/.

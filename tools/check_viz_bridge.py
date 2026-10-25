@@ -43,7 +43,10 @@ KEYS = {
 OPTIONAL_KEYS = {"viz.meta": {"filterBank"}, "viz.mi": {"fb"}}
 EXPECTED_HZ = {"viz.mi": 10.0, "viz.spec": 10.0, "viz.quality": 2.0}
 CONTACT_VALUES = {"good", "fair", "poor", "off"}
-COMMANDS = {"YES", "NO", "CONFIRM", "STOP", "HEADSET_OFF"}
+# Direct select (D18) words and the scan (D11 + D17) words: both decoder maps (eeg-data live.py --mode).
+COMMANDS = {"PICK_1", "PICK_2", "PICK_3", "PICK_4", "YES", "NO", "CONFIRM", "STOP", "HEADSET_OFF"}
+FIST_COMMANDS = {"PICK_1", "PICK_2", "YES", "NO"}  # imagery, or the jaw in the jaw-only fallback
+JAW_COMMANDS = {"PICK_3", "PICK_4", "CONFIRM", "STOP"}  # always the jaw
 SOURCE_RE = re.compile(r"^[a-z_]{1,16}$")
 SPEC_FREQS = list(range(1, 41))
 ERD_MIN, ERD_MAX = -100.0, 1000.0
@@ -323,12 +326,15 @@ class Checker:
         if cmd not in COMMANDS:
             self.bad(rel, f"marker: command={cmd!r}")
             return
-        if cmd in ("YES", "NO"):
+        if cmd in FIST_COMMANDS and src == "jaw":  # the jaw-only fallback: no model confidence
+            if conf is not None:
+                self.bad(rel, f"marker: {cmd} from the jaw, confidence={conf!r}, want null")
+        elif cmd in FIST_COMMANDS:
             if src != "imagery":
                 self.bad(rel, f"marker: {cmd} source={src!r}, want 'imagery'")
             if not is_num(conf) or not 0.0 <= conf <= 1.0:
                 self.bad(rel, f"marker: {cmd} confidence={conf!r}, want 0 to 1")
-        elif cmd in ("CONFIRM", "STOP"):
+        elif cmd in JAW_COMMANDS:
             if src != "jaw":
                 self.bad(rel, f"marker: {cmd} source={src!r}, want 'jaw'")
             if conf is not None:

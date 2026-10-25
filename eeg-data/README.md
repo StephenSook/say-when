@@ -1,18 +1,33 @@
 # eeg-data: headset decoder
 
-Turns the 8-channel headset into Eleven's four commands. It is not connected to the station or SpacetimeDB yet: it prints the messages the station will receive.
+Turns the 8-channel headset into Eleven's commands and sends them to the station page on `ws://127.0.0.1:8765`.
 
-| Signal | Command | How it is read |
+Two command maps, chosen with `live.py --mode`. **Direct select is the default** (D18, [docs/direct-select.md](../docs/direct-select.md)): four gestures pick four options.
+
+| Signal | `--mode direct` (default) | `--mode scan` (say-when-demo) | How it is read |
+|---|---|---|---|
+| Imagine squeezing your LEFT fist | PICK_1 | NO | Imagery classifier over C3/C4 and neighbours (brain signal) |
+| Imagine squeezing your RIGHT fist | PICK_2 | YES | same |
+| Single jaw clench | PICK_3 | CONFIRM | Jaw-muscle (EMG) bursts, 30-55 Hz, a muscle signal |
+| Double jaw clench | PICK_4 | STOP | same |
+| Long jaw clench (held 0.8 s, `LONG_CLENCH_S`) | STOP | STOP | same |
+| No packets for 0.5 s | HEADSET_OFF | HEADSET_OFF | watchdog |
+
+In direct select the earpiece reads the options once, numbered ("One: good. Two: not great. ..."), and the person picks any of them with its gesture. A pick that sends something out of the room (a request, a call, a web search) is read back first and then asks again: "One: send it. Two: cancel." (PICK_1 confirms, PICK_2 cancels, STOP cancels).
+
+Imagery is ignored during a jaw clench and for 1 s after it, so a clench is never read as a fist.
+
+**Jaw-only fallback** (`--jaw-only`, imagery off, [docs/brain-mode-test.md](../docs/brain-mode-test.md)):
+
+| Clench | `--mode direct` | `--mode scan` |
 |---|---|---|
-| Imagine squeezing your right fist | YES | Imagery classifier over C3/C4 and neighbours (brain signal) |
-| Imagine squeezing your left fist | NO | same |
-| Single jaw clench | CONFIRM | Jaw-muscle (EMG) bursts, 30-55 Hz (PLAN D17) |
-| Double jaw clench | STOP | same (a held clench, about 0.8 s, also counts) |
-| No packets for 0.5 s | HEADSET_OFF | watchdog |
+| Single | PICK_1 | YES |
+| Double | PICK_2 | CONFIRM |
+| Long (held 0.8 s) | STOP | nothing (silence is NO, no STOP gesture) |
 
-Imagery is ignored during a jaw clench and for 1 s after it, so a clench is never read as a fist. With `--jaw-only` (the fallback in [docs/brain-mode-test.md](../docs/brain-mode-test.md)), a single clench is YES, a double is CONFIRM, silence is NO and there is no STOP gesture (this fallback map did not change with D17).
+The direct fallback gives the jaw the two fist picks, so every confirm ("One: send it. Two: cancel.") still works with the jaw alone. Options 3 and 4 then need the station keys 3 and 4.
 
-A single clench is only reported once 0.7 s pass with no second clench, so a CONFIRM lands about 0.7 s after the clench ends. The CONFIRM only counts inside the confirm window after a full read-back; a stray one anywhere else does nothing. Raising `JAW_RATIO` in `eeg/config.py` to about 30 makes a stray clench (swallowing, shifting) less likely to count.
+A single clench is only reported once 0.7 s pass with no second clench, so PICK_3 (scan: CONFIRM) lands about 0.7 s after the clench ends. A clench held for 0.8 s is STOP the moment it reaches 0.8 s, whatever came before it, so hold it firmly and do not clench twice. **In direct select a stray single clench (swallowing, shifting) is a real pick of option 3**, and a reply is said out loud at once with no confirm, so raise `JAW_RATIO` in `eeg/config.py` to about 30 before a live run. In the scan map a stray CONFIRM outside the confirm window did nothing.
 
 ## Setup (Windows, Python 3.11 or 3.12)
 
@@ -32,8 +47,9 @@ Headset: BrainFlow board 57 on `COM11`. Find the port under Device Manager, Port
 | Record calibration (left, right, rest; 20 each) | `python collect.py --subject S01` |
 | Record jaw clenches | `python collect.py --subject S01 --classes clench --trials 20` |
 | Evaluate and train | `python train.py` |
-| Run the decoder (JSON lines on stdout) | `python live.py` or `python live.py --window` |
-| Jaw-only fallback | `python live.py --jaw-only` |
+| Run the decoder, direct select (JSON lines on stdout) | `python live.py` or `python live.py --window --mode direct` |
+| Run it with the older scan map (say-when-demo) | `python live.py --window --mode scan` |
+| Jaw-only fallback | `python live.py --jaw-only` (add `--mode scan` for the scan map) |
 | Practice / test quiz | `python quiz.py` (`--demo` without a headset) |
 | Live brain view | `python brain_view.py` (`--demo` without a headset) |
 | Tests (no headset) | `python -m pytest -q` |
@@ -55,14 +71,14 @@ Ctrl+C or a crash still saves every finished trial, and a file is never overwrit
 1. Puts a test set aside before anything else: the newest session if it has at least 10 trials per class, otherwise about 20% of trials.
 2. Cross-validates two models: filter-bank CSP with shrinkage LDA, and Riemannian tangent space with logistic regression. The windows of one trial never land on both sides of a split.
 3. Keeps the simpler one unless the other is clearly better (one standard error).
-4. Prints, per class, "N of M right", the left/right swaps (a YES read as NO is the costly mistake), and how often rest was read as a hand.
+4. Prints, per class, "N of M right", the left/right swaps (the costly mistake: a swap picks the other option, or YES becomes NO in the scan map), and how often rest was read as a hand.
 5. Saves to `models/<time>/` and points `models/LATEST` at it.
 
 A model is marked usable only if its cross-validated trial accuracy is at least chance plus 10 points and clearly above guessing; `live.py` and `quiz.py` refuse it otherwise.
 
 Current model (wearer S01, 8 sessions, 337 trials, Oct 22 and 24): on 67 held-out trials 50 right: left 21 of 29, right 19 of 23, rest 10 of 15 (chance 1 in 3), with 7 left/right swaps. These are offline numbers on recorded trials, not the brain-mode test, which needs the headset taken off and put back on, fresh cued trials and a control block.
 
-Jaw check on the recorded clench session: all 20 clench trials were caught, and no CONFIRM or STOP fired during any of the 60 imagery trials. Single clenches also showed up between trials (swallowing, shifting). Since D17 a single clench is CONFIRM, which the module ignores outside the confirm window; this is why `JAW_RATIO` should go to about 30.
+Jaw check on the recorded clench session (measured with the D17 scan map): all 20 clench trials were caught, and no jaw command fired during any of the 60 imagery trials. Single clenches also showed up between trials (swallowing, shifting). In direct select a single clench is PICK_3, a real pick, which is why `JAW_RATIO` should go to about 30. The long clench (STOP in direct select) has not been measured on recordings yet.
 
 ## Brain view
 
@@ -105,11 +121,11 @@ Keys are read from the repo's gitignored `.env.local`, or from the environment: 
 One JSON object per line, in the shape PLAN.md agrees with the station page:
 
 ```json
-{"type": "gesture", "id": "6f1c...", "command": "YES", "onsetAgeMs": 1180, "confidence": 0.83, "source": "imagery"}
+{"type": "gesture", "id": "6f1c...", "command": "PICK_2", "onsetAgeMs": 1180, "confidence": 0.83, "source": "imagery"}
 {"type": "health", "decoderHealthy": true}
 ```
 
-`command` is YES, NO, CONFIRM, STOP or HEADSET_OFF. `source` is imagery, jaw or watchdog. A health message goes out about every 200 ms. `--log file.jsonl` also appends to a file.
+`command` is PICK_1, PICK_2, PICK_3, PICK_4, STOP or HEADSET_OFF in direct select, and YES, NO, CONFIRM, STOP or HEADSET_OFF with `--mode scan`. `source` is imagery, jaw or watchdog. A health message goes out about every 200 ms. `--log file.jsonl` also appends to a file.
 
 `live.py` also serves two local WebSocket channels, both on 127.0.0.1 only and only to the web app's origins (`localhost:3000` and the Vercel site, plus any `--allow-origin`):
 
@@ -118,16 +134,16 @@ One JSON object per line, in the shape PLAN.md agrees with the station page:
 | `ws://127.0.0.1:8765` | the station page and `/quiz` | the gesture and health messages above, plus an `eeg` frame about 10 times a second (model bars, jaw level) that the station ignores |
 | `ws://127.0.0.1:8766` | Screen 1, `/brain` | the viz protocol in [tools/VIZ_PROTOCOL.md](../tools/VIZ_PROTOCOL.md): the decoder's own six filter-bank bands at C3 and C4 as ERD against a display-only baseline, the spectrum, contact and a marker per command. It passes `tools/check_viz_bridge.py --expect-source live`. Its own thread and server, so it cannot hold up 8765; a baseline asked for by the page never changes the decoder. |
 
-`python live.py --demo` sends a fake signal on both channels without a headset; on 8766 it says `source: "synthetic"`, so `/brain` shows its synthetic badge. `--no-serve` and `--no-viz` turn the channels off.
+`python live.py --demo` sends a fake signal on both channels without a headset (its fake commands follow `--mode`); on 8766 it says `source: "synthetic"`, so `/brain` shows its synthetic badge. `--no-serve` and `--no-viz` turn the channels off.
 
-To use the web pages on the EEG laptop: run `live.py`, then `npm run dev` in `web/` and open `http://localhost:3000/brain` (live brain) or `http://localhost:3000/quiz` (true or false practice: TRUE = right fist, FALSE = left fist).
+To use the web pages on the EEG laptop: run `live.py`, then `npm run dev` in `web/` and open `http://localhost:3000/brain` (live brain) or `http://localhost:3000/quiz` (true or false practice: TRUE = right fist, FALSE = left fist, in either map).
 
 ## Layout
 
 ```
 collect.py  train.py  live.py  quiz.py
 eeg/
-  config.py     headset, channels, labels, bands, timing, thresholds, command map
+  config.py     headset, channels, labels, bands, timing, thresholds, command maps (direct and scan)
   board.py      BrainFlow open / read / close
   filters.py    causal filter bank (same output in chunks or whole), jaw envelope
   sessions.py   recording files, trials -> 2 s windows
@@ -135,7 +151,7 @@ eeg/
   evaluate.py   held-out test, grouped cross-validation, per-class counts
   hands.py      probabilities -> one debounced LEFT/RIGHT per imagery
   jaw.py        streaming single / double / long clench detector
-  messages.py   gesture and health messages
+  messages.py   gesture and health messages, the jaw maps per mode
   engine.py     live loop: headset -> filters -> model + jaw -> messages, watchdog
   store.py      save / load models with montage checks
   ui.py         bars and the background thread for the windows

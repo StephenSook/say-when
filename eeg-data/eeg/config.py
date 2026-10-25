@@ -28,10 +28,26 @@ CUES = {
     "clench": "CLENCH your JAW (bite down) - keep your hands still",
 }
 
-# ---------------------------------------------------------------- command map (docs/brain-mode-test.md)
-# The brain chooses, the jaw commits or stops.
-HAND_COMMAND = {"right": "YES", "left": "NO"}
-COMMANDS = ("YES", "NO", "CONFIRM", "STOP", "HEADSET_OFF")
+# ---------------------------------------------------------------- command map
+# Two maps, chosen with live.py --mode (docs/direct-select.md):
+#   direct (D18, the default): four gestures pick four options. Imagined LEFT fist = PICK_1, imagined RIGHT fist =
+#           PICK_2, single jaw clench = PICK_3, double jaw clench = PICK_4, long jaw clench (held LONG_CLENCH_S) = STOP.
+#   scan   (D11 + D17, the say-when-demo database): right fist = YES, left fist = NO, single clench = CONFIRM,
+#           double or long clench = STOP (docs/brain-mode-test.md).
+# The jaw maps live in messages.py; HEADSET_OFF (the watchdog) is the same in both.
+MODES = ("direct", "scan")
+DEFAULT_MODE = "direct"
+HANDS = ("left", "right")
+HAND_COMMANDS = {
+    "direct": {"left": "PICK_1", "right": "PICK_2"},
+    "scan": {"right": "YES", "left": "NO"},
+}
+PICKS = ("PICK_1", "PICK_2", "PICK_3", "PICK_4")
+MODE_COMMANDS = {
+    "direct": PICKS + ("STOP", "HEADSET_OFF"),
+    "scan": ("YES", "NO", "CONFIRM", "STOP", "HEADSET_OFF"),
+}
+COMMANDS = PICKS + ("YES", "NO", "CONFIRM", "STOP", "HEADSET_OFF")   # every word either map can send
 
 # ---------------------------------------------------------------- signal processing
 FS_NOMINAL = 125.0
@@ -71,9 +87,9 @@ JAW_RELEASE = 0.5                        # burst ends when power falls below JAW
 JAW_SMOOTH_S = 0.05                      # envelope smoothing (fast enough to see the gap in a double clench)
 MIN_BURST_S = 0.08                       # shorter bursts are blips and are ignored
 JAW_SLICE_S = 0.25                       # slice for "strongest spike" checks in recordings
-LONG_CLENCH_S = 0.8                      # a burst this long is a long clench (STOP)
-DOUBLE_GAP_S = 0.7                       # a second short burst starting within this gap = double (CONFIRM)
-JAW_HOLDOFF_S = 1.0                      # no YES/NO from imagery during a clench and for this long after
+LONG_CLENCH_S = 0.8                      # a burst this long is a long clench (STOP in both maps)
+DOUBLE_GAP_S = 0.7                       # a second short burst starting within this gap = double (PICK_4; scan: STOP)
+JAW_HOLDOFF_S = 1.0                      # no fist command from imagery during a clench and for this long after
 
 # ---------------------------------------------------------------- formats
 SESSION_FORMAT = "mi_session_v1"         # unchanged, so earlier recordings load as-is

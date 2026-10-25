@@ -30,8 +30,9 @@ class DemoEngine:
     """Fake headset: cycles rest -> imagine left -> rest -> imagine right -> jaw clench, 5 s each."""
     PHASES = ["rest", "left", "rest", "right", "clench"]
 
-    def __init__(self, step=0.1):
+    def __init__(self, step=0.1, mode=config.DEFAULT_MODE):
         self.classes, self.fs, self.step, self.n = ["left", "right", "rest"], 125.0, step, 250
+        self.mode = mode
         self.total_samples, self.t0 = 0, None
         self.rng = np.random.default_rng(0)
 
@@ -67,11 +68,13 @@ class DemoEngine:
         n_phase = int(el // 5)
         if phase in ("left", "right") and el % 5 >= 1.5 and self._sent_phase != n_phase:
             self._sent_phase = n_phase  # one fake command per imagery phase, like the real decoder
-            commands.append(messages.gesture("YES" if phase == "right" else "NO", time.time() - 1.0, 0.8,
-                                             "imagery"))
+            commands.append(messages.from_hand({"hand": phase, "onset": time.time() - 1.0, "confidence": 0.8},
+                                               mode=self.mode))
         if phase == "clench" and el % 5 >= 1.0 and self._sent_phase != n_phase:
             self._sent_phase = n_phase
-            commands.append(messages.gesture("CONFIRM", time.time() - 0.5, 0.9, "jaw"))
+            # one single clench: PICK_3 in the direct map, CONFIRM in the scan map
+            commands.append(messages.from_jaw({"kind": "single", "onset": time.time() - 0.5,
+                                               "strength": 1.8 * config.JAW_RATIO}, mode=self.mode))
         return Update(commands=commands, t=time.time(), proba=dict(zip(self.classes, p)), smoothed=dict(zip(self.classes, p)),
                       status=phase.upper(), jaw_level=jaw * (1 + 0.1 * math.sin(el)), window=window, raw=raw,
                       samples=self.total_samples)
