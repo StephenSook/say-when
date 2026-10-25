@@ -10,7 +10,7 @@ import type { Timestamp } from 'spacetimedb';
 
 import { DbConnection } from '../../spacetime/bindings/agent/index';
 import type { Camel } from '../src/contract';
-import { REDUCERS, VIEWS } from '../src/contract';
+import { DIRECT, REDUCERS, VIEWS } from '../src/contract';
 import type { BuilderLike, ConnectionLike } from '../src/db/spacetime-db';
 import type { CallStatus, ErrandStatus, JobKind, JobStatus, MenuItem, Origin, ReducerArgs, ReducerName } from '../src/types';
 
@@ -57,7 +57,25 @@ type ArgNamesMatch = { [K in ReducerName]: Equal<ArgNames<K>, keyof ReducerArgs[
 export type ReducerArgNamesMatch = Assert<ArgNamesMatch[ReducerName] extends true ? true : false>;
 
 // Enum variants map one to one onto the sidecar's lowercase values (tagOf in spacetime-db.ts snake-cases them).
-export const jobKinds: Record<AgentQueueItem['kind']['tag'], JobKind> = { Options: 'options', ErrandPreview: 'errand_preview', Remember: 'remember' };
+// Direct select's `Search` job is the sidecar's `category_search` (src/contract.ts DIRECT.jobKindTags).
+export const jobKinds = {
+    Options: 'options',
+    ErrandPreview: 'errand_preview',
+    Remember: 'remember',
+    Categories: 'categories',
+    Search: 'category_search',
+} as const satisfies Record<AgentQueueItem['kind']['tag'], JobKind>;
+// The adapter's map (keyed by the snake-cased variant, as tagOf reads it) says exactly the same.
+type SnakeTag<K extends string> = K extends 'ErrandPreview' ? 'errand_preview' : Lowercase<K>;
+export type JobKindTagsMatch = Assert<Equal<{ [K in keyof typeof jobKinds as SnakeTag<K>]: (typeof jobKinds)[K] }, (typeof DIRECT)['jobKindTags']>>;
+
+// The columns direct select adds to `agent_queue` (src/contract.ts DIRECT), with the types toAgentQueueRow reads.
+export type DirectFieldsExist = [
+    Assert<[Camel<(typeof DIRECT)['agentQueueFields'][number]>] extends [keyof AgentQueueItem] ? true : false>,
+    Assert<Equal<AgentQueueItem['parentQuestionId'], bigint>>,
+    Assert<Equal<AgentQueueItem['parentQuestionText'], string>>,
+    Assert<Equal<AgentQueueItem['category'], string>>,
+];
 export const jobStatuses: Record<AgentQueueItem['status']['tag'], JobStatus> = { Pending: 'pending', Claimed: 'claimed', Done: 'done', Failed: 'failed', Cancelled: 'cancelled' };
 export const origins: Record<AgentQueueItem['origin']['tag'], Origin> = { Partner: 'partner', Menu: 'menu' };
 export const menuItems: Record<AgentQueueItem['menuItem']['tag'], MenuItem> = { None: 'none', Need: 'need', Request: 'request', Call: 'call', Say: 'say' };

@@ -614,7 +614,9 @@ export function pickOption(ctx: Ctx, s: ScanState, session: Session, q: Question
  * read-back. Returns the accepted action word, or `{ ignore }` with the reason.
  */
 export function pickDirect(ctx: Ctx, s: ScanState, session: Session, q: Question, o: AnswerOption, gestureId: string): { action: string } | { ignore: string } {
-  if (o.kind.tag === 'Reply' && !contactIsGood(ctx.db, s.sessionId, ctx.timestamp)) return { ignore: 'no_contact' };
+  // A reply is said and a category starts its search at this pick, so both need good contact now (the dead-man
+  // deadline may have passed before its timer ran). The other kinds act only after their own read-back and confirm.
+  if ((o.kind.tag === 'Reply' || o.kind.tag === 'Category') && !contactIsGood(ctx.db, s.sessionId, ctx.timestamp)) return { ignore: 'no_contact' };
   if (o.kind.tag === 'Category') {
     if (!isCategoriesTurn(q)) return { ignore: 'not_allowed' };
     if (!hasConsent(ctx.db, 'WebSearch', '')) return { ignore: 'no_consent' };
@@ -649,6 +651,28 @@ export function pickDirect(ctx: Ctx, s: ScanState, session: Session, q: Question
 }
 
 // ---------- D18 follow-up turns: categories after a confirmed search, places after a category ----------
+
+/**
+ * A pause (STOP, HEADSET_OFF, the dead-man lease, idle, operator) voids every search the person started whose
+ * Search job is still Pending or Claimed (D18): the search turn is cancelled with the pause's code and its job with
+ * it, so nothing can claim it, requeue it or publish from it after the pause (a claimed job's later writes are
+ * `stale attempt`). A web call already in flight cannot be recalled, but nothing it finds is offered.
+ */
+export function voidSearchTurns(ctx: Ctx, sessionId: bigint, code: string, actor: Actor): void {
+  for (const q of [...ctx.db.question.questionBySession.filter(sessionId)]) {
+    if (q.via !== 'category' || !['Drafting', 'Ready', 'Scanning'].includes(q.status.tag)) continue;
+    const live = [...ctx.db.agentJob.jobByQuestion.filter(q.id)].some((j) => j.kind.tag === 'Search' && (j.status.tag === 'Pending' || j.status.tag === 'Claimed'));
+    if (!live) continue;
+    closeQuestion(ctx, q, { status: 'Cancelled', outcome: 'Cancelled', reason: code, actor, cue: 'not_sent' });
+  }
+}
+
+/** The pause code (`stop`, `headset_off`, ...) of a paused session, or '' when it is not paused. */
+export function pausedCode(db: ReadDb, sessionId: bigint): string {
+  const s = db.scanState.sessionId.find(sessionId);
+  if (!s || s.phase.tag !== 'Paused') return '';
+  return s.pauseReason ? PAUSE_CODE[s.pauseReason.tag] : 'operator';
+}
 
 /** A categories turn: opened by a confirmed Search. Only its options may be Category options. */
 export function isCategoriesTurn(q: Question): boolean {
@@ -712,7 +736,7 @@ function pickCategory(ctx: Ctx, s: ScanState, session: Session, q: Question, o: 
     from: q,
     via: 'category',
     category: o.label !== '' ? o.label : o.text,
-    requestId: `category:${gestureId}`,
+    requestId: `category.${gestureId}`, // '.' never appears in a partner's request_id, so the two cannot collide
     job: 'Search',
   });
   appendLedger(ctx, session.id, 'question', 'Station', { questionId: follow.id, optionId: o.id, gestureId, outcome: 'category' });
@@ -727,7 +751,7 @@ function pickCategory(ctx: Ctx, s: ScanState, session: Session, q: Question, o: 
 export function openCategories(ctx: Ctx, sessionId: bigint, search: SearchRequest): Question | undefined {
   const parent = ctx.db.question.id.find(search.questionId);
   if (!parent) return undefined;
-  const follow = createFollowUp(ctx, sessionId, { from: parent, via: 'search', category: '', requestId: `search:${search.id}`, job: 'Categories' });
+  const follow = createFollowUp(ctx, sessionId, { from: parent, via: 'search', category: '', requestId: `search.${search.id}`, job: 'Categories' });
   setSearchFollowUp(ctx, search.id, follow.id);
   const s = ctx.db.scanState.sessionId.find(sessionId);
   if (s && !isScanActive(s) && s.phase.tag !== 'Paused') startNextIfQueued(ctx, s);
@@ -918,6 +942,7 @@ export function pause(ctx: Ctx, s: ScanState, reason: PauseReason['tag'], opts: 
     stepEndsAt: ctx.timestamp,
   });
   voidPending(ctx, s.sessionId, PAUSE_CODE[reason], opts.actor);
+  voidSearchTurns(ctx, s.sessionId, PAUSE_CODE[reason], opts.actor);
   appendLedger(ctx, s.sessionId, 'pause', opts.actor, {
     questionId: s.questionId,
     gestureId: opts.gestureId,
