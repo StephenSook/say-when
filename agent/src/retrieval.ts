@@ -177,11 +177,59 @@ const PLACE_WORDS = [
     'parking', 'beach', 'theater', 'cinema',
 ];
 
-/** A short place query ("lunch", "pharmacy"), never the person's memory. Falls back to the question's own words. */
+/** Words of interest that name a kind of place, for questions with no place word ("like nature or something"). */
+const INTEREST_WORDS: readonly [RegExp, string][] = [
+    [/\b(nature|outdoors?|outside|hikes?|hiking|trails?|walks?|gardens?|green)\b/, 'park'],
+    [/\b(views?|scenic|sunsets?|sunrises?)\b/, 'scenic viewpoint'],
+    [/\b(arts?|gallery|galleries|exhibits?)\b/, 'museum'],
+    [/\b(eat|food|hungry|meal|snacks?)\b/, 'restaurant'],
+    [/\b(drinks?|tea)\b/, 'cafe'],
+    [/\b(shop|shopping|stores?|mall)\b/, 'shopping'],
+];
+
+/** What Maps is asked when the question names no place and no interest. */
+export const DEFAULT_PLACE_QUERY = 'tourist attraction';
+
+// Capitalized words that are not names, also when they start a sentence.
+const NOT_NAMES: ReadonlySet<string> = new Set([
+    'I', "I'm", "I'd", "I'll", "I've", 'Is', 'Are', 'Was', 'Do', 'Does', 'Did', 'Can', 'Could', 'Would', 'Will', 'Should',
+    'What', 'Where', 'When', 'How', 'Why', 'Who', 'Which', 'So', 'Oh', 'All', 'Hey', 'Hi', 'Hello', 'Okay', 'OK', 'Yes', 'No',
+    'Let', "Let's", 'Want', 'You', 'We', 'Maybe', 'Like', 'And', 'But', 'Then', 'Right', 'Um', 'Uh', 'Well', 'Sure', 'Any',
+    'Anything', 'Something', 'Somewhere', 'There', 'The', 'A', 'An', 'It', 'That', 'This',
+]);
+// A run of capitalized words, with "of", "the" or "and" inside ("Palace of Fine Arts", "Golden Gate Park").
+const NAME_RUN = /[A-Z][\w'&.-]*(?:\s+(?:(?:of|the|and|at|on)\s+)?[A-Z][\w'&.-]*)*/g;
+const NEAR_NAME = new RegExp(String.raw`\b(?:near|around|by|close to|next to)\s+(?:the\s+)?` + NAME_RUN.source, 'g');
+
+/** A named place in the question ("Palace of Fine Arts", "Is Target still open?"), or null. */
+function namedPlace(question: string): string | null {
+    for (const match of question.matchAll(NAME_RUN)) {
+        const words = match[0].split(/\s+/).filter((word) => !NOT_NAMES.has(word.replace(/[.,!?]+$/, '')));
+        if (words.length === 0) continue;
+        const name = words.join(' ').replace(/[.,!?]+$/, '');
+        // One capitalized word at the start of a sentence is usually just the first word, not a name.
+        const before = question.slice(0, match.index ?? 0);
+        if (words.length === 1 && match[0] === words[0] && (before.trim() === '' || /[.?!]\s*$/.test(before))) continue;
+        if (name.length > 0) return name.slice(0, 60);
+    }
+    return null;
+}
+
+/**
+ * A short place query ("lunch", "pharmacy", "park"), never the person's memory and never the whole spoken sentence:
+ * Maps finds nothing for a long sentence and the run times out (Oct 24, 15 s). In order: a place word, a named place,
+ * an interest word, then DEFAULT_PLACE_QUERY.
+ */
 export function placeQuery(question: string): string {
     const text = question.toLowerCase();
     for (const word of PLACE_WORDS) if (new RegExp(`\\b${word}s?\\b`).test(text)) return word;
-    return question.replace(/\s+/g, ' ').trim().slice(0, 120);
+    // "near the Palace of Fine Arts" says where to look, not what to find: Maps already searches around that point.
+    const rest = question.replace(NEAR_NAME, ' ');
+    const name = namedPlace(rest);
+    if (name) return name;
+    const restText = rest.toLowerCase();
+    for (const [pattern, query] of INTEREST_WORDS) if (pattern.test(restText)) return query;
+    return DEFAULT_PLACE_QUERY;
 }
 
 /**

@@ -5,7 +5,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { ApifyHttpError } from '@say-when/apify-client';
 
 import { DETAIL_PATTERN } from '../src/contract.js';
-import { placeQuery } from '../src/retrieval.js';
+import { DEFAULT_PLACE_QUERY, placeQuery } from '../src/retrieval.js';
 import { fourOptions, harness, LEON, memoryHit, placeRow, SECRET, settle, waitFor, webRow, yesNo, type Harness } from './helpers.js';
 
 let open: Harness | null = null;
@@ -770,7 +770,23 @@ describe('place queries', () => {
         assert.equal(placeQuery('Is the pharmacy on Bancroft still open?'), 'pharmacy');
         assert.equal(placeQuery('Want to grab lunch nearby?'), 'lunch');
         assert.equal(placeQuery('Where is the nearest bus stop?'), 'bus stop');
-        assert.equal(placeQuery('Is Target still open?'), 'Is Target still open?');
+        assert.equal(placeQuery('Is Target still open?'), 'Target');
+    });
+
+    it('never sends the whole spoken sentence to Maps (it times out on one)', () => {
+        assert.equal(
+            placeQuery('All right, uh, call me later, all right? So, you can remind me to go to Palace of Fine Arts.'),
+            'Palace of Fine Arts',
+        );
+        assert.equal(
+            placeQuery("Oh, but I'm kind of think of like uh nature or something. You have anything like in particular? like nearby that you want to try out?"),
+            'park',
+        );
+        // A place after "near" is where to look (Maps searches around it), so it is not the query.
+        assert.equal(placeQuery('Where should we go near the Palace of Fine Arts?'), DEFAULT_PLACE_QUERY);
+        assert.equal(placeQuery('Anything outdoors near the Palace of Fine Arts?'), 'park');
+        assert.equal(placeQuery('Anywhere fun nearby you want to try?'), DEFAULT_PLACE_QUERY);
+        assert.equal(placeQuery('Somewhere with a nice view?'), 'scenic viewpoint');
     });
 });
 
