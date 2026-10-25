@@ -115,8 +115,11 @@ export function buildOptions(plan: Plan, memory: readonly MemoryContext[], web: 
     return { options, candidates, droppedCalls };
 }
 
-/** Stock replies that fill a pick question back up to two options, each in its own tone, with an earpiece label. */
-const PAD_REPLIES: readonly { label: string; text: string; tone: Tone }[] = [
+/**
+ * Stock replies that fill a pick question back up to two options, each in its own tone, with an earpiece label. Direct
+ * select also uses them to keep its Search option third (src/direct.ts withSearch).
+ */
+export const PAD_REPLIES: readonly { label: string; text: string; tone: Tone }[] = [
     { label: 'Not now', text: 'Not now.', tone: 'calm' },
     { label: 'Ask later', text: 'Ask me again later.', tone: 'neutral' },
     { label: 'Let me think', text: 'Let me think about it.', tone: 'warm' },

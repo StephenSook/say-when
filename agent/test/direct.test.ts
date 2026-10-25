@@ -10,14 +10,14 @@ import Anthropic from '@anthropic-ai/sdk';
 
 import { readConfig } from '../src/config.js';
 import { ContractError, toAgentQueueRow } from '../src/db/spacetime-db.js';
-import { CategoryBook, defaultCategoryQuery, placeHint, STOCK_SEARCH, stockCategories, withSearch } from '../src/direct.js';
+import { asksDoYouKnow, CategoryBook, defaultCategoryQuery, DO_YOU_KNOW_REASON, placeHint, STOCK_SEARCH, stockCategories, withSearch } from '../src/direct.js';
 import { ClaudePlanner } from '../src/planner/claude.js';
 import { buildUserMessage, SYSTEM_PROMPT } from '../src/planner/prompt.js';
 import type { PlanReply } from '../src/planner/schema.js';
 import { PlannerError, type PlanInput } from '../src/planner/types.js';
 import { validatePlan } from '../src/planner/validate.js';
 import type { OptionInput } from '../src/types.js';
-import { DEMO_FORM, FakeApi, harness, memoryHit, placeRow, reply, SECRET, waitFor, webRow, type Harness } from './helpers.js';
+import { DEMO_FORM, FakeApi, harness, LEON, memoryHit, placeRow, reply, SECRET, waitFor, webRow, type Harness, type HarnessOptions } from './helpers.js';
 
 let open: Harness | null = null;
 afterEach(async () => {
@@ -29,6 +29,13 @@ function start(h: Harness): Harness {
     open = h;
     h.orchestrator.start();
     return h;
+}
+
+/** A direct select sidecar with three options, as on `say-when-direct` (D23, AGENT_MAX_OPTIONS=3). */
+function startThree(options: HarnessOptions = {}): Harness {
+    const h = harness({ direct: true, ...options });
+    h.deps.maxOptions = 3;
+    return start(h);
 }
 
 const finalPublish = (h: Harness) => h.db.publishes.find((p) => p.final);
@@ -126,6 +133,13 @@ describe('the direct select planner', () => {
         assert.match(buildUserMessage(input({ searchOffer: true, search: 'offered' })), /Task: answer the question\. A web search can be offered as option 3\./);
         assert.match(buildUserMessage(input({ searchOffer: true, search: 'offered' })), /A web search can be offered: put the search option third\./);
         assert.match(buildUserMessage(input()), /Task: answer the question\. No search option\./);
+        // "Do you know" (D24): the search ran, so the replies come from its results; without results, the plain offer.
+        assert.match(
+            buildUserMessage(input({ searchOffer: true, searchedNow: true, search: 'done' })),
+            /Task: answer the question\. The partner asked "do you know", so the web search already ran: write the replies from the web results below, and put a new search option third\./,
+        );
+        assert.match(buildUserMessage(input({ searchOffer: true, searchedNow: true, search: 'failed', web: [] })), /Task: answer the question\. A web search can be offered as option 3\./);
+        assert.match(SYSTEM_PROMPT, /search already ran because the partner asked "do you know", write the replies from the web results/);
         assert.match(buildUserMessage(input({ task: 'categories' })), /Task: offer categories\./);
         assert.match(buildUserMessage(input({ task: 'category_search', category: 'Nature' })), /Task: replies from the search\. The person picked the category "Nature"\./);
         assert.doesNotMatch(buildUserMessage(input({ task: undefined })), /Task:/);
@@ -227,34 +241,63 @@ describe('the Search option in the list', () => {
         assert.equal(four.added, true);
         const yesNo = withSearch([opt('Yes'), opt('No')], 4);
         assert.deepEqual(yesNo.options.map((o) => o.label), ['Yes', 'No', 'Search the web']);
-        assert.equal(withSearch([opt('Only')], 4).options.map((o) => o.label).join(), 'Only,Search the web');
+        // One reply is filled up with a stock reply (as D22 does), so the Search option is still third.
+        const only = withSearch([opt('Only')], 3);
+        assert.deepEqual(only.options.map((o) => [o.kind, o.label, o.provenance]), [['reply', 'Only', 'model'], ['reply', 'Not now', 'stock'], ['search', 'Search the web', 'stock']]);
+    });
+
+    it('is always third in a three-option list, after a reply and the errand or the call (D24)', () => {
+        const three = (options: OptionInput[]) => withSearch(options, 3).options.map((o) => [o.kind, o.label]);
+        assert.deepEqual(three([opt('A'), opt('B'), opt('C')]), [['reply', 'A'], ['reply', 'B'], ['search', 'Search the web']]);
+        assert.deepEqual(three([opt('A'), opt('B'), opt('Send request', 'errand')]), [['reply', 'A'], ['errand', 'Send request'], ['search', 'Search the web']]);
+        assert.deepEqual(three([opt('Send request', 'errand'), opt('A'), opt('B')]), [['reply', 'A'], ['errand', 'Send request'], ['search', 'Search the web']]);
+        assert.deepEqual(three([opt('Look it up', 'search'), opt('A'), opt('Call Leon', 'call')]), [['reply', 'A'], ['call', 'Call Leon'], ['search', 'Look it up']]);
+        for (const list of [[opt('A')], [opt('A'), opt('B')], [opt('A'), opt('B'), opt('C'), opt('D')], [opt('Call Leon', 'call'), opt('A'), opt('B'), opt('C')]]) {
+            const out = withSearch(list, 3).options;
+            assert.equal(out.length, 3);
+            assert.equal(out[2]?.kind, 'search', 'rank 3 is the Search option');
+            assert.equal(out.filter((o) => o.kind === 'search').length, 1);
+        }
+    });
+});
+
+describe('the "do you know" trigger (D24)', () => {
+    it('matches "do you know" and "d\'you know" in any case, as whole words only', () => {
+        for (const q of ['Do you know who won last night?', 'so, DO YOU KNOW if it is open?', "D'you know where it is?", 'D’you know the way?', 'Do you  know the score?', 'Where is it, do you know?']) {
+            assert.equal(asksDoYouKnow(q), true, q);
+        }
+        for (const q of ['Did you know that?', 'You know what?', "I don't know.", 'Do you knowledge it?', 'Undo you know nothing', 'Who won last night?']) {
+            assert.equal(asksDoYouKnow(q), false, q);
+        }
     });
 });
 
 describe('the direct select options job', () => {
-    it('answers small talk with four replies and their labels, and never searches', async () => {
-        const h = start(harness({ direct: true }));
+    it('answers small talk with replies and their labels, offers Search the web third (D24), and never searches', async () => {
+        const h = startThree();
         h.api.reply({
             answer_mode: 'pick',
             options: [
                 reply({ label: 'Good', text: "I'm doing awesome, how about you?", tone: 'warm' }),
                 reply({ label: 'Not great', text: 'Not great, long day.', tone: 'sad' }),
                 reply({ label: 'Tired', text: 'A little tired, honestly.', tone: 'calm' }),
-                reply({ label: 'Excited', text: 'Excited to see you!', tone: 'neutral' }),
             ],
         });
         const jobId = h.db.addOptionsJob({ questionText: 'Hey, how are you?' });
         await waitFor(() => h.db.job(jobId)?.status === 'done');
         const published = finalPublish(h);
+        assert.equal(published?.answerMode, 'pick');
         assert.deepEqual(published?.options.map((o) => [o.kind, o.label, o.text]), [
             ['reply', 'Good', "I'm doing awesome, how about you?"],
             ['reply', 'Not great', 'Not great, long day.'],
-            ['reply', 'Tired', 'A little tired, honestly.'],
-            ['reply', 'Excited', 'Excited to see you!'],
+            ['search', 'Search the web', 'Search the web for ideas.'],
         ]);
         assert.equal(h.search.calls.length, 0);
-        assert.deepEqual(eventsOf(h, 'search').map((e) => e.detail), ['skipped']);
-        assert.match(h.api.userMessage(), /Task: answer the question\. No search option\./);
+        // One search event, the offer, which still says the question itself needs no outside facts.
+        const search = eventsOf(h, 'search');
+        assert.deepEqual(search.map((e) => [e.status, e.detail]), [['ok', 'offered']]);
+        assert.equal(JSON.parse(search[0]?.countsJson ?? '{}').needsWeb, false);
+        assert.match(h.api.userMessage(), /Task: answer the question\. A web search can be offered as option 3\./);
     });
 
     it('offers Search the web third for a question that could use outside facts, without searching', async () => {
@@ -298,21 +341,46 @@ describe('the direct select options job', () => {
         assert.ok(h.log.entries.some((e) => e.message === 'options published' && e.fields.searchAdded === true));
     });
 
-    it('offers no search without web search consent, or right after a request was sent', async () => {
-        const h = start(harness({ direct: true }));
+    it('offers no Search option and runs no search without web search consent, "do you know" included', async () => {
+        const h = startThree();
         h.db.consent.webSearch = false;
-        h.api.reply({ answer_mode: 'pick', options: withSearchReply().options.filter((o) => o.kind === 'reply') });
+        const replies = () => ({ answer_mode: 'pick' as const, options: withSearchReply().options.filter((o) => o.kind === 'reply').slice(0, 3) });
+        h.api.reply(replies());
         const noConsent = h.db.addOptionsJob({ questionText: FUN_QUESTION });
         await waitFor(() => h.db.job(noConsent)?.status === 'done');
         assert.match(h.api.userMessage(0), /No search option\./);
         assert.ok(finalPublish(h)?.options.every((o) => o.kind === 'reply'));
-        assert.equal(eventsOf(h, 'search').length, 0, 'no search event without consent');
 
-        h.db.consent.webSearch = true;
-        h.api.reply({ answer_mode: 'pick', options: withSearchReply().options.filter((o) => o.kind === 'reply') });
-        const afterErrand = h.db.addOptionsJob({ questionText: 'We should let Stephen know the request was sent?', recentErrandTitle: 'Care team request', recentErrandSentAtMs: Date.now() - 60_000 });
-        await waitFor(() => h.db.job(afterErrand)?.status === 'done');
+        h.api.reply(replies());
+        const knows = h.db.addOptionsJob({ questionText: 'Do you know who won the Giants game last night?' });
+        await waitFor(() => h.db.job(knows)?.status === 'done');
         assert.match(h.api.userMessage(1), /No search option\./);
+        assert.match(h.api.userMessage(1), /Web results: none\./);
+        assert.ok(h.db.publishes.at(-1)?.options.every((o) => o.kind === 'reply'));
+        assert.equal(h.search.calls.length, 0, 'nothing went to Apify');
+        assert.equal(eventsOf(h, 'search').length, 0, 'no search event without consent');
+    });
+
+    it('still offers Search the web third in the ten minutes after a request was sent, after the call option (D24)', async () => {
+        const h = startThree({ contacts: [LEON] });
+        h.api.reply({
+            answer_mode: 'pick',
+            options: [
+                reply({ label: 'Tell her', text: 'Yes, let her know.', tone: 'warm' }),
+                reply({ kind: 'call', label: 'Call Leonora', text: 'Call Leonora about it.', tone: 'calm', call: { contact_id: 'leon' } }),
+                reply({ label: 'No need', text: 'No need, thanks.', tone: 'firm' }),
+            ],
+        });
+        const jobId = h.db.addOptionsJob({ questionText: 'We should let Stephen know the request was sent?', recentErrandTitle: 'Care team request', recentErrandSentAtMs: Date.now() - 60_000 });
+        await waitFor(() => h.db.job(jobId)?.status === 'done');
+        assert.match(h.api.userMessage(), /A web search can be offered as option 3\./);
+        assert.match(h.api.userMessage(), /Contacts for a call:/, 'the call offer works as before');
+        assert.deepEqual(finalPublish(h)?.options.map((o) => [o.kind, o.label]), [
+            ['reply', 'Tell her'],
+            ['call', 'Call Leonora'],
+            ['search', 'Search the web'],
+        ]);
+        assert.equal(h.search.calls.length, 0);
     });
 
     it('refuses a search option the planner wrote when none was offered', async () => {
@@ -341,8 +409,8 @@ describe('the direct select options job', () => {
         assert.equal(h.db.publishes.at(-1)?.options[2]?.kind, 'search');
     });
 
-    it('keeps an errand option\'s action with its short label', async () => {
-        const h = start(harness({ direct: true, forms: [DEMO_FORM] }));
+    it('keeps an errand option\'s action with its short label, second, with Search the web third', async () => {
+        const h = startThree({ forms: [DEMO_FORM] });
         h.api.reply({
             answer_mode: 'pick',
             options: [
@@ -358,11 +426,109 @@ describe('the direct select options job', () => {
         });
         const jobId = h.db.addOptionsJob({ questionText: 'Can we send the care team a request for a ride to the aquarium at 1?' });
         await waitFor(() => h.db.job(jobId)?.status === 'done');
-        const errand = finalPublish(h)?.options[0];
-        assert.equal(errand?.kind, 'errand');
-        assert.equal(errand?.label, 'Send request');
+        const published = finalPublish(h);
+        // The planner put the errand first; the list is reply, errand, Search the web (D24).
+        assert.deepEqual(published?.options.map((o) => [o.kind, o.label]), [
+            ['reply', 'Not now'],
+            ['errand', 'Send request'],
+            ['search', 'Search the web'],
+        ]);
+        const errand = published?.options[1];
         assert.equal(JSON.parse(errand?.actionJson ?? '{}').formKey, 'care_team_request');
         assert.equal(h.search.calls.length, 0);
+    });
+
+    it('runs no search before a pick when the partner does not say "do you know"', async () => {
+        const h = startThree();
+        h.api.reply({ answer_mode: 'pick', options: [reply({ label: 'Giants won', text: 'I think the Giants won.', tone: 'warm' }), reply({ label: 'No idea', text: 'No idea, honestly.', tone: 'calm' })] });
+        const jobId = h.db.addOptionsJob({ questionText: 'Who won the Giants game last night?' });
+        await waitFor(() => h.db.job(jobId)?.status === 'done');
+        assert.equal(h.search.calls.length, 0, 'the person picks Search first');
+        assert.equal(h.web.indexed.size, 0);
+        assert.deepEqual(eventsOf(h, 'search').map((e) => [e.status, e.detail]), [['ok', 'offered']]);
+        assert.deepEqual(finalPublish(h)?.options.map((o) => o.kind), ['reply', 'reply', 'search']);
+        assert.doesNotMatch(h.api.userMessage(), /already ran/);
+    });
+});
+
+describe('"do you know": the options job searches at once (D24)', () => {
+    const QUESTION = 'Do you know who won the Giants game last night?';
+
+    it('runs one web search before Claude drafts, and the replies cite its rows; Search the web stays third', async () => {
+        const h = startThree();
+        h.search.rows = [webRow(1), webRow(2)];
+        h.api.reply({
+            answer_mode: 'pick',
+            options: [
+                reply({ label: 'Giants won', text: 'Yes, the Giants won last night.', sources: ['w1'], tone: 'warm' }),
+                reply({ label: 'Not sure', text: 'Not sure, can we check?', tone: 'calm' }),
+            ],
+        });
+        const jobId = h.db.addOptionsJob({ questionText: QUESTION });
+        await waitFor(() => h.db.job(jobId)?.status === 'done');
+
+        // The search the scan path runs: the web, with the question, once, before the planner call.
+        assert.deepEqual(h.search.calls, [{ kind: 'web', query: QUESTION }]);
+        assert.ok(h.trace.indexOf('search.web') < h.trace.indexOf('claude.create'), 'searched before drafting');
+        assert.equal(h.api.calls.length, 1, 'no Search pick, no confirm, no categories');
+
+        // Truthful pipeline events: started, then ok with the rows, and no "offered".
+        const search = eventsOf(h, 'search');
+        assert.deepEqual(search.map((e) => [e.status, e.detail]), [['started', 'web'], ['ok', 'web']]);
+        assert.equal(JSON.parse(search[1]?.countsJson ?? '{}').rowCount, 2);
+        assert.equal(JSON.parse(search[1]?.payloadJson ?? '{}').reason, DO_YOU_KNOW_REASON);
+
+        // Indexed the usual way and forgotten at the end.
+        const key = `q${h.db.questionOf(jobId)}`;
+        assert.ok(h.web.indexed.has(key));
+        assert.deepEqual(h.web.forgotten, [key]);
+
+        const message = h.api.userMessage();
+        assert.match(message, /The partner asked "do you know", so the web search already ran/);
+        assert.match(message, /^w1 \(web page/m);
+
+        const published = finalPublish(h);
+        assert.equal(published?.answerMode, 'pick');
+        assert.deepEqual(published?.options.map((o) => [o.kind, o.label, o.provenance, o.sources[0]?.url]), [
+            ['reply', 'Giants won', 'web', 'https://example.com/page-1'],
+            ['reply', 'Not sure', 'model', undefined],
+            ['search', 'Search the web', 'stock', undefined],
+        ]);
+    });
+
+    it('searches the maps near the venue for a place question, "d\'you know" too', async () => {
+        const h = startThree({ placesNear: true });
+        h.search.rows = [placeRow(1), placeRow(2)];
+        h.api.reply({
+            answer_mode: 'pick',
+            options: [
+                reply({ label: 'Pharmacy 1', text: "It's Pharmacy 1, on Main.", sources: ['w1'], tone: 'warm' }),
+                reply({ label: 'Pharmacy 2', text: 'Pharmacy 2 is close too.', sources: ['w2'], tone: 'calm' }),
+                reply({ kind: 'search', label: 'Search the web', text: 'Search the web for more.', tone: 'neutral' }),
+            ],
+        });
+        const jobId = h.db.addOptionsJob({ questionText: "D'you know where the nearest pharmacy is?" });
+        await waitFor(() => h.db.job(jobId)?.status === 'done');
+        assert.deepEqual(h.search.calls, [{ kind: 'maps', query: 'pharmacy', near: { lat: 37.87, lng: -122.27 } }]);
+        assert.deepEqual(eventsOf(h, 'search').map((e) => [e.status, e.detail]), [['started', 'maps'], ['ok', 'maps']]);
+        assert.deepEqual(finalPublish(h)?.options.map((o) => [o.kind, o.label, o.provenance, o.sources[0]?.placeId]), [
+            ['reply', 'Pharmacy 1', 'maps', 'place1'],
+            ['reply', 'Pharmacy 2', 'maps', 'place2'],
+            ['search', 'Search the web', 'model', undefined],
+        ]);
+    });
+
+    it('writes the failed search truthfully and still answers, with Search the web third', async () => {
+        const h = startThree();
+        h.search.error = new Error('apify down');
+        h.api.reply({ answer_mode: 'pick', options: [reply({ label: 'Not sure', text: 'Not sure, honestly.', tone: 'calm' }), reply({ label: 'Ask later', text: 'Ask me later.', tone: 'warm' })] });
+        const jobId = h.db.addOptionsJob({ questionText: QUESTION });
+        await waitFor(() => h.db.job(jobId)?.status === 'done');
+        assert.deepEqual(eventsOf(h, 'search').map((e) => [e.status, e.detail]), [['started', 'web'], ['error', 'web error']]);
+        const message = h.api.userMessage();
+        assert.match(message, /The web search failed/);
+        assert.match(message, /A web search can be offered as option 3\./);
+        assert.deepEqual(finalPublish(h)?.options.map((o) => o.kind), ['reply', 'reply', 'search']);
     });
 });
 
