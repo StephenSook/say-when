@@ -219,6 +219,11 @@ export interface JobDeps {
     prefetch?: boolean;
     /** The prefetched runs (src/prefetch.ts). Made on first use when unset. */
     prefetches?: SearchPrefetch;
+    /**
+     * AGENT_PINNED_PLACE (PLAN D26): direct select offers this place as one reply to every place question searched on
+     * the maps, cited when the maps search found it and a plain reply with no source otherwise. Unset or null: none.
+     */
+    pinnedPlace?: string | null;
 }
 
 /**

@@ -1,0 +1,13 @@
+{
+    "searches": [
+        { "kind": "maps", "query": "Palace of Fine Arts San Francisco" },
+        { "kind": "maps", "query": "park" },
+        { "kind": "maps", "query": "tourist attraction" },
+        { "kind": "maps", "query": "restaurant" },
+        { "kind": "maps", "query": "cafe" },
+        { "kind": "maps", "query": "museum" },
+        { "kind": "web", "query": "Palace of Fine Arts San Francisco hours" },
+        { "kind": "web", "query": "things to do near the Palace of Fine Arts San Francisco this afternoon" },
+        { "kind": "web", "query": "wheelchair accessible places near the Palace of Fine Arts" }
+    ]
+}

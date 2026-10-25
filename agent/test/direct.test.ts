@@ -497,25 +497,20 @@ describe('"do you know": the options job searches at once (D24)', () => {
         ]);
     });
 
-    it('searches the maps near the venue for a place question, "d\'you know" too', async () => {
+    it('searches the maps near the venue for a place question, "d\'you know" too, and offers the places themselves (D26)', async () => {
         const h = startThree({ placesNear: true });
         h.search.rows = [placeRow(1), placeRow(2)];
-        h.api.reply({
-            answer_mode: 'pick',
-            options: [
-                reply({ label: 'Pharmacy 1', text: "It's Pharmacy 1, on Main.", sources: ['w1'], tone: 'warm' }),
-                reply({ label: 'Pharmacy 2', text: 'Pharmacy 2 is close too.', sources: ['w2'], tone: 'calm' }),
-                reply({ kind: 'search', label: 'Search the web', text: 'Search the web for more.', tone: 'neutral' }),
-            ],
-        });
         const jobId = h.db.addOptionsJob({ questionText: "D'you know where the nearest pharmacy is?" });
         await waitFor(() => h.db.job(jobId)?.status === 'done');
         assert.deepEqual(h.search.calls, [{ kind: 'maps', query: 'pharmacy', near: { lat: 37.87, lng: -122.27 } }]);
         assert.deepEqual(eventsOf(h, 'search').map((e) => [e.status, e.detail]), [['started', 'maps'], ['ok', 'maps']]);
-        assert.deepEqual(finalPublish(h)?.options.map((o) => [o.kind, o.label, o.provenance, o.sources[0]?.placeId]), [
-            ['reply', 'Pharmacy 1', 'maps', 'place1'],
-            ['reply', 'Pharmacy 2', 'maps', 'place2'],
-            ['search', 'Search the web', 'model', undefined],
+        // PLAN D26: the replies are the places the maps found, by name and cited, with no plan; Search the web third.
+        assert.equal(h.api.calls.length, 0);
+        assert.ok(eventsOf(h, 'plan').some((e) => e.detail === 'maps places'));
+        assert.deepEqual(finalPublish(h)?.options.map((o) => [o.kind, o.label, o.text, o.provenance, o.sources[0]?.placeId]), [
+            ['reply', 'Pharmacy 1', "Let's go to Pharmacy 1!", 'maps', 'place1'],
+            ['reply', 'Pharmacy 2', "Let's go to Pharmacy 2!", 'maps', 'place2'],
+            ['search', 'Search the web', 'Search the web for ideas.', 'stock', undefined],
         ]);
     });
 
@@ -602,14 +597,6 @@ describe('the category search job (after a Category pick)', () => {
         await waitFor(() => h.db.job(categories)?.status === 'done');
 
         h.search.rows = [placeRow(1), placeRow(2)];
-        h.api.reply({
-            answer_mode: 'pick',
-            options: [
-                reply({ label: 'Pharmacy 1', text: "Let's go to Pharmacy 1!", sources: ['w1'], tone: 'warm' }),
-                reply({ label: 'Pharmacy 2', text: 'How about Pharmacy 2?', sources: ['w2'], tone: 'calm' }),
-                reply({ label: 'Something else', text: 'Something else, please.', tone: 'neutral' }),
-            ],
-        });
         const jobId = h.db.addFollowUpJob({ kind: 'category_search', questionText: FUN_QUESTION, parentQuestionId: 90n, category: 'Nature' });
         await waitFor(() => h.db.job(jobId)?.status === 'done');
         // Maps is centred on the venue, so the planner's words go out without their city.
@@ -619,15 +606,14 @@ describe('the category search job (after a Category pick)', () => {
         assert.deepEqual(h.web.forgotten, [key], 'and are forgotten once it is answered');
         const published = h.db.publishes.at(-1);
         assert.equal(published?.final, true);
+        // PLAN D26: the replies are the places the maps found, by name and cited; no plan for them.
         assert.deepEqual(published?.options.map((o) => [o.kind, o.label, o.text, o.provenance, o.sources[0]?.placeId]), [
             ['reply', 'Pharmacy 1', "Let's go to Pharmacy 1!", 'maps', 'place1'],
-            ['reply', 'Pharmacy 2', 'How about Pharmacy 2?', 'maps', 'place2'],
-            ['reply', 'Something else', 'Something else, please.', 'model', undefined],
+            ['reply', 'Pharmacy 2', "Let's go to Pharmacy 2!", 'maps', 'place2'],
         ]);
         assert.deepEqual(eventsOf(h, 'search').map((e) => [e.status, e.detail]), [['started', 'maps'], ['ok', 'maps']]);
-        const message = h.api.userMessage(1);
-        assert.match(message, /Task: replies from the search\. The person picked the category "Nature"\./);
-        assert.match(message, /^w1 \(place/m);
+        assert.equal(h.api.calls.length, 1, 'only the categories were planned');
+        assert.ok(eventsOf(h, 'plan').some((e) => e.detail === 'maps places'));
     });
 
     it('searches the web for a question that is not about places, with words for a category it never offered', async () => {
@@ -648,7 +634,7 @@ describe('the category search job (after a Category pick)', () => {
         assert.equal(h.db.publishes.at(-1)?.options[0]?.provenance, 'web');
     });
 
-    it('offers the places by name when the planner fails', async () => {
+    it('offers the places by name without the planner, so a planner failure cannot lose them (D26)', async () => {
         const h = start(harness({ direct: true, placesNear: true }));
         h.search.rows = [placeRow(1), placeRow(2)];
         h.api.fail(new Anthropic.BadRequestError(400, undefined, 'bad', new Headers()));
@@ -658,7 +644,8 @@ describe('the category search job (after a Category pick)', () => {
             ['reply', 'Pharmacy 1', "Let's go to Pharmacy 1!", 'maps', 1],
             ['reply', 'Pharmacy 2', "Let's go to Pharmacy 2!", 'maps', 1],
         ]);
-        assert.ok(eventsOf(h, 'plan').some((e) => e.detail === 'places stock'));
+        assert.ok(eventsOf(h, 'plan').some((e) => e.detail === 'maps places'));
+        assert.equal(h.api.calls.length, 0);
     });
 
     it('fails a web result the planner cannot write, instead of reading out page titles', async () => {

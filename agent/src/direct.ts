@@ -15,7 +15,7 @@
 // The person always picks; a reply is said aloud at once, and an errand, a call or a search start waits for a read-back
 // and a fresh confirm in the module.
 
-import type { QuestionClass } from '@say-when/apify-client';
+import type { QuestionClass, SearchRow } from '@say-when/apify-client';
 
 import { LIMITS } from './contract.js';
 import { withDeadline } from './deadline.js';
@@ -35,6 +35,7 @@ import { acceptedSource, PAD_REPLIES } from './options.js';
 import { JobEvents } from './pipeline.js';
 import { PlannerError, type PlanInput, type WebContext } from './planner/types.js';
 import { SearchPrefetch } from './prefetch.js';
+import { sourceRefOf } from './privacy.js';
 import {
     categorySearch,
     JobAbortedError,
@@ -241,10 +242,25 @@ export async function runDirectOptionsJob(row: AgentQueueRow, attempt: number, d
                 timeZone: deps.timeZone,
                 consent: () => ({ memory: allowMemory(), web: allowWeb() }),
             };
-            // With a Search option the order means something (reply, reply or action, search), so memory does not reorder it.
-            const planned = await planOptions(ctx, input, memory, web, recent, 'claude', !offering);
-            const shaped = offering ? withSearch(planned.options, deps.maxOptions) : { answerMode: planned.plan.answerMode, options: planned.options, added: false };
-            const allowed = () => planned.stillAllowed() && (!offering || allowWeb());
+            // PLAN D26: "do you know" searched on the maps and found places: the replies are those places, by name and
+            // cited, with the pinned place first; Search the web stays third. No plan, so nothing else is said.
+            const pinnedRow = searched?.kind === 'maps' ? pinnedRowOf(deps, allowWeb) : null;
+            const places = searched?.kind === 'maps' ? placeReplies(web, deps.pinnedPlace ?? null, DO_YOU_KNOW_PLACES, pinnedRow) : [];
+            let shaped: { answerMode: AnswerMode; options: OptionInput[]; added: boolean };
+            let allowed: () => boolean;
+            let planMs = 0;
+            if (places.some((o) => o.provenance === 'maps')) {
+                await events.instant('plan', 'ok', 'maps places', 0, { counts: { optionCount: places.length, final: true } });
+                shaped = offering ? withSearch(places, deps.maxOptions) : { answerMode: 'pick', options: padWithReplies(places, 2), added: false };
+                allowed = allowWeb;
+            } else {
+                // With a Search option the order means something (reply, reply or action, search), so memory does not reorder it.
+                const planned = await planOptions(ctx, input, memory, web, recent, 'claude', !offering);
+                const options = searched?.kind === 'maps' ? withPinned(planned.options, deps.pinnedPlace ?? null, pinnedRow) : planned.options;
+                shaped = offering ? withSearch(options, deps.maxOptions) : { answerMode: planned.plan.answerMode, options, added: false };
+                allowed = () => planned.stillAllowed() && (!offering || allowWeb());
+                planMs = planned.plan.ms;
+            }
             try {
                 if (!allowed()) throw new ConsentWithdrawnError();
                 await publish(deps.db, job, shaped.answerMode, shaped.options, true, allowed);
@@ -252,7 +268,7 @@ export async function runDirectOptionsJob(row: AgentQueueRow, attempt: number, d
                     job: row.jobId,
                     options: shaped.options.length,
                     mode: shaped.answerMode,
-                    ms: planned.plan.ms,
+                    ms: planMs,
                     search: offering,
                     searchAdded: shaped.added,
                 });
@@ -468,7 +484,7 @@ const PLACE_TONES: readonly Tone[] = ['warm', 'calm', 'neutral', 'firm'];
 const PLACE_LABEL_WORDS = 5;
 
 function placeLabel(name: string): string {
-    return clean(name).split(' ').slice(0, PLACE_LABEL_WORDS).join(' ');
+    return clean(name).split(' ').slice(0, PLACE_LABEL_WORDS).join(' ').slice(0, LIMITS.optionLabel).trim();
 }
 
 /** Replies naming the places the maps search found, for when the planner cannot write them. Never a web page title. */
@@ -496,6 +512,67 @@ export function placeOptions(web: readonly WebContext[], max: number): OptionInp
     return out;
 }
 
+/** "Do you know" place replies before Search the web (third), and category search place replies (PLAN D23: three). */
+const DO_YOU_KNOW_PLACES = 2;
+const RESULT_PLACES = 3;
+
+/**
+ * AGENT_PINNED_PLACE as a reply (PLAN D26): its name only, never an address, hours or a rating. With `row` (a maps row
+ * for it, preloaded) it cites that row; without one it has no source.
+ */
+export function pinnedReply(pinned: string, row: SearchRow | null = null): OptionInput {
+    const name = clean(pinned).replace(/[<>[\]{}]/g, '').slice(0, 80);
+    const ref = row ? sourceRefOf(row) : null;
+    const source = ref ? acceptedSource(ref) : null;
+    return {
+        kind: 'reply',
+        label: placeLabel(name),
+        text: `Let's go to ${name}!`,
+        tone: '',
+        laugh: false,
+        provenance: source ? 'maps' : 'stock',
+        sources: source ? [source] : [],
+        memoryRefs: [],
+        actionJson: '',
+    };
+}
+
+/** The preloaded maps row for the pinned place, while web search consent holds; null otherwise. */
+function pinnedRowOf(deps: JobDeps, allowWeb: () => boolean): SearchRow | null {
+    if (!deps.pinnedPlace || !allowWeb()) return null;
+    return deps.retrieval.cache?.findPlace?.(deps.pinnedPlace) ?? null;
+}
+
+/** Whether an option is about the pinned place (its words name it). */
+function namesPlace(option: OptionInput, pinned: string): boolean {
+    const want = norm(pinned);
+    return want !== '' && (norm(option.label).includes(want) || norm(option.text).includes(want));
+}
+
+/** Tones by position, so a reordered list keeps one tone per place. */
+function retone(options: readonly OptionInput[]): OptionInput[] {
+    return options.map((o, i) => (o.provenance === 'maps' || o.provenance === 'stock' ? { ...o, tone: PLACE_TONES[i] ?? '' } : o));
+}
+
+/**
+ * PLAN D26: replies naming the places the maps search found (placeOptions), with AGENT_PINNED_PLACE first: the maps
+ * row's own option, cited, when the search found it, and pinnedReply otherwise. At most `count`.
+ */
+export function placeReplies(web: readonly WebContext[], pinned: string | null, count: number, pinnedRow: SearchRow | null = null): OptionInput[] {
+    const found = placeOptions(web, LIMITS.maxOptions);
+    if (!pinned || clean(pinned) === '') return retone(found.slice(0, count));
+    const at = found.findIndex((o) => namesPlace(o, pinned));
+    const pin = at >= 0 ? (found[at] as OptionInput) : pinnedReply(pinned, pinnedRow);
+    return retone([pin, ...found.filter((_, i) => i !== at)].slice(0, count));
+}
+
+/** The planner's options with the pinned place first (a reply of its own about it is dropped). Unchanged without one. */
+export function withPinned(options: readonly OptionInput[], pinned: string | null, pinnedRow: SearchRow | null = null): OptionInput[] {
+    if (!pinned || clean(pinned) === '') return [...options];
+    const own = options.find((o) => o.kind === 'reply' && namesPlace(o, pinned) && o.sources.length > 0);
+    return [own ?? pinnedReply(pinned, pinnedRow), ...options.filter((o) => !(o.kind === 'reply' && namesPlace(o, pinned)))];
+}
+
 /** Category search job: the search the person asked for, then up to four places or facts as replies. */
 export async function runCategorySearchJob(row: AgentQueueRow, attempt: number, deps: JobDeps, signal: AbortSignal): Promise<void> {
     const job = { jobId: row.jobId, attempt };
@@ -519,11 +596,13 @@ export async function runCategorySearchJob(row: AgentQueueRow, attempt: number, 
         const places = check.kind === 'places';
         const searchCheck = { ...check, needsWeb: true };
         // The run started when the categories were offered (src/prefetch.ts), under the same search words, if any.
-        const prefetched = deps.prefetch ? (deps.prefetches?.take(original.id, categorySearch(deps.retrieval, query, places)) ?? null) : null;
+        const planned = categorySearch(deps.retrieval, query, places);
+        const prefetched = deps.prefetch ? (deps.prefetches?.take(original.id, planned) ?? null) : null;
         deps.log.info('category search', { job: row.jobId, known: known !== null, places, prefetched: prefetched !== null });
-        const fromPrefetch = prefetched ? await prefetchedSearchStep(deps.retrieval, events, row, searchCheck, signal, allowWeb, prefetched) : null;
+        // PLAN D26: one search per pick. A prefetched run that fails is not searched again (the preloaded rows, if any).
+        const fromPrefetch = prefetched ? await prefetchedSearchStep(deps.retrieval, events, row, searchCheck, signal, allowWeb, prefetched, planned) : null;
         if (signal.aborted) throw new JobAbortedError();
-        // No prefetch, or it failed: the search as before.
+        // No prefetch: the search as before.
         const search = fromPrefetch ?? (await searchStep(deps.retrieval, events, row, searchCheck, signal, allowWeb, undefined, { query, places }));
         if (signal.aborted) throw new JobAbortedError();
 
@@ -555,10 +634,19 @@ export async function runCategorySearchJob(row: AgentQueueRow, attempt: number, 
             };
             let options: OptionInput[];
             let allowed: () => boolean;
+            const pinnedRow = search.kind === 'maps' ? pinnedRowOf(deps, allowWeb) : null;
+            const places = search.kind === 'maps' ? placeReplies(web, deps.pinnedPlace ?? null, RESULT_PLACES, pinnedRow) : [];
             try {
-                const planned = await planOptions(ctx, input, [], web, null, 'claude results', false);
-                options = planned.options;
-                allowed = planned.stillAllowed;
+                if (places.some((o) => o.provenance === 'maps')) {
+                    // PLAN D26: the maps found places, so the replies are those places, by name and cited; no plan.
+                    await events.instant('plan', 'ok', 'maps places', 0, { counts: { optionCount: places.length, final: true } });
+                    options = places;
+                    allowed = allowWeb;
+                } else {
+                    const planned = await planOptions(ctx, input, [], web, null, 'claude results', false);
+                    options = search.kind === 'maps' ? withPinned(planned.options, deps.pinnedPlace ?? null, pinnedRow).slice(0, RESULT_PLACES) : planned.options;
+                    allowed = planned.stillAllowed;
+                }
             } catch (error) {
                 if (signal.aborted || error instanceof JobAbortedError) throw new JobAbortedError();
                 if (!(error instanceof PlannerError)) throw error;

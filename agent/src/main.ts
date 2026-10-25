@@ -27,6 +27,8 @@ import { ConversationLog, PreviewBook, SentBook, type JobDeps } from './jobs.js'
 import { consoleLogger, type Logger } from './log.js';
 import { Orchestrator } from './orchestrator.js';
 import { PREFETCH_LIMITS } from './prefetch.js';
+import { SearchCache } from './preload.js';
+import { sendSearch, withPlaceWords } from './retrieval.js';
 import { SandboxMeter, startHealthServer } from './sandbox.js';
 import { errorTag, startupFailureLine, StartupError } from './startup.js';
 import { askSidecar, checkVoiceToken, formatWarm, newNonce, removeQuietly, wakeStandby, WarmFileError, warmFiles, warmMoss, writePidFile, writeWarmStatus } from './warm.js';
@@ -163,6 +165,8 @@ async function run(result: ConfigResult, log: Logger): Promise<number> {
         draftFirst: config.speed.draftFirst,
         direct: config.inputMode === 'direct',
         prefetch: config.inputMode === 'direct' && config.speed.prefetch,
+        preload: wired.preloadSearch ? config.preload.searches.length : 0,
+        pinnedPlace: config.pinnedPlace !== null,
     });
 
     const db = await connect(result, log);
@@ -179,7 +183,8 @@ async function run(result: ConfigResult, log: Logger): Promise<number> {
         db,
         planner: wired.planner,
         retrieval: {
-            classify: classifyQuestion,
+            // PLAN D26: "any good spots?" is a place question too, so it goes to the maps search near the venue.
+            classify: withPlaceWords(classifyQuestion),
             search: wired.search,
             memory: wired.memory,
             web: wired.web,
@@ -209,7 +214,23 @@ async function run(result: ConfigResult, log: Logger): Promise<number> {
         direct: config.inputMode === 'direct',
         // Direct select: each category's search starts as the categories are offered (src/prefetch.ts).
         prefetch: config.inputMode === 'direct' && config.speed.prefetch,
+        // PLAN D26: the demo venue, always one reply to a place question.
+        pinnedPlace: config.pinnedPlace,
     };
+    // PLAN D26: real search results preloaded in the background (never blocks the start), used when a live search is
+    // slow or fails. Only while web search consent holds.
+    const preloadPort = wired.preloadSearch;
+    const preload =
+        preloadPort && config.preload.searches.length > 0
+            ? new SearchCache(db, log, () => performance.now(), {
+                  searches: config.preload.searches,
+                  timeoutMs: config.preload.timeoutMs,
+                  refreshMs: config.preload.refreshMs,
+                  send: (planned, signal) => sendSearch({ placesNear: config.search.placesNear }, preloadPort, planned, signal),
+              })
+            : null;
+    deps.retrieval.cache = preload;
+    preload?.start();
     calls = new CallRunner({ db, dialer: wired.dialer, log, clock: () => performance.now(), now: Date.now });
     const errands = new ErrandRunner({
         db,
@@ -281,6 +302,7 @@ async function run(result: ConfigResult, log: Logger): Promise<number> {
                 process.off('SIGUSR2', onWarm);
                 removeQuietly(files.pid);
                 removeQuietly(files.status);
+                preload?.close();
                 await orchestrator.stop(20_000);
                 await wired.moss?.close('signal');
                 db.close();
@@ -320,7 +342,7 @@ async function main(): Promise<number> {
         const loaded = loadEnvFiles([`${AGENT_DIR}.env.local`, `${REPO_DIR}.env.local`]);
         log.info('settings files', { loaded: loaded.length });
     }
-    const result = readConfig(process.env, `${AGENT_DIR}.agent-token`);
+    const result = readConfig(process.env, `${AGENT_DIR}.agent-token`, undefined, `${AGENT_DIR}preload.example.json`);
     printChecks(result, log);
     const bindings = existsSync(new URL('index.ts', BINDINGS_DIR));
     const sdk = existsSync(BINDINGS_SDK);

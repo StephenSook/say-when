@@ -13,7 +13,7 @@ import { MossCallError, MossRunError, type MemoryHit, type Recall, type WebHit }
 
 import { DeadlineError, JobAbortedError, withDeadline } from './deadline.js';
 import type { Logger } from './log.js';
-import { label, StaleAttemptError, wholeMs, type JobEvents } from './pipeline.js';
+import { label, StaleAttemptError, wholeMs, type Counts, type JobEvents, type Step } from './pipeline.js';
 import type { MemoryContext, WebContext } from './planner/types.js';
 import type { Classifier, MemoryPort, SearchPort, WebIndexPort } from './ports.js';
 import { excerpt, memoryHitPayload, searchRowPayload, sourceRefOf, webHitPayload, type PayloadHit } from './privacy.js';
@@ -37,11 +37,37 @@ export interface RetrievalDeps {
     web: WebIndexPort | null;
     /** Where place searches look (AGENT_PLACES_NEAR). Without it, place questions use the web search. */
     placesNear: { lat: number; lng: number } | null;
-    /** The search's own deadline, kept well inside the 45 s job lease. */
+    /**
+     * The search's own deadline, kept well inside the 45 s job lease. It bounds the whole wait for outside facts for one
+     * question: one search attempt per pick (PLAN D26, 11 s by default).
+     */
     searchTimeoutMs: number;
+    /**
+     * Preloaded search results (src/preload.ts, PLAN D26): real results fetched earlier, used when the live search has
+     * not answered within `cacheGraceMs`, or failed. Unset or null: no cache.
+     */
+    cache?: SearchCacheLookup | null;
+    /** How long a search with a matching preloaded result waits for its live answer. Default CACHE_GRACE_MS. */
+    cacheGraceMs?: number;
     /** Defaults to MOSS_DEADLINES. */
     mossDeadlines?: Partial<MossDeadlines>;
     log: Logger;
+}
+
+/** How long a search with a matching preloaded result waits for the live one before it takes the preloaded one. */
+export const CACHE_GRACE_MS = 1_500;
+
+/** Preloaded rows for one search, with how long ago they were fetched. The rows keep their own fetchedAt. */
+export interface CachedSearch {
+    rows: SearchRow[];
+    ageMs: number;
+}
+
+/** The preloaded cache as searchStep sees it (src/preload.ts SearchCache). Null when nothing matches or consent is off. */
+export interface SearchCacheLookup {
+    find(planned: PlannedSearch): CachedSearch | null;
+    /** A preloaded maps row whose title names this place (AGENT_PINNED_PLACE), or null. */
+    findPlace?(name: string): SearchRow | null;
 }
 
 export function mossDeadline(deps: RetrievalDeps, step: keyof MossDeadlines): number {
@@ -190,6 +216,22 @@ const INTEREST_WORDS: readonly [RegExp, string][] = [
 /** What Maps is asked when the question names no place and no interest. */
 export const DEFAULT_PLACE_QUERY = 'tourist attraction';
 
+/**
+ * Spoken words for a place that classifyQuestion misses: "Do you know any good spots?" read as personal and went to the
+ * web search (Oct 25, PLAN D26). With AGENT_PLACES_NEAR set they go to the maps search near the venue; placeQuery
+ * turns "outdoor spots" into a park and "good spots" or "somewhere fun" into DEFAULT_PLACE_QUERY.
+ */
+const SPOT_WORDS = /\b(?:spots?|places?|somewhere|things to do|hang(?:ing)? out)\b/i;
+
+/** The classifier, with a question SPOT_WORDS finds marked as a place question. Whether it needs the web is kept. */
+export function withPlaceWords(classify: Classifier): Classifier {
+    return (question) => {
+        const check = classify(question);
+        if (check.kind === 'places' || check.kind === 'smalltalk' || !SPOT_WORDS.test(question)) return check;
+        return { ...check, kind: 'places' };
+    };
+}
+
 // Capitalized words that are not names, also when they start a sentence.
 const NOT_NAMES: ReadonlySet<string> = new Set([
     'I', "I'm", "I'd", "I'll", "I've", 'Is', 'Are', 'Was', 'Do', 'Does', 'Did', 'Can', 'Could', 'Would', 'Will', 'Should',
@@ -321,11 +363,26 @@ export async function searchStep(
         await step.error('search off');
         return { status: 'not_allowed', rows: [], kind: null };
     }
+    // PLAN D26: one attempt, bounded by the search deadline. With a matching preloaded result, the live search gets
+    // cacheGraceMs; after that, or if it fails, the preloaded rows are used and the live run is stopped.
+    const cached = deps.cache?.find(planned) ?? null;
     const deadline = AbortSignal.timeout(deps.searchTimeoutMs);
-    const combined = AbortSignal.any(stop ? [signal, deadline, stop] : [signal, deadline]);
+    const instead = new AbortController();
+    const combined = AbortSignal.any(stop ? [signal, deadline, instead.signal, stop] : [signal, deadline, instead.signal]);
     try {
         if (stop?.aborted) throw new DOMException('stopped', 'AbortError');
-        const result = await sendSearch(deps, deps.search, planned, combined);
+        const live = sendSearch(deps, deps.search, planned, combined);
+        let result: SearchResult;
+        if (cached) {
+            const early = await within(live, deps.cacheGraceMs ?? CACHE_GRACE_MS);
+            if (early === null) {
+                instead.abort();
+                return await cachedStep(deps, step, row, check, kind, cached, 'slow', allowed);
+            }
+            result = early;
+        } else {
+            result = await live;
+        }
         await step.ok(result.partial ? `${kind} partial` : kind, {
             counts: { needsWeb: true, searches: 1, rowCount: result.rows.length, partial: result.partial },
             payload: { reason: check.reason, rows: result.rows.map(searchRowPayload) },
@@ -339,10 +396,61 @@ export async function searchStep(
             await step.ok('search stopped', { counts: { needsWeb: true, searches: 1, rowCount: 0 } });
             return { status: 'none', rows: [], kind };
         }
+        if (cached) return await cachedStep(deps, step, row, check, kind, cached, 'failed', allowed);
         await step.error(searchErrorLabel(kind, error, deadline.aborted), { counts: { needsWeb: true, searches: 1, rowCount: 0 } });
         deps.log.warn('search failed; planning without outside facts', { job: row.jobId, search: kind, deadline: deadline.aborted });
         return { status: 'failed', rows: [], kind };
     }
+}
+
+/**
+ * `work`'s value if it settles within `ms`, or null once `ms` passes. Rejects if `work` rejects first. A later
+ * rejection is handled here, so it can never become an unhandled rejection.
+ */
+function within<T>(work: Promise<T>, ms: number): Promise<T | null> {
+    return new Promise<T | null>((resolve, reject) => {
+        const timer = setTimeout(() => resolve(null), ms);
+        work.then(
+            (value) => {
+                clearTimeout(timer);
+                resolve(value);
+            },
+            (error: unknown) => {
+                clearTimeout(timer);
+                reject(error);
+            },
+        );
+    });
+}
+
+/**
+ * The search step closed with preloaded rows (PLAN D26): real results fetched earlier, never shown as live. The detail
+ * says `cached`, the counts carry `cached: true`, the rows' age in seconds (`ageS`) and why the live one was not used
+ * (`liveFailed`), and every row keeps its own fetchedAt. Web search consent is read again first.
+ */
+async function cachedStep(
+    deps: RetrievalDeps,
+    step: Step,
+    row: AgentQueueRow,
+    check: QuestionClass,
+    kind: 'web' | 'maps',
+    cached: CachedSearch,
+    why: 'slow' | 'failed',
+    allowed: () => boolean,
+    extra: Counts = {},
+): Promise<SearchOutcome> {
+    if (!allowed()) {
+        await step.error('search off');
+        return { status: 'not_allowed', rows: [], kind: null };
+    }
+    const ageS = Math.max(0, Math.round(cached.ageMs / 1000));
+    await step.ok(label(kind, 'cached'), {
+        counts: { needsWeb: true, searches: 1, rowCount: cached.rows.length, cached: true, ageS, liveFailed: why === 'failed', ...extra },
+        payload: { reason: check.reason, rows: cached.rows.map(searchRowPayload) },
+        listKey: 'rows',
+    });
+    deps.log.info('search used preloaded results', { job: row.jobId, search: kind, why, ageS, rows: cached.rows.length });
+    return { status: 'done', rows: cached.rows, kind };
 }
 
 /** How a prefetched search ended (src/prefetch.ts). `ms` is how long its own run took. Never rejects. */
@@ -358,8 +466,9 @@ export interface PrefetchedRun {
  * Steps 2 and 3 for a search that was prefetched when the categories were offered. Its events are this job's, as if
  * it had searched itself: `search started`, then `ok` (or `error`) with the run's own time and `prefetched: true`
  * (`waitMs` is what this job waited for it). Web search consent is read again once the run is back, and a revoked
- * consent means none of its rows are used. Null when the prefetched run failed: the caller searches again, as it
- * would have without a prefetch.
+ * consent means none of its rows are used. PLAN D26: the prefetched run is this pick's one search. When it fails or
+ * runs out of time there is no second search: the preloaded rows for `planned` are used if there are any, and
+ * otherwise the job plans without outside facts. With preloaded rows, the run gets cacheGraceMs before they are used.
  */
 export async function prefetchedSearchStep(
     deps: RetrievalDeps,
@@ -369,17 +478,21 @@ export async function prefetchedSearchStep(
     signal: AbortSignal,
     allowed: () => boolean,
     run: PrefetchedRun,
-): Promise<SearchOutcome | null> {
+    planned?: PlannedSearch,
+): Promise<SearchOutcome> {
     if (!row.webSearchAllowed || !allowed()) return { status: 'not_allowed', rows: [], kind: null };
     const step = await events.begin('search', run.kind);
     const waitStart = events.now();
     const counts = { needsWeb: true, searches: 1, prefetched: true };
-    let outcome: PrefetchOutcome;
+    const cached = planned ? (deps.cache?.find(planned) ?? null) : null;
+    let outcome: PrefetchOutcome | null;
     try {
         // The run has its own deadline, started earlier; this one only bounds the wait, and the job's signal ends it.
-        outcome = await withDeadline(run.outcome, deps.searchTimeoutMs, 'prefetched search', signal);
+        const waiting = cached ? within(run.outcome, deps.cacheGraceMs ?? CACHE_GRACE_MS) : run.outcome;
+        outcome = await withDeadline(waiting, deps.searchTimeoutMs, 'prefetched search', signal);
     } catch (error) {
         if (signal.aborted || error instanceof JobAbortedError) throw new JobAbortedError();
+        if (cached) return await cachedStep(deps, step, row, check, run.kind, cached, 'failed', allowed, { prefetched: true, waitMs: wholeMs(events.now() - waitStart) });
         await step.error(searchErrorLabel(run.kind, error, true), { counts: { ...counts, rowCount: 0, waitMs: wholeMs(events.now() - waitStart) } });
         deps.log.warn('the prefetched search did not come back in time; planning without outside facts', { job: row.jobId, search: run.kind });
         return { status: 'failed', rows: [], kind: run.kind };
@@ -391,10 +504,16 @@ export async function prefetchedSearchStep(
         await step.error('search off');
         return { status: 'not_allowed', rows: [], kind: null };
     }
-    if (!outcome.ok) {
+    if (outcome === null || !outcome.ok) {
+        if (cached) return await cachedStep(deps, step, row, check, run.kind, cached, outcome === null ? 'slow' : 'failed', allowed, { prefetched: true, waitMs });
+        if (outcome === null) {
+            // Not reached: a wait ends early only when there are preloaded rows.
+            await step.error(label(run.kind, 'timeout'), { counts: { ...counts, rowCount: 0, waitMs } });
+            return { status: 'failed', rows: [], kind: run.kind };
+        }
         await step.error(searchErrorLabel(run.kind, outcome.error, outcome.timedOut), { ms: outcome.ms, counts: { ...counts, rowCount: 0, waitMs } });
-        deps.log.info('the prefetched search failed; searching again', { job: row.jobId, search: run.kind, deadline: outcome.timedOut });
-        return null;
+        deps.log.info('the prefetched search failed; planning without outside facts (one search per pick)', { job: row.jobId, search: run.kind, deadline: outcome.timedOut });
+        return { status: 'failed', rows: [], kind: run.kind };
     }
     const result = outcome.result;
     await step.ok(result.partial ? `${run.kind} partial` : run.kind, {
