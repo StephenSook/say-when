@@ -659,6 +659,8 @@ Accepted outcomes are written `accepted:<action>`, ignored ones `ignored:<reason
 
 Silence never acts: no timer ever picks, confirms, sends or dials. A timeout means no.
 
+**Direct select (D18, D29; the `say-when-direct` database).** The table above is the scan map. In Direct mode the read-back rows read as follows (docs/direct-select.md 4.1): while an errand, call or search is pending (Drafted or Previewed to Confirmed for an errand, Prepared to Confirmed for a call, Prepared or AwaitingConfirm for a search), `PICK_3` (a single jaw clench) is the CONFIRM column, with the heard digest and every check (`ignored:readback_not_done` during the read-back, `ignored:quiet_hold`, `ignored:window_closed`, `ignored:digest_mismatch`); `PICK_1`, `PICK_2` and `PICK_4` are `ignored:readback_jaw_only` and change nothing; STOP stops it as in the table; and no answer until the ConfirmWindow timer means not sent (`window_closed`, "No answer. Nothing was sent."). Since D29 (Oct 25, about 3 AM) a right fist no longer cancels: stray imagined-fist picks arrive every 4 to 6 s, and two of them cancelled live errands during the read-back.
+
 Since the review (section 13): a due idle pause is applied before any command is decided (row 10), so after two quiet minutes the first command meets a paused session; STOP hangs up every live call and then also does what this table says for the other state (row 13); and a call option picked while a call is live is refused `line_busy` (row 18).
 
 ### 4.3 Errand
@@ -673,7 +675,7 @@ Since the review (section 13): a due idle pause is applied before any command is
 | previewed | Readback timer | still previewed | stopped (`readback_not_finished`) | cue `not_sent` |
 | awaiting_confirm | CONFIRM, all checks | | confirmed | `confirmed_digest`, `confirm_gesture_id`; cue `confirmed` |
 | awaiting_confirm | CONFIRM inside the quiet hold | | awaiting_confirm | the hold restarts (`window_seq += 1`, new timer) |
-| awaiting_confirm | ConfirmWindow timer, same `window_seq` | | stopped (`window_closed`) | "Stopped, nothing sent", never a red timeout (`docs/ui.md`) |
+| awaiting_confirm | ConfirmWindow timer, same `window_seq` | | stopped (`window_closed`) | "No answer. Nothing was sent." (D29), never a red timeout (`docs/ui.md`) |
 | drafted, previewed, awaiting_confirm, confirmed | STOP, NO, HEADSET_OFF, lease, idle, operator, a new question, consent revoked, session end | | stopped (reason) | `stop_gesture_id` for gestures; cue `not_sent` |
 | confirmed | `claim_errand(digest)` | Agent; digests match; consent active | submitting | `claim_attempt += 1`; Submit timer |
 | submitting | `complete_errand` submitted or duplicate | same attempt | submitted | `confirmation_text`, `screenshot_url`; cue `errand_sent` |

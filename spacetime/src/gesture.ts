@@ -12,8 +12,9 @@
 //
 // Direct select (D18, docs/direct-select.md section 4): in Direct mode the commands are PICK_1 to PICK_4, STOP and
 // HEADSET_OFF; YES, NO and CONFIRM are recorded as `ignored:direct_mode`, and in Scan mode a PICK is
-// `ignored:scan_mode`. The same precedence holds for a PICK: a pause, then a read-back and confirm (PICK_1 confirms,
-// PICK_2 cancels), then the live list, then idle.
+// `ignored:scan_mode`. The same precedence holds for a PICK: a pause, then a read-back and confirm (since D29 a single
+// jaw clench, PICK_3, confirms; PICK_1, PICK_2 and PICK_4 are `ignored:readback_jaw_only`; no answer means not sent;
+// STOP cancels), then the live list, then idle.
 import { SenderError } from 'spacetimedb/server';
 import { activeSession, requireRole } from './auth';
 import {
@@ -375,7 +376,7 @@ function onConfirm(ctx: Ctx, s: ScanState, p: PendingWork, session: Session, a: 
   return ignored('nothing_to_confirm');
 }
 
-/** CONFIRM (Scan) or PICK_1 (Direct) on a search: confirmed once, and the categories turn opens. */
+/** CONFIRM (Scan) or PICK_3 (Direct, D29) on a search: confirmed once, and the categories turn opens. */
 function confirmSearchPick(ctx: Ctx, session: Session, r: NonNullable<PendingWork['search']>, g: { gestureId: string; onsetAgeMs: number; heardDigest: string }): Decision {
   if (r.status.tag === 'Prepared') return ignored('readback_not_done', { questionId: r.questionId });
   const reason = confirmSearch(ctx, session, r, g);
@@ -388,9 +389,11 @@ function confirmSearchPick(ctx: Ctx, session: Session, r: NonNullable<PendingWor
 
 /**
  * While paused: PICK_1 resumes (as YES did in Scan mode), any other rank is `ignored:paused`. While a read-back or
- * confirm is pending: PICK_1 confirms with the heard digest (every errand, call and search rule holds), PICK_2
- * cancels, PICK_3 and PICK_4 are out of range. On the live list (Reading or the wait after it): the rank picks the
- * option, if the station heard a step of this list. Otherwise there is no list.
+ * confirm is pending (D29): PICK_3, a single jaw clench, confirms with the heard digest (every errand, call and search
+ * rule holds: read-back done, quiet hold, window, contact, digest, consent, once); PICK_1, PICK_2 and PICK_4 are
+ * `ignored:readback_jaw_only`; no answer until the window closes means not sent; STOP cancels. On the live list
+ * (Reading or the wait after it): the rank picks the option, if the station heard a step of this list. Otherwise there
+ * is no list.
  */
 function onPick(ctx: Ctx, cfg: Config, s: ScanState, p: PendingWork, session: Session, rank: number, a: GestureArgs): Decision {
   if (s.phase.tag === 'Paused') {
@@ -404,18 +407,12 @@ function onPick(ctx: Ctx, cfg: Config, s: ScanState, p: PendingWork, session: Se
     return accepted('resume', { questionId: s.questionId });
   }
   if (p.errand || p.call || p.search) {
-    if (rank > 2) return ignored('rank_out_of_range', { errandId: p.errand?.id, callId: p.call?.id, cursor: rank });
-    if (rank === 2) {
-      if (p.errand) {
-        stopErrand(ctx, p.errand, 'no', { actor: 'Station', gestureId: a.gestureId });
-        return accepted('stop_errand', { errandId: p.errand.id, questionId: p.errand.questionId });
-      }
-      if (p.call) {
-        stopCall(ctx, p.call, 'no', { actor: 'Station', gestureId: a.gestureId });
-        return accepted('stop_call', { callId: p.call.id, questionId: p.call.questionId });
-      }
-      stopSearch(ctx, p.search!, 'no', { actor: 'Station', gestureId: a.gestureId });
-      return accepted('stop_search', { questionId: p.search!.questionId, optionId: p.search!.optionId });
+    // D29: only a single jaw clench confirms a read-back. The decoder emits stray imagined-fist picks every few
+    // seconds, and two right-fist strays cancelled live errands during the read-back (Oct 25), so 1 and 2 do nothing
+    // here; no answer until the confirm window closes means not sent, and STOP (a held clench) cancels at any time.
+    if (rank !== 3) {
+      const questionId = p.errand?.questionId ?? p.call?.questionId ?? p.search?.questionId;
+      return ignored('readback_jaw_only', { errandId: p.errand?.id, callId: p.call?.id, questionId, cursor: rank });
     }
     return onConfirm(ctx, s, p, session, a);
   }

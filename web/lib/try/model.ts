@@ -207,7 +207,7 @@ const ERRAND_WORDS: Record<Errand['status'], string> = {
   preparing: 'Filling the form',
   previewed: 'Form filled, not sent',
   reading_back: 'Reading it back',
-  awaiting_confirm: 'Waiting for 1 to send, 2 to cancel',
+  awaiting_confirm: 'Waiting for 3 to send',
   confirmed: 'Confirmed',
   submitting: 'Sending',
   sent: 'Sent to the demo form',

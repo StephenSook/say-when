@@ -227,8 +227,8 @@ describe('during a session', () => {
       bigStatus(running({ readback: { ...base().readback, phase, ...extra } }), NOW);
     assert.equal(rb('playing').title, 'Reading it back');
     assert.equal(rb('hold').title, 'Waiting for your confirm');
-    assert.equal(rb('window', { windowStartedWall: NOW - 3_000 }).sentence, '5.0 s left. 1 to send, 2 to cancel. Silence sends nothing.');
-    assert.match(rb('playing').sentence ?? '', /fresh 1 after the read-back/);
+    assert.equal(rb('window', { windowStartedWall: NOW - 3_000 }).sentence, '5.0 s left. Waiting for 3 to send. No answer sends nothing.');
+    assert.match(rb('playing').sentence ?? '', /fresh 3 after the read-back/);
     assert.equal(rb('window', { windowStartedWall: NOW - 3_000 }).status, 'waiting');
     assert.equal(rb('too_long').status, 'stopped');
     assert.equal(rb('late').title, 'Not sent: the read-back took too long.');

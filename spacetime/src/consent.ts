@@ -139,7 +139,8 @@ const SAY: Record<string, string> = {
   consent_revoked: 'Permission for this was taken back. Nothing was sent.',
   session_ended: 'The session ended. Nothing was sent.',
   readback_not_finished: 'The read-back did not finish. Nothing was sent.',
-  window_closed: 'Stopped, nothing sent.',
+  // D29: in direct select no answer is the no, so a window that runs out says so (never a red timeout).
+  window_closed: 'No answer. Nothing was sent.',
   preview_timeout: 'The form did not load in time. Nothing was sent.',
   agent_lost: 'The helper program stopped answering. Nothing was sent.',
   no_consent: 'That needs permission first. Nothing was sent.',
@@ -399,8 +400,11 @@ export function voidPending(ctx: Ctx, sessionId: bigint, code: string, actor: Ac
 
 // ---------- D18: a web search the person picked (read-back, then a two-option confirm) ----------
 
-/** The module's own read-back for a Search pick: the station reads it as it is, numbers included. */
-export const SEARCH_READBACK = 'Search the web for ideas? One: yes. Two: cancel.';
+/**
+ * The module's own read-back for a Search pick: the station reads it as it is, ending included. D29: a single jaw
+ * clench (PICK_3) confirms it; no answer means no search; STOP cancels.
+ */
+export const SEARCH_READBACK = 'Search the web for ideas? Clench your jaw to search.';
 
 function saveSearch(ctx: Ctx, r: SearchRequest): SearchRequest {
   const next = { ...r, updatedAt: ctx.timestamp };

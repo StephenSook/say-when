@@ -5,7 +5,7 @@
  * 1. Play the command's tick at once. It says "your signal reached the station", not "it counted".
  * 2. Build the arguments (direct select, D18): the heard step at the onset (lib/station/heard.ts; the module needs a
  *    step of the live list, `list_start_seq <= heard_step_seq <= step_seq`), option id 0 for a pick (the rank picks),
- *    the read-back digest on PICK_1 (in a confirm it is "One: send it"), the source, and `onset_age_ms` = now - onset
+ *    the read-back digest on PICK_3 (D29: the jaw clench confirms), the source, and `onset_age_ms` = now - onset
  *    + the one-way estimate (a larger age only makes the module's quiet-hold check stricter, so the error falls on
  *    the safe side).
  * 3. Call `gesture` with the exact command word (PICK_1 to PICK_4, STOP, HEADSET_OFF). A SenderError is never
@@ -30,9 +30,12 @@ export function isStationCommand(value: unknown): value is StationCommand {
 /** The scan map's words (D11 + D17, `main`). A decoder sending one runs `--mode scan` against this direct database. */
 export const SCAN_WORDS: readonly string[] = ['YES', 'NO', 'CONFIRM'];
 
-/** PICK_1 carries the read-back digest: in a confirm it is "One: send it" (the module's CONFIRM rules hold). */
+/**
+ * PICK_3 carries the read-back digest: since D29 a single jaw clench is the confirm after a read-back ("Clench your
+ * jaw to send it", the module's CONFIRM rules hold). The module ignores the digest on a list pick.
+ */
 export function carriesDigest(command: StationCommand): boolean {
-  return command === 'PICK_1';
+  return command === 'PICK_3';
 }
 
 /** The module's checks (spacetime/src/gesture.ts GESTURE_ID_RE and SOURCE_RE). */
@@ -127,7 +130,7 @@ export function buildGestureArgs(input: CommandInput, gestureId: string, heard: 
   };
 }
 
-// ---------- The read-back digest for PICK_1 in a confirm ----------
+// ---------- The read-back digest for PICK_3 in a confirm (D29) ----------
 
 /** `my_session.errand`, `.call` and `.search`, reduced to what the digest choice needs (status tags as the bindings name them). */
 export interface PendingWorkLite {

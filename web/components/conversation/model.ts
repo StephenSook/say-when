@@ -12,7 +12,7 @@
  *   cursor is on an option only while it is read; during the wait it sits on the whole list (no
  *   option id), with the time left to pick. It stops, with no clock, while paused or the headset is off.
  * - A pick of a reply is said out loud at once. A pick of an errand or a call starts its read-back,
- *   then a fresh "One: send it. Two: cancel." One line under the picked option says where that
+ *   then "Clench your jaw to send it." (D29). One line under the picked option says where that
  *   errand or call is; the Agents screen shows every step.
  * - Free text (the question, the options) goes through maskPhoneNumbers: a projected screen never
  *   shows a phone number.

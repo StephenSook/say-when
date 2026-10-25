@@ -161,21 +161,24 @@ describe('direct select on the station (D18)', () => {
     engine.stop();
   });
 
-  test('PICK_1 in a web search confirm carries the search read-back digest; PICK_2 carries none', async () => {
+  test('PICK_3 in a web search confirm carries the search read-back digest (D29); PICK_1 and PICK_2 carry none', async () => {
     const { engine, conn, internals } = await pairedEngine();
     engine.chooseMode('keyboard');
     engine.setSilent(true);
     engine.startSession();
     await flush();
-    const search = { searchId: 4n, status: { tag: 'AwaitingConfirm' }, readBackText: 'Search the web for ideas? One: yes. Two: cancel.', digest: 'a1b2c3d4e5f60718', confirmOpensAt: undefined, confirmClosesAt: undefined, reasonCode: '', reason: '' };
+    const search = { searchId: 4n, status: { tag: 'AwaitingConfirm' }, readBackText: 'Search the web for ideas? Clench your jaw to search.', digest: 'a1b2c3d4e5f60718', confirmOpensAt: undefined, confirmClosesAt: undefined, reasonCode: '', reason: '' };
     conn.db.mySession.set([sessionRow({ search })]);
     await flush();
     internals.readback.played.set('search:4', 'a1b2c3d4e5f60718');
+    internals.onKeyDown(key('3', 'Digit3'));
     internals.onKeyDown(key('1', 'Digit1'));
     internals.onKeyDown(key('2', 'Digit2'));
-    const [one, two] = conn.named('gesture').map((g) => g.args);
+    const [three, one, two] = conn.named('gesture').map((g) => g.args);
+    assert.equal(three?.command, 'PICK_3');
+    assert.equal(three?.heardDigest, 'a1b2c3d4e5f60718', 'a jaw clench, with the digest of the read-back that played');
     assert.equal(one?.command, 'PICK_1');
-    assert.equal(one?.heardDigest, 'a1b2c3d4e5f60718', 'One: yes, with the digest of the read-back that played');
+    assert.equal(one?.heardDigest, '');
     assert.equal(two?.command, 'PICK_2');
     assert.equal(two?.heardDigest, '');
     engine.stop();

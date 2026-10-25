@@ -5,7 +5,7 @@
  * steps on the left and the transcript on the right.
  *
  * 1 Prepared and read back the call script plays in the earpiece; its digest is in the tooltip only
- * 2 Confirm                the confirm window, "1 to send, 2 to cancel"; only a fresh 1 places the call
+ * 2 Confirm                the confirm window, "3 to send" (D29); only a fresh 3, a jaw clench, places the call
  * 3 Ringing                Dialing, then Ringing with a ring timer (our own events: Cartesia has no ringing)
  * 4 Connected              the live duration; STOP hangs up (a held jaw clench with the headset)
  * 5 Ended                  with the reason in plain words
@@ -134,7 +134,7 @@ function confirmStep(
             {call.confirmClosesAt !== null ? (
               <Countdown closesAt={call.confirmClosesAt} opensAt={call.confirmOpensAt ?? call.readAloudAt} label="Time left to confirm the call" />
             ) : null}
-            <Note>Only {phrase} places the call. 2 cancels. If the time runs out, nobody is called.</Note>
+            <Note>Only {phrase} places the call. STOP cancels. No answer: nobody is called.</Note>
           </>
         ),
       };

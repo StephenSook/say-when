@@ -77,9 +77,9 @@ describe('what each cue says', () => {
 
   test('the two-option confirm in every mode (D18), and the 34 clips cached at start', () => {
     for (const mode of ['headset', 'keyboard', 'switch'] as const) {
-      assert.equal(phraseText('confirmTail', mode), 'One: send it. Two: cancel.');
-      assert.equal(phraseText('sayConfirm', mode), 'That needs a confirm. One: send it. Two: cancel.');
-      assert.equal(phraseText('tooSoon', mode), 'Too soon. Wait a moment. One: send it. Two: cancel.');
+      assert.equal(phraseText('confirmTail', mode), 'Clench your jaw to send it.');
+      assert.equal(phraseText('sayConfirm', mode), 'That needs a confirm. Clench your jaw to send it.');
+      assert.equal(phraseText('tooSoon', mode), 'Too soon. Wait a moment, then clench your jaw to send it.');
     }
     for (const words of Object.values(PHRASES)) assert.ok(!/\{act\}|clench once|press C|YES|CONFIRM/.test(words), words);
     for (const mode of ['headset', 'keyboard', 'switch'] as const) {

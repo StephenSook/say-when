@@ -241,11 +241,11 @@ export function bigStatus(s: StationSnapshot, now: number): BigStatus {
 
   const rb = s.readback;
   if (rb.phase === 'preparing') return status('working', 'Getting the read-back ready');
-  if (rb.phase === 'playing') return status('working', 'Reading it back', `Nothing is sent without a fresh 1 after the read-back. ${CONFIRM_SHORT}.`);
+  if (rb.phase === 'playing') return status('working', 'Reading it back', `Nothing is sent without a fresh 3 after the read-back. Waiting for ${CONFIRM_SHORT}.`);
   if (rb.phase === 'reporting' || rb.phase === 'hold') return status('waiting', 'Waiting for your confirm', 'The confirm window opens in a moment.');
   if (rb.phase === 'window') {
     const left = rb.windowStartedWall === null ? rb.windowMs : rb.windowMs - (now - rb.windowStartedWall);
-    return status('waiting', 'Waiting for your confirm', left > 0 ? `${formatSeconds(left)} left. ${CONFIRM_SHORT}. Silence sends nothing.` : 'The window is closing. Nothing was sent.');
+    return status('waiting', 'Waiting for your confirm', left > 0 ? `${formatSeconds(left)} left. Waiting for ${CONFIRM_SHORT}. No answer sends nothing.` : 'The window is closing. Nothing was sent.');
   }
   if (rb.phase === 'too_long') return status('stopped', 'Not sent: the read-back is too long.');
   if (rb.phase === 'late') return status('stopped', 'Not sent: the read-back took too long.');

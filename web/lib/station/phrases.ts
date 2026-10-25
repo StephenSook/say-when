@@ -2,9 +2,10 @@
  * What the earpiece says (docs/station.md Appendix A), as data. Stock phrases use the assistant voice at the person's
  * pace and are cached once at start; menu items use the reply voice with no tone, exactly as the module writes them.
  *
- * Direct select (D18): every confirm is a fresh two-option choice, "One: send it. Two: cancel.", the same words in
- * every input mode (1 is the left fist, key 1, or a short switch press). The phrases are cached in IndexedDB by
- * their text (lib/station/phrase-store.ts), so changed words are voiced once and stored again.
+ * Direct select (D18, D29): every read-back ends "Clench your jaw to send it.", the same words in every input mode: a
+ * single jaw clench (PICK_3, key 3) sends it, 1 and 2 do nothing, no answer sends nothing, and STOP cancels. The
+ * phrases are cached in IndexedDB by their text (lib/station/phrase-store.ts), so changed words are voiced once and
+ * stored again.
  */
 import type { InputMode } from '../role/storage';
 
@@ -24,14 +25,14 @@ export const PHRASES = {
   cancelled: 'Cancelled. Nothing was said.',
   noOptions: 'No options this time. Nothing was said.',
   questionWaiting: 'A new question is waiting.',
-  confirmTail: 'One: send it. Two: cancel.',
-  sayConfirm: 'That needs a confirm. One: send it. Two: cancel.',
-  tooSoon: 'Too soon. Wait a moment. One: send it. Two: cancel.',
+  confirmTail: 'Clench your jaw to send it.',
+  sayConfirm: 'That needs a confirm. Clench your jaw to send it.',
+  tooSoon: 'Too soon. Wait a moment, then clench your jaw to send it.',
   confirmed: 'Confirmed.',
   preparing: 'Getting it ready.',
   sent: 'Sent.',
   notSent: 'Not sent.',
-  windowClosed: 'Stopped, nothing sent.',
+  windowClosed: 'No answer. Nothing was sent.',
   readbackLate: 'The read-back did not finish. Nothing was sent.',
   interrupted: 'A new question came in. Nothing was sent.',
   unknownOutcome: 'It may or may not have gone through.',

@@ -28,8 +28,8 @@ JAW_COMMAND = {
 }
 # Jaw-only fallback (docs/brain-mode-test.md), imagery off.
 JAW_ONLY_COMMAND = {
-    # Direct: the jaw takes over the two fist picks, so every confirm ("One: send it. Two: cancel.") still works:
-    # single = PICK_1, double = PICK_2, held = STOP. Option 3 needs the station key 3.
+    # Direct: the jaw takes over the two fist picks: single = PICK_1, double = PICK_2, held = STOP. Option 3 needs the
+    # station key 3, and since D29 so does a read-back confirm ("Clench your jaw to send it." is PICK_3).
     "direct": {"single": "PICK_1", "double": "PICK_2", "long": "STOP"},
     # Scan, unchanged by D17 and D21: single = YES, double = CONFIRM, silence = NO, and there is no STOP gesture (a
     # teammate stops from the station keys).

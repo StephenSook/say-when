@@ -114,17 +114,19 @@ describe('read-back helpers', () => {
     assert.equal(readbackCandidate(null, call({ status: 'Dialing' })), null);
   });
 
-  test('an errand or call read-back ends with the two-option confirm; a search read-back is read as is (D18)', () => {
+  test('an errand or call read-back ends with the jaw clench confirm (D29); a search read-back is read as is (D18)', () => {
     for (const mode of ['keyboard', 'headset', 'switch'] as const) {
-      assert.deepEqual(readbackSegments('Text.', mode), ['Text.', 'One: send it. Two: cancel.']);
-      assert.deepEqual(readbackSegments('Text.', mode, 'call'), ['Text.', 'One: send it. Two: cancel.']);
+      assert.deepEqual(readbackSegments('Text.', mode), ['Text.', 'Clench your jaw to send it.']);
+      assert.deepEqual(readbackSegments('Text.', mode, 'call'), ['Text.', 'Clench your jaw to send it.']);
     }
-    const search = 'Search the web for ideas? One: yes. Two: cancel.';
+    // The D28 check-in call's read-back (cartesia/src/call.ts) gets the same ending.
+    assert.deepEqual(readbackSegments('Call Leon to check in for you.', 'headset', 'call'), ['Call Leon to check in for you.', 'Clench your jaw to send it.']);
+    const search = 'Search the web for ideas? Clench your jaw to search.';
     assert.deepEqual(readbackSegments(search, 'headset', 'search'), [search]);
   });
 
   test('a web search waits for its read-back after the errand and the call', () => {
-    const search: WorkLite = { ...call(), kind: 'search', id: 4n, status: 'Prepared', digest: 'a1b2c3d4e5f60718', readBackText: 'Search the web for ideas? One: yes. Two: cancel.' };
+    const search: WorkLite = { ...call(), kind: 'search', id: 4n, status: 'Prepared', digest: 'a1b2c3d4e5f60718', readBackText: 'Search the web for ideas? Clench your jaw to search.' };
     assert.equal(readbackCandidate(null, null, search)?.kind, 'search');
     assert.equal(readbackCandidate(errand(), null, search)?.kind, 'errand');
     assert.equal(readbackCandidate(null, null, { ...search, digest: 'not hex' }), null);

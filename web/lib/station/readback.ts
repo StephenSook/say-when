@@ -5,8 +5,8 @@
  *    `my_session.call` is Prepared with `script_digest` and a text, or when `my_session.search` (D18) is Prepared
  *    with a 16-hex `digest` and a text, and this page has not finished that read-back. One at a time; an errand
  *    comes before a call, and a call before a search, as in the module.
- * 2. Say it in the assistant voice on the options channel. An errand or call read-back gets the two-option confirm
- *    on the end ("One: send it. Two: cancel."); a search read-back already ends with its numbers and is read as is.
+ * 2. Say it in the assistant voice on the options channel. An errand or call read-back gets the confirm on the end
+ *    ("Clench your jaw to send it.", D29); a search read-back already ends with its own and is read as is.
  * 3. Stop it at once, and report nothing, when the errand or call leaves Previewed or Prepared, a pause cue arrives,
  *    or the session ends.
  * 4. Done only when playback ends on its own: record the digest (CONFIRM carries it), then call
@@ -25,8 +25,8 @@ import type { Channel, ClipLike, SynthJob } from './earpiece';
 import { phraseText } from './phrases';
 
 /**
- * What a read-back says: the Actor's text, then "One: send it. Two: cancel." The module's search read-back
- * ("Search the web for ideas? One: yes. Two: cancel.") already carries its numbers, so it is read as is.
+ * What a read-back says: the Actor's text, then "Clench your jaw to send it." (D29). The module's search read-back
+ * ("Search the web for ideas? Clench your jaw to search.") already carries its ending, so it is read as is.
  */
 export function readbackSegments(text: string, mode: InputMode, kind: ReadbackKind = 'errand'): string[] {
   return kind === 'search' ? [text] : [text, phraseText('confirmTail', mode)];

@@ -25,7 +25,7 @@ Imagery is ignored during a jaw clench and for 1 s after it, so a clench is neve
 | Double | PICK_2 | CONFIRM |
 | Held (0.8 s) | STOP | nothing (silence is NO, no STOP gesture) |
 
-The direct fallback gives the jaw the two fist picks, so every confirm ("One: send it. Two: cancel.") still works with the jaw alone. Option 3 then needs the station key 3. The scan fallback map did not change with D17 or D21.
+The direct fallback gives the jaw the two fist picks. Option 3 then needs the station key 3, and since D29 (Oct 25) so does every read-back confirm ("Clench your jaw to send it." means `PICK_3`, which this map never sends; STOP still cancels). The scan fallback map did not change with D17 or D21.
 
 Imagery rules (PLAN D21, `eeg/hands.py`), the same in both maps, all on the smoothed model probabilities. The at-once thresholds are per hand: the right fist uses `--yes-threshold` and the left fist `--no-threshold`, whatever word the hand sends in the map. Every number is a `live.py` flag, and `live.py` prints them at startup:
 

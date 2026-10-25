@@ -17,9 +17,9 @@
  *           select); a repeat inside the refractory time is ignored
  *  16.5 s   Claude offers follow-up options; PICK_1 (the imagined left fist) picks the errand
  *  20.8 s   the errand: the form is filled, the values are read back off the page, the read-back plays
- *           with "One: send it. Two: cancel.", PICK_1 confirms, and the form is sent
+ *           with "Clench your jaw to send it.", PICK_3 (a single jaw clench) confirms (D29), and the form is sent
  *  33.7 s   another follow-up with two options; a stray PICK_3 (a single jaw clench) is ignored (there is no
- *           option 3); PICK_1 picks the call; the script is read back, PICK_1 confirms, dialing, ringing,
+ *           option 3); PICK_1 picks the call; the script is read back, PICK_3 confirms, dialing, ringing,
  *           connected, transcript lines
  *  58.7 s   STOP (a held jaw clench, about 1 second) hangs up the call
  *  60.8 s   STOP while idle pauses; PICK_1 resumes
@@ -61,7 +61,7 @@ export const REPLAY_SESSION_ID = 'sample-session';
  * `idle_pause_ms`, 2 minutes), then the scan ends with no pick. There is no window per option and no veto.
  */
 export const PICK_WAIT_MS = 120_000;
-/** The confirm window after a read-back ("One: send it. Two: cancel."). */
+/** The confirm window after a read-back ("Clench your jaw to send it.", D29). */
 export const CONFIRM_WINDOW_MS = 8_000;
 
 /** Length of one loop. */
@@ -454,7 +454,7 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
     return { id, releasedAt: t + 50 };
   };
 
-  /** A pick of an errand or call: its own read-back and a fresh PICK_1 ("One: send it") follow. */
+  /** A pick of an errand or call: its own read-back and a fresh PICK_3 (a jaw clench, D29) follow. */
   const pickAction = (t: number, version: number, rank: number, name: CommandName, draft: OptionDraft) => {
     command(t, name, { confidence: 0.96, optionId: optionId(version, rank) });
     return picked(t, version, rank, draft);
@@ -527,7 +527,7 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
   const errandPickAt = errandListEnd + 1_500;
   const errandOptionId = pickAction(errandPickAt, 2, 1, 'PICK_1', errandOptions[0]!);
 
-  // The errand: nothing is sent without a fresh PICK_1 after the read-back.
+  // The errand: nothing is sent without a fresh PICK_3 (a jaw clench) after the read-back.
   const readBack: ReadBackItem[] = [
     { label: 'Who is this from?', value: 'Demo user', source: 'memory' },
     { label: 'What do you need?', value: 'Meal or drink' },
@@ -536,7 +536,7 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
   ];
   const errandReadBackText =
     'Care team request, from Demo user. Meal or drink: dinner at the cafe on Bay St with my partner, 7 pm tonight. ' +
-    'Confirm to send it and email the care team. One: send it. Two: cancel.';
+    'Confirm to send it and email the care team. Clench your jaw to send it.';
   const errandAt = errandPickAt + 100;
   step(errandAt, 'errand drafted', (rows) => {
     rows.errands.push({
@@ -599,7 +599,7 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
     confirmClosesAt: at(errandWindowAt + CONFIRM_WINDOW_MS),
   });
   const errandConfirmAt = errandWindowAt + 2_600;
-  command(errandConfirmAt, 'PICK_1', { confidence: 0.98 }, (rows, id) => {
+  command(errandConfirmAt, 'PICK_3', { confidence: 0.98 }, (rows, id) => {
     const errand = rows.errands.find((e) => e.id === errandId);
     if (errand) Object.assign(errand, { status: 'confirmed', confirmedAt: at(errandConfirmAt), confirmCommandId: id });
   });
@@ -630,7 +630,7 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
   const callPickAt = callListEnd + 1_900;
   const callOptionId = pickAction(callPickAt, 3, 1, 'PICK_1', callOptions[0]!);
 
-  // The call: a consented call to the caregiver, released only by its own fresh PICK_1.
+  // The call: a consented call to the caregiver, released only by its own fresh PICK_3 (a jaw clench).
   const callAt = callPickAt + 100;
   step(callAt, 'call prepared', (rows) => {
     rows.calls.push({
@@ -641,7 +641,7 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
       scriptDigest: sampleHex(`call-${loop}`),
       readBackText:
         'Call Demo caregiver. Tell them Demo user and their partner are having dinner at the cafe on Bay St at 7 tonight, ' +
-        'and ask if they can meet there. One: send it. Two: cancel.',
+        'and ask if they can meet there. Clench your jaw to send it.',
       status: 'prepared',
       result: null,
       endReason: null,
@@ -669,7 +669,7 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
     confirmClosesAt: at(callWindowAt + CONFIRM_WINDOW_MS),
   });
   const callConfirmAt = callWindowAt + 2_100;
-  command(callConfirmAt, 'PICK_1', { confidence: 0.98 }, (rows, id) => {
+  command(callConfirmAt, 'PICK_3', { confidence: 0.98 }, (rows, id) => {
     const call = rows.calls.find((c) => c.id === callId);
     if (call) Object.assign(call, { status: 'confirmed', confirmedAt: at(callConfirmAt), confirmCommandId: id });
   });

@@ -6,7 +6,7 @@
  *
  *   Each read-back           `board_errands` Previewed, `board_calls` Prepared or `board_searches` Prepared with its
  *                            digest and words, as lib/station/readback.ts readbackCandidate; errand and call
- *                            read-backs get "One: send it. Two: cancel." on the end, as in the earpiece.
+ *                            read-backs get "Clench your jaw to send it." on the end, as in the earpiece.
  *   A newer question         `scan_state.question_id` turns to a new id: the read-backs of older questions go
  *                            (mirror rule 2), and a pause clears everything.
  *

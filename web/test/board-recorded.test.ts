@@ -134,7 +134,7 @@ describe('boardRows over rows recorded from say-when-dev', () => {
     assert.equal(conversation.picked?.id, '61');
     // The recorded session's label is "smoke", which names no input mode, so no jaw clench is claimed (W1).
     assert.equal(rows.input, 'unknown');
-    assert.equal(conversation.agent?.sentence, 'Waiting for 1 to send, 2 to cancel. Nothing is sent yet.');
+    assert.equal(conversation.agent?.sentence, 'Waiting for 3 to send. Nothing is sent yet.');
     assert.equal(partner.status.text, 'Waiting for them to confirm.');
     // Question 1 ended with no pick: its old "no pick" select step names no option, so it is not shown as a pick.
     const selects = rows.pipelineEvents.filter((e) => e.stage === 'select');
