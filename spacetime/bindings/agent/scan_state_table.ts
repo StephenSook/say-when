@@ -53,4 +53,5 @@ export default __t.row({
   pausedAt: __t.option(__t.timestamp()).name("paused_at"),
   resumeCursor: __t.u8().name("resume_cursor"),
   updatedAt: __t.timestamp().name("updated_at"),
+  listStartSeq: __t.u64().name("list_start_seq"),
 });

@@ -5,7 +5,7 @@ import type { Timestamp } from 'spacetimedb';
 import { activeSession } from './auth';
 import { getConfig } from './config';
 import type { Ctx } from './ctx';
-import { armCallTimer, armErrandTimer, CALL_CLAIM_MS } from './consent';
+import { armCallTimer, armErrandTimer, armSearchTimer, CALL_CLAIM_MS } from './consent';
 import { isAfter, onceAt, plusMs } from './util';
 
 function notBefore(ctx: Ctx, ts: Timestamp): Timestamp {
@@ -98,6 +98,16 @@ export function ensureTimers(ctx: Ctx): string[] {
       const seq = kind === 'Lease' ? c.claimAttempt : c.windowSeq;
       armCallTimer(ctx, c.id, kind, seq, notBefore(ctx, when));
       repaired.push(`call_timer:${c.id}`);
+    }
+  }
+  // D18: a search's read-back deadline, then its confirm window.
+  for (const tag of ['Prepared', 'AwaitingConfirm'] as const) {
+    const kind = tag === 'Prepared' ? 'Readback' : 'ConfirmWindow';
+    for (const r of [...ctx.db.searchRequest.searchByStatus.filter({ tag })]) {
+      if ([...ctx.db.searchTimer.searchId.filter(r.id)].some((t) => t.kind.tag === kind)) continue;
+      const when = kind === 'Readback' ? plusMs(r.createdAt, cfg.readbackDeadlineMs) : (r.confirmClosesAt ?? ctx.timestamp);
+      armSearchTimer(ctx, r.id, kind, r.windowSeq, notBefore(ctx, when));
+      repaired.push(`search_timer:${r.id}`);
     }
   }
   const armedCodes = new Set([...ctx.db.pairingTimer.iter()].map((p) => p.code));

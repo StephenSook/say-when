@@ -258,6 +258,7 @@ test('publish refuses a call expiry that would not fit the stored timestamp', ()
     sources: [],
     memoryRefs: [],
     actionJson: JSON.stringify({ requestId: 'c-1', contactId: 'leon', recipientName: 'Leon', readBack: 'Call Leon.', digest: '0123456789abcdef', expiresAt }),
+    label: '',
   });
   for (const bad of [2 ** 64, -1, 1.5, 8_640_000_000_000_001]) {
     expect(

@@ -58,6 +58,8 @@ export function defaultConfig(owner: Identity): Config {
     menuEnabled: true,
     autoResume: true,
     dispatchMode: 'sidecar',
+    // D18: a new database answers by direct select. `set_input_mode scan` brings back the cursor.
+    inputMode: { tag: 'Direct' },
   } as Config;
   for (const spec of Object.values(TIMING)) {
     (cfg as Record<string, unknown>)[spec.field] = spec.def;
@@ -70,6 +72,11 @@ export function getConfig(db: ReadDb): Config {
   const cfg = db.config.id.find(0);
   if (!cfg) throw new SenderError('config missing');
   return cfg;
+}
+
+/** D18: the database answers by direct select (four gestures for four options), not the scanning cursor. */
+export function isDirect(db: ReadDb): boolean {
+  return getConfig(db).inputMode.tag === 'Direct';
 }
 
 /**
