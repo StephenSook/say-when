@@ -228,6 +228,17 @@ function categoryBook(deps: JobDeps): CategoryBook {
     return deps.categoryBook;
 }
 
+/**
+ * A categories or search turn is a new question row on the person's original question (spacetime/src/clock.ts
+ * createFollowUp), so both share the original's id: the categories are kept under it, and found again under it.
+ */
+function originalOf(row: AgentQueueRow): { id: bigint; text: string } {
+    return {
+        id: row.parentQuestionId !== 0n ? row.parentQuestionId : row.questionId,
+        text: row.parentQuestionText.trim() !== '' ? row.parentQuestionText : row.questionText,
+    };
+}
+
 /** The place a question names after in, near, around or at ("... today in San Francisco?"), or null. */
 export function placeHint(question: string): string | null {
     const match = /\b(?:in|near|around|at)\s+((?:[A-Z][\p{L}'.-]*)(?:\s+[A-Z][\p{L}'.-]*){0,3})/u.exec(question);
@@ -282,14 +293,13 @@ export async function runCategoriesJob(row: AgentQueueRow, attempt: number, deps
     const job = { jobId: row.jobId, attempt };
     const events = new JobEvents(deps.db, job, deps.log, deps.clock, { heartbeatMs: deps.leaseHeartbeatMs, signal });
     try {
-        if (row.questionText.trim() === '') throw new JobInputError('empty_question');
-        const allowWeb = () => consentNow(deps, row, attempt).webSearchAllowed;
-        // The categories lead only to a search, so without web search consent there is nothing to offer.
-        if (!row.webSearchAllowed || !allowWeb()) throw new DirectRefusal('web_search_off', WEB_OFF);
-        const ctx: PlanContext = { deps, row, events, signal, allowMemory: () => memoryConsent(deps, row, attempt), allowWeb };
+        const original = originalOf(row);
+        if (original.text.trim() === '') throw new JobInputError('empty_question');
+        // No web call here, so the job carries no web search consent (the module checks it again at the Category pick).
+        const ctx: PlanContext = { deps, row, events, signal, allowMemory: () => memoryConsent(deps, row, attempt), allowWeb: () => false };
         // Only the question: no memory and no conversation, so the search words can carry nothing private.
         const input: PlanInput = {
-            question: row.questionText,
+            question: original.text,
             origin: row.origin,
             menuItem: row.menuItem,
             history: [],
@@ -314,18 +324,13 @@ export async function runCategoriesJob(row: AgentQueueRow, attempt: number, deps
             if (signal.aborted || error instanceof JobAbortedError) throw new JobAbortedError();
             if (!(error instanceof PlannerError)) throw error;
             // The person asked to search, so fixed categories beat a failure.
-            entries = stockCategories(row.questionText, deps.retrieval.classify(row.questionText), deps.maxOptions);
+            entries = stockCategories(original.text, deps.retrieval.classify(original.text), deps.maxOptions);
             options = entries.map((entry) => categoryOption(entry, 'stock'));
             deps.log.warn('the planner could not write categories; using the stock ones', { job: row.jobId, code: error.code });
             await events.instant('plan', 'ok', 'categories stock', 0, { counts: { optionCount: options.length, final: true } });
         }
-        categoryBook(deps).record(row.questionId, entries);
-        try {
-            await publish(deps.db, job, 'pick', options, true, allowWeb);
-        } catch (error) {
-            if (error instanceof ConsentWithdrawnError) throw new DirectRefusal('web_search_off', WEB_OFF);
-            throw error;
-        }
+        categoryBook(deps).record(original.id, entries);
+        await publish(deps.db, job, 'pick', options, true);
         deps.log.info('categories published', { job: row.jobId, options: options.length });
     } finally {
         events.close();
@@ -376,7 +381,8 @@ export async function runCategorySearchJob(row: AgentQueueRow, attempt: number, 
     let mayBeIndexed = false;
     try {
         const category = clean(row.category);
-        if (row.questionText.trim() === '') throw new JobInputError('empty_question');
+        const original = originalOf(row);
+        if (original.text.trim() === '') throw new JobInputError('empty_question');
         if (category === '') throw new JobInputError('empty_category');
         const allowWeb = () => consentNow(deps, row, attempt).webSearchAllowed;
         const allowMemory = () => memoryConsent(deps, row, attempt);
@@ -384,9 +390,9 @@ export async function runCategorySearchJob(row: AgentQueueRow, attempt: number, 
         if (!deps.retrieval.search) throw new DirectRefusal('search_off', SEARCH_OFF);
 
         // The search words: the planner's for this category, or fixed ones. Never memory.
-        const check = deps.retrieval.classify(row.questionText);
-        const known = categoryBook(deps).find(row.questionId, category);
-        const query = known ?? defaultCategoryQuery(row.questionText, category);
+        const check = deps.retrieval.classify(original.text);
+        const known = categoryBook(deps).find(original.id, category);
+        const query = known ?? defaultCategoryQuery(original.text, category);
         deps.log.info('category search', { job: row.jobId, known: known !== null, places: check.kind === 'places' });
         const search = await searchStep(deps.retrieval, events, row, { ...check, needsWeb: true }, signal, allowWeb, undefined, { query, places: check.kind === 'places' });
         if (signal.aborted) throw new JobAbortedError();
@@ -400,7 +406,7 @@ export async function runCategorySearchJob(row: AgentQueueRow, attempt: number, 
         for (let round = 1; ; round++) {
             const web = allowWeb() ? retrieved.web : [];
             const input: PlanInput = {
-                question: row.questionText,
+                question: original.text,
                 origin: row.origin,
                 menuItem: row.menuItem,
                 history: [],

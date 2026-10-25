@@ -113,6 +113,12 @@ export interface AgentQueueRow {
     /** The newest Submitted errand of the last 10 minutes, which a call option needs. Empty when there is none. */
     recentErrandTitle: string;
     recentErrandSentAtMs: number | null;
+    /**
+     * Direct select: a `categories` or `category_search` job answers a new question row on the person's original
+     * question. Its id (0 for every other job) and words; `questionText` carries the same words.
+     */
+    parentQuestionId: bigint;
+    parentQuestionText: string;
     /** A `category_search` job: the Category option the person picked (its label or text). Empty otherwise. */
     category: string;
     createdAtMs: number;

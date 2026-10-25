@@ -160,6 +160,10 @@ const bindingRow = {
     recentErrandTitle: 'Care team request',
     recentErrandSentAt: { toMillis: () => 1_700_000_000_000n },
     createdAt: { microsSinceUnixEpoch: 1_700_000_000_000_000n },
+    // Direct select (module 7eeaabb): 0 and empty on every job but a categories or search turn.
+    parentQuestionId: 0n,
+    parentQuestionText: '',
+    category: '',
 };
 
 const callRow = {

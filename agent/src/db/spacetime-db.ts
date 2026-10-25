@@ -473,12 +473,6 @@ function strOf(value: unknown): string {
     throw new ContractError('expected a string');
 }
 
-/** An optional text column: unset is empty, anything but text is a contract error. */
-function optionalStr(value: unknown): string {
-    if (value === undefined || value === null) return '';
-    return strOf(value);
-}
-
 function boolOf(value: unknown): boolean {
     if (typeof value === 'boolean') return value;
     throw new ContractError('expected a bool');
@@ -569,8 +563,10 @@ export function toAgentQueueRow(row: Record<string, unknown>): AgentQueueRow {
         replyText: strOf(field(row, 'reply_text')),
         recentErrandTitle: strOf(field(row, 'recent_errand_title')),
         recentErrandSentAtMs: millisOf(optionalField(row, 'recent_errand_sent_at')),
-        // Direct select: optional until the generated bindings carry it (src/contract.ts DIRECT).
-        category: optionalStr(optionalField(row, DIRECT.categoryField)),
+        // Direct select (src/contract.ts DIRECT): the original question of a follow-up turn, and the picked category.
+        parentQuestionId: u64Of(field(row, 'parent_question_id')),
+        parentQuestionText: strOf(field(row, 'parent_question_text')),
+        category: strOf(field(row, DIRECT.categoryField)),
         createdAtMs: millisOf(field(row, 'created_at')) ?? 0,
     };
 }
