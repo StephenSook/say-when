@@ -6,6 +6,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { describe, test } from 'node:test';
 
 import { camel, SUBSCRIBED, toCallIn, toDeviceIn, toErrandIn, toLedgerIn, toScanIn } from '../src/sources/spacetime.js';
+import { PICK_CODES } from '../src/types.js';
 import { sec } from './fixtures.js';
 
 const DOC = new URL('../../docs/spacetime.md', import.meta.url);
@@ -68,6 +69,28 @@ describe('names against the contract and the module', () => {
         // The ledger rows the tracker indexes.
         assert.ok(clock.includes("appendLedger(ctx, s.sessionId, 'step'"), 'step rows');
         assert.ok(clock.includes("appendLedger(ctx, s.sessionId, 'pick'"), 'pick rows');
+    });
+
+    test('direct select (D18): the command words, the pick row and every accepted pick code the tracker pairs', () => {
+        const util = readFileSync(new URL('../../spacetime/src/util.ts', import.meta.url), 'utf8');
+        const gesture = readFileSync(new URL('../../spacetime/src/gesture.ts', import.meta.url), 'utf8');
+        const clock = readFileSync(new URL('../../spacetime/src/clock.ts', import.meta.url), 'utf8');
+        // The ledger's command column carries the wire word (commandWire), so these are the words switch_events stores.
+        for (const word of ['PICK_1', 'PICK_2', 'PICK_3']) {
+            assert.ok(util.includes(`case '${word}':`), `parseCommand accepts ${word}`);
+            assert.match(util, new RegExp(`Pick${word.at(-1)}: '${word}'`), `commandWire writes ${word}`);
+        }
+        // A pick with no list on offer: one of the false activation reasons.
+        assert.ok(gesture.includes("ignored('no_list'"), 'ignored:no_list');
+        // pickDirect writes one pick row (kind word, rank as cursor) for every kind it accepts, and every action it
+        // returns is a pick code the tracker pairs with that row; a new kind fails here before its picks go untimed.
+        const start = clock.indexOf('export function pickDirect');
+        assert.ok(start >= 0, 'pickDirect');
+        const body = clock.slice(start, clock.indexOf('\nexport function', start + 1));
+        assert.match(body, /appendLedger\(ctx, s\.sessionId, 'pick', 'Station', \{[^}]*gestureId[^}]*cursor: o\.rank[^}]*outcome: o\.kind\.tag\.toLowerCase\(\)/);
+        const actions = [...body.matchAll(/return \{ action: '([a-z_]+)' \}/g)].map((m) => m[1]!);
+        assert.deepEqual(actions.sort(), ['menu_item', 'pick_call', 'pick_category', 'pick_errand', 'pick_reply', 'pick_search']);
+        for (const action of actions) assert.ok(PICK_CODES.has(action), `${action} is not in PICK_CODES`);
     });
 });
 

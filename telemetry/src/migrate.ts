@@ -448,14 +448,16 @@ function wordList(col: string, words: readonly string[], nullable = false): stri
 }
 
 /**
- * The exact CHECK that holds each text column, as PostgreSQL 18.6 deparses the constraints of sql/01*.sql
- * (pg_get_constraintdef). Whole definitions are compared, so a loosened pattern, a LIKE '%' or an added OR branch
- * cannot pass; a PostgreSQL upgrade that words them differently makes verify fail, never pass.
+ * The exact CHECK that holds each text column, as PostgreSQL 18.6 deparses the constraints of sql/01*.sql and of the
+ * files that later replace one (pg_get_constraintdef). Whole definitions are compared, so a loosened pattern, a
+ * LIKE '%' or an added OR branch cannot pass; a PostgreSQL upgrade that words them differently makes verify fail,
+ * never pass. switch_events.command is the eight-word list of sql/070 (direct select), not the five words of sql/010,
+ * so verify fails until sql/070 is applied.
  */
 export const EXPECTED_TEXT_CHECKS: { readonly [T in TelemetryTable]: Readonly<Record<string, string>> } = {
     switch_events: {
         session_id: SESSION_SHAPE,
-        command: wordList('command', ['YES', 'NO', 'CONFIRM', 'STOP', 'HEADSET_OFF']),
+        command: wordList('command', ['YES', 'NO', 'CONFIRM', 'STOP', 'HEADSET_OFF', 'PICK_1', 'PICK_2', 'PICK_3']),
         outcome: wordList('outcome', ['accepted', 'ignored']),
         code: "CHECK ((code ~ '^[a-z][a-z0-9_]{0,39}$'::text))",
         heard_in: wordList('heard_in', ['reading', 'window'], true),
@@ -526,6 +528,31 @@ export function judgeColumns(name: TelemetryTable, rows: readonly ColumnRow[]): 
     return {
         ok: problems.length === 0,
         detail: problems.length > 0 ? problems.join('; ') : `exactly the ${mine.length} expected columns; text columns ${text.join(', ')}, each held by its expected CHECK`,
+    };
+}
+
+/** The migration that widens switch_events_command_word to the direct select words. */
+export const DIRECT_SELECT_MIGRATION = '070_direct_select_commands';
+/** The validated definition of switch_events_command_word on the live service (one row, or none). */
+export const COMMAND_CHECK_SQL = `SELECT pg_get_constraintdef(k.oid) AS def
+     FROM pg_constraint k
+     JOIN pg_class t ON t.oid = k.conrelid
+     JOIN pg_namespace n ON n.oid = t.relnamespace
+     WHERE n.nspname = 'telemetry' AND t.relname = 'switch_events' AND k.conname = 'switch_events_command_word' AND k.contype = 'c' AND k.convalidated`;
+
+/**
+ * Whether the live command CHECK admits every word the writer can store (sql/070), from COMMAND_CHECK_SQL's rows. The
+ * writer refuses to start without it: the sql/010 word list refuses a PICK row, and one refused row fails its whole
+ * batch on every retry, so a direct select session would stall the writer instead of landing.
+ */
+export function judgeCommandCheck(defs: readonly string[]): { ok: boolean; detail: string } {
+    if (defs.includes(EXPECTED_TEXT_CHECKS.switch_events.command!)) return { ok: true, detail: 'switch_events_command_word admits every command word' };
+    return {
+        ok: false,
+        detail:
+            defs.length === 0
+                ? 'switch_events_command_word is missing or not validated; run npm run migrate'
+                : `switch_events_command_word does not admit every command word (sql/${DIRECT_SELECT_MIGRATION}.sql not applied?); run npm run migrate`,
     };
 }
 

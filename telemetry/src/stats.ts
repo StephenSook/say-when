@@ -154,12 +154,16 @@ export async function fetchRawStats(pool: pg.Pool, options: StatsOptions = {}): 
     const includeTest = options.includeTest ?? false;
     const percentiles = await readPercentileMode(pool);
 
+    // The person's commands are every event but HEADSET_OFF (PERSON_COMMANDS): switch_1m's own `commands` column
+    // (sql/020) lists only the scan words YES, NO, CONFIRM and STOP, so it leaves out direct select's PICK_1 to PICK_3.
+    // The CHECK (sql/070) admits only the eight command words and HEADSET_OFF is the one system event, so
+    // `events - headset_off_count` is exact in both modes, and needs no rebuild of the aggregate.
     const counts = (
         await pool.query(
             `WITH w AS (SELECT now() AS as_of, time_bucket(INTERVAL '1 minute', now()) - make_interval(mins => $3::int - 1) AS start)
              SELECT w.as_of, w.start,
                 (SELECT coalesce(sum(false_activations), 0) FROM telemetry.switch_1m WHERE bucket >= w.start AND ${sessionFilter(4)}) AS false_activations,
-                (SELECT coalesce(sum(commands), 0) FROM telemetry.switch_1m WHERE bucket >= w.start AND ${sessionFilter(4)}) AS commands,
+                (SELECT coalesce(sum(events - headset_off_count), 0) FROM telemetry.switch_1m WHERE bucket >= w.start AND ${sessionFilter(4)}) AS commands,
                 (SELECT coalesce(sum(yes_acted_at_rest), 0) FROM telemetry.switch_1m WHERE bucket >= w.start AND ${sessionFilter(4)}) AS yes_acted,
                 (SELECT coalesce(sum(idle_ms), 0) FROM telemetry.idle_1m WHERE bucket >= w.start AND ${sessionFilter(4)}) AS idle_ms
              FROM w`,
