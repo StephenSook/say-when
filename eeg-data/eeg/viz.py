@@ -20,6 +20,8 @@ from eeg import config
 
 HOST, PORT = "127.0.0.1", 8766
 BASELINE_S = 5.0
+PINNED_ERD = 90.0      # every band at both electrodes at or past -90 % (or +900 %) ...
+PINNED_S = 3.0         # ... for this long means the baseline caught a transient: record a new one
 SLOW_CLIENT_BYTES = 32 * 1024
 C3, C4 = config.CHANNELS.index("C3"), config.CHANNELS.index("C4")
 # The decoder's bands, ids and labels as VIZ_PROTOCOL.md 3.2.1 names them (b8_12 is the one the glow reads).
@@ -63,6 +65,7 @@ class VizBridge:
         self.baseline_state, self.baseline_at = "none", None
         self._rec_start, self._rec = None, []
         self._ref = None             # baseline band power: {channel: [power per FILTER_BANK band]}
+        self._pinned_since = None    # when every ERD value went to the clip limits
         self._ready = threading.Event()
         self.error = None
 
@@ -110,18 +113,29 @@ class VizBridge:
         return out
 
     def _step_baseline(self, power, now):
-        if self.baseline_state == "none" and self._started_at and now - self._started_at >= 0.5:
+        if self.baseline_state == "none" and self._started_at is not None and now - self._started_at >= 0.5:
             self._begin_baseline(now)
         if self.baseline_state == "recording":
             self._rec.append(power)
             if now - self._rec_start >= BASELINE_S:
+                # median, not mean: a movement or filter-settling spike in the 5 s cannot inflate the baseline
                 self._ref = {ch: [None if any(p[ch][i] is None for p in self._rec) else
-                                  float(np.mean([p[ch][i] for p in self._rec])) for i in range(len(FILTER_BANK))]
+                                  float(np.median([p[ch][i] for p in self._rec])) for i in range(len(FILTER_BANK))]
                              for ch in ("c3", "c4")}
                 self.baseline_state, self.baseline_at = "set", round(now, 3)
                 self._broadcast_now(self.meta(), stream=False)
 
+    def _baseline_broken(self, fb, now) -> bool:
+        vals = [v for ch in ("c3", "c4") for v in fb[ch] if v is not None]
+        pinned = bool(vals) and (all(v <= -PINNED_ERD for v in vals) or all(v >= 10 * PINNED_ERD for v in vals))
+        if not pinned:
+            self._pinned_since = None
+            return False
+        self._pinned_since = self._pinned_since or now
+        return now - self._pinned_since >= PINNED_S
+
     def _begin_baseline(self, now):
+        self._pinned_since = None
         self.baseline_state, self.baseline_at, self._rec_start, self._rec, self._ref = "recording", None, now, [], None
         self._broadcast_now(self.meta(), stream=False)
 
@@ -138,6 +152,10 @@ class VizBridge:
             for ch in ("c3", "c4"):
                 fb[ch] = [None if (a is None or r is None or r <= 0) else _r1(max(-100.0, min(1000.0, (a - r) / r * 100)))
                           for a, r in zip(power[ch], self._ref[ch])]
+            if self._baseline_broken(fb, now):
+                self.log("viz: every band pinned at its limit for 3 s; recording a new rest baseline")
+                self._begin_baseline(now)
+                fb = {"c3": [0.0] * len(FILTER_BANK), "c4": [0.0] * len(FILTER_BANK)}
         ids = [b["id"] for b in FILTER_BANK]
 
         def summary(row):
