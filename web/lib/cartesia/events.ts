@@ -40,6 +40,12 @@ const NUMBER_WORDS = [
 // A word made only of number words, so "fourone" (two words joined once an invisible character between them is
 // dropped) is masked too. Longest first; the speed test checks long words that almost match.
 const NUMBER_WORD = new RegExp(`^(?:${[...NUMBER_WORDS].sort((a, b) => b.length - a.length).join('|')})+$`);
+// The product's own name in the call's disclosure ("through the Eleven app"). Only this exact phrase keeps the word:
+// a lone "eleven", as in a spoken phone number, is still masked. A private-use character holds its place while the
+// number words are masked, since it is neither a letter nor a number.
+const PRODUCT_PHRASE = /\bEleven(?=\s+app\b)/g;
+const PRODUCT_HOLD = '';
+const PRODUCT_HOLD_ALL = //g;
 
 /** A word's lower-case letters without accents, so "four" with an accent on the o is still "four". */
 function plainWord(word: string): string {
@@ -61,7 +67,10 @@ export function redact(text: string): string {
         .replace(TOKEN_PARAM, '$1=[token]')
         .replace(JWT_LIKE, '[token]')
         .replace(NUMBER, '#')
-        .replace(WORD, (word) => (NUMBER_WORD.test(plainWord(word)) ? '#' : word));
+        .replace(PRODUCT_HOLD_ALL, '')
+        .replace(PRODUCT_PHRASE, PRODUCT_HOLD)
+        .replace(WORD, (word) => (NUMBER_WORD.test(plainWord(word)) ? '#' : word))
+        .replace(PRODUCT_HOLD_ALL, 'Eleven');
 }
 
 const COUNT_NAME = /^[A-Za-z][A-Za-z0-9_]{0,31}$/;
