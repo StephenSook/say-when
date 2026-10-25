@@ -42,7 +42,7 @@ export interface StationSetup {
   learningSwitch: boolean;
   assistantSpeed: number | null;
   optionSpeed: number | null;
-  /** Say a new partner question in the earpiece before its options (lib/station/question.ts); on unless turned off. */
+  /** Say a new partner question in the earpiece before its options (lib/station/question.ts); off unless turned on. */
   readQuestion?: boolean;
 }
 

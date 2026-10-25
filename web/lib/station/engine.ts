@@ -471,7 +471,7 @@ export class StationEngine {
   }
 
   /**
-   * "Read the partner's question in the earpiece" (on by default): a new partner question is said before its
+   * "Read the partner's question in the earpiece" (off by default, Oct 25): a new partner question is said before its
    * options. Turning it off drops a question still being voiced; one already playing finishes.
    */
   setReadQuestion(on: boolean): void {

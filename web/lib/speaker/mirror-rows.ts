@@ -4,23 +4,19 @@
  * whose words appear only while the room's sharing toggle `config.share_text_on_board` is on, plus `scan_state`, which
  * the speaker already subscribes for its clock. No module change.
  *
- *   The partner's question   `scan_state.question_id` turns to a new id (the earpiece's QuestionReader fires on the
- *                            same change of `my_session.question_id`); its words are `public_board.text`. Said only
- *                            under direct select (`config.input_mode` Direct), for origin Partner, never for a
- *                            follow-up turn (`parent_question_id` set), as in lib/station/question.ts.
- *   Each option              a live `scan_state` step in Reading with a new `step_seq`: the option at rank `cursor` of
- *                            `public_board.options` for the same version, read as the earpiece reads it ("One: good.",
- *                            lib/station/phrases.ts optionEarText); a yes or no read is "Yes or no?".
  *   Each read-back           `board_errands` Previewed, `board_calls` Prepared or `board_searches` Prepared with its
  *                            digest and words, as lib/station/readback.ts readbackCandidate; errand and call
  *                            read-backs get "One: send it. Two: cancel." on the end, as in the earpiece.
+ *   A newer question         `scan_state.question_id` turns to a new id: the read-backs of older questions go
+ *                            (mirror rule 2), and a pause clears everything.
+ *
+ * Since Oct 25 (Stephen: "take off question repeating", "take off answer choices being repeated") the room voice
+ * says neither the partner's question nor the numbered options; the earpiece wearer still hears the options.
  *
  * The board views are a separate subscription, so if they cannot be read the room voice still says the reply. Rows
  * from a subscription snapshot (connect, reconnect) only set the starting point: nothing old is ever said.
  */
 import { renderSegments } from '../cartesia/tones';
-import { optionEarText, PHRASES } from '../station/phrases';
-import { questionEarText } from '../station/question';
 import { readbackSegments } from '../station/readback';
 import type { MirrorItem, SpeakerMirror } from './mirror';
 import { roomSafeText } from './mirror';
@@ -187,40 +183,22 @@ export function attachMirrorRows(conn: MirrorConnLike, target: MirrorRowsTarget,
   const paired = target.paired ?? (() => true);
   const mirror = target.mirror;
 
-  /** True once the board views' subscription has applied: until then a scan step cannot be read. */
+  /** True once the board views' subscription has applied: until then nothing is offered. */
   let applied = queries === undefined;
   let activeSession = 0n;
-  let direct = false;
   /** The newest question id seen in `scan_state` (ids grow across sessions). */
   let lastQuestion = 0n;
-  /** The newest `step_seq` seen per session. */
-  const steps = new Map<bigint, bigint>();
   const known = new Set<string>();
 
   const readConfig = () => {
     const config = first(db.config);
     activeSession = config?.activeSessionId ?? 0n;
-    direct = config?.inputMode?.tag === 'Direct';
     mirror.setSharing(config?.shareTextOnBoard === true);
-  };
-
-  const boardQuestion = (questionId: bigint): BoardQuestionLike | null => {
-    for (const row of db.publicBoard.iter()) if (row.questionId === questionId) return row;
-    return null;
-  };
-
-  /** A step this page has not seen yet for its session; records it. */
-  const newStep = (row: MirrorScanRow): boolean => {
-    const last = steps.get(row.sessionId) ?? 0n;
-    if (row.stepSeq <= last) return false;
-    steps.set(row.sessionId, row.stepSeq);
-    return true;
   };
 
   /** Snapshot rows, and rows from before the board applied or before pairing, only move the starting point. */
   const baseline = (row: MirrorScanRow) => {
     if (row.questionId > lastQuestion) lastQuestion = row.questionId;
-    newStep(row);
   };
 
   const scanChanged = (ctx: unknown, a?: MirrorScanRow, b?: MirrorScanRow) => {
@@ -241,33 +219,11 @@ export function attachMirrorRows(conn: MirrorConnLike, target: MirrorRowsTarget,
       baseline(row);
       return;
     }
+    // A newer question drops the read-backs of older ones. Its words and its numbered options are not said (Oct 25).
     if (row.questionId !== 0n && row.questionId > lastQuestion) {
       lastQuestion = row.questionId;
       mirror.advance(row.questionId);
-      const q = boardQuestion(row.questionId);
-      if (direct && q && q.origin.tag === 'Partner' && q.parentQuestionId === 0n && q.textShared) {
-        const text = questionEarText(q.text);
-        if (text !== '') mirror.offer({ key: `q:${q.questionId}`, kind: 'question', questionId: q.questionId, text, voice: 'assistant', tone: '', at: now() });
-      }
     }
-    if (!newStep(row)) return;
-    if (row.phase.tag === 'Idle') {
-      // As the earpiece: Idle stops the option reads, not a read-back.
-      mirror.drop((item) => item.kind === 'option');
-      return;
-    }
-    if (row.phase.tag !== 'Reading') return;
-    const key = `read:${row.sessionId}:${row.optionStartSeq}`;
-    if (row.answerMode.tag === 'YesNo') {
-      mirror.offer({ key, kind: 'option', questionId: row.questionId, text: PHRASES.yesOrNo, voice: 'assistant', tone: '', at: now() });
-      return;
-    }
-    const q = boardQuestion(row.questionId);
-    if (!q || !q.textShared || q.version !== row.version) return;
-    const option = q.options.find((o) => o.rank === row.cursor);
-    if (!option) return;
-    const text = roomSafeText(optionEarText(option.rank, option.shortLabel, option.label));
-    if (text !== '') mirror.offer({ key, kind: 'option', questionId: row.questionId, text, voice: 'reply', tone: option.tone, at: now() });
   };
 
   const workChanged = (line: WorkLine, ctx: unknown) => {

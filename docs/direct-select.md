@@ -13,7 +13,7 @@ Status: live on `main` and the `say-when-direct` database since Sat Oct 24 2026,
 | Held jaw clench (0.8 s or more) | `STOP` | cancel whatever is pending, hang up a call, pause |
 | Headset off | `HEADSET_OFF` | same as today: cancel and pause |
 
-There is no scanning cursor. The earpiece reads the (up to) three options once, numbered and short ("One: yes. Two: no. Three: search the web."), then waits. The person picks any time after the list starts. Silence picks nothing. A STOP or a new question clears the list.
+There is no scanning cursor. The earpiece reads the (up to) three options once, numbered and short ("One: yes. Two: no. Three: search the web."), then waits. The person picks any time after the list starts. Silence picks nothing. A STOP or a new question clears the list. The partner's question is not read first: the station's "Read the partner's question in the earpiece" setting is off by default since Oct 25 (docs/station.md 2.9).
 
 ## 2. When a pick needs a confirm (Shashank, 8:23 PM)
 

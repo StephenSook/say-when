@@ -1,7 +1,7 @@
 /**
- * Mirror the earpiece on the room voice (lib/speaker/mirror.ts, mirror-rows.ts, voice.ts): with the toggle on, the
- * room hears the partner's question, then the numbered options as they are read, then any read-back, one line at a
- * time; off, only the picked reply; a newer question drops stale lines; the reply always has priority. Also the audio
+ * Say read-backs on the room voice (lib/speaker/mirror.ts, mirror-rows.ts, voice.ts): with the toggle on, the room
+ * hears every read-back, one line at a time, and since Oct 25 never the partner's question or the numbered options;
+ * off, only the picked reply; a newer question drops stale lines; the reply always has priority. Also the audio
  * fixes that make the room voice play every time: a line the audio cut is said again after the tap, a failed line is
  * retried on a fresh socket, a chunk the output refused is a failure, an unused socket is replaced, the browser's own
  * suspension is undone without a tap, and a reply cut by the audio stopping waits for the tap instead of failing.
@@ -107,25 +107,16 @@ function reply(id: number, text: string): SpeakerReply {
 }
 
 describe('mirror the earpiece', () => {
-  test('on: the question, then each option, then the read-back, one at a time and in order', async () => {
+  test('on: read-backs one at a time and in order', async () => {
     const r = room();
-    r.mirror.offer(line('question', 7, 'Question: Want some tea?'));
-    r.mirror.offer(line('option', 7, 'One: yes please.'));
-    r.mirror.offer(line('option', 7, 'Two: no thanks.'));
-    assert.deepEqual(r.texts(), ['line:Question: Want some tea?'], 'never talks over itself');
-    assert.equal(r.mirror.getState().phase, 'speaking');
-    assert.equal(r.mirror.getState().queued, 2);
-    await r.finish();
-    await r.finish();
     r.mirror.offer(line('readback', 7, 'Send a request for tea. One: send it. Two: cancel.'));
+    r.mirror.offer(line('readback', 7, 'Search the web for tea? One: yes. Two: cancel.'));
+    assert.deepEqual(r.texts(), ['line:Send a request for tea. One: send it. Two: cancel.'], 'never talks over itself');
+    assert.equal(r.mirror.getState().phase, 'speaking');
+    assert.equal(r.mirror.getState().queued, 1);
     await r.finish();
     await r.finish();
-    assert.deepEqual(r.texts(), [
-      'line:Question: Want some tea?',
-      'line:One: yes please.',
-      'line:Two: no thanks.',
-      'line:Send a request for tea. One: send it. Two: cancel.',
-    ]);
+    assert.deepEqual(r.texts(), ['line:Send a request for tea. One: send it. Two: cancel.', 'line:Search the web for tea? One: yes. Two: cancel.']);
     assert.equal(r.mirror.getState().phase, 'idle');
   });
 
@@ -401,59 +392,37 @@ describe('the rows the mirror reads', () => {
     assert.equal(h.sharing(), true, 'sharing comes from config.share_text_on_board');
   });
 
-  test('a snapshot never speaks; a new scanned question is said, then each option as it is read', () => {
-    const h = rowsHarness();
-    h.t.publicBoard.rows = [QUESTION_7];
-    // The question that was current at connect is the starting point, never said.
-    h.t.scanState.rows = [scanRow({ questionId: 6n, phase: 'Window', stepSeq: 40n })];
-    fire(h.t.scanState, 'insert', SNAPSHOT, h.t.scanState.rows[0]);
-    h.applyBoard();
-    assert.equal(h.offered.length, 0);
+  test('since Oct 25 the question and the numbered options are never said in the room; a newer question still moves the mirror on', () => {
+    for (const inputMode of ['Direct', 'Scan']) {
+      const h = rowsHarness({ inputMode });
+      h.t.publicBoard.rows = [QUESTION_7];
+      // The question that was current at connect is the starting point.
+      h.t.scanState.rows = [scanRow({ questionId: 6n, phase: 'Window', stepSeq: 40n })];
+      fire(h.t.scanState, 'insert', SNAPSHOT, h.t.scanState.rows[0]);
+      h.applyBoard();
+      assert.ok(!h.calls.includes('advance:6'), 'a snapshot never moves it on');
 
-    const preparing = scanRow({ questionId: 7n, phase: 'Preparing', stepSeq: 41n });
-    fire(h.t.scanState, 'update', LIVE, h.t.scanState.rows[0], preparing);
-    assert.deepEqual(h.texts(), ['Question: Want some tea? Call a number.']);
-    assert.equal(h.offered[0]!.kind, 'question');
-    assert.equal(h.offered[0]!.voice, 'assistant');
-    assert.ok(h.calls.includes('advance:7'));
-
-    fire(h.t.scanState, 'update', LIVE, preparing, scanRow({ cursor: 1, stepSeq: 42n }));
-    fire(h.t.scanState, 'update', LIVE, preparing, scanRow({ cursor: 1, stepSeq: 42n }));
-    fire(h.t.scanState, 'update', LIVE, preparing, scanRow({ cursor: 2, stepSeq: 43n }));
-    fire(h.t.scanState, 'update', LIVE, preparing, scanRow({ cursor: 3, stepSeq: 44n }));
-    assert.deepEqual(h.texts(), ['Question: Want some tea? Call a number.', 'One: Yes please.', 'Two: No thanks.', 'Three: Search the web.']);
-    assert.equal(h.offered[1]!.voice, 'reply', 'options in the reply voice, as in the earpiece');
-    assert.equal(h.offered[1]!.tone, 'warm');
-    assert.equal(h.offered[1]!.key, 'read:3:42');
+      const preparing = scanRow({ questionId: 7n, phase: 'Preparing', stepSeq: 41n });
+      fire(h.t.scanState, 'update', LIVE, h.t.scanState.rows[0], preparing);
+      assert.ok(h.calls.includes('advance:7'), 'older read-backs still go');
+      fire(h.t.scanState, 'update', LIVE, preparing, scanRow({ cursor: 1, stepSeq: 42n }));
+      fire(h.t.scanState, 'update', LIVE, preparing, scanRow({ cursor: 2, stepSeq: 43n }));
+      fire(h.t.scanState, 'update', LIVE, preparing, scanRow({ cursor: 3, stepSeq: 44n }));
+      fire(h.t.scanState, 'update', LIVE, preparing, scanRow({ answerMode: 'YesNo', stepSeq: 45n }));
+      fire(h.t.scanState, 'update', LIVE, preparing, scanRow({ phase: 'Idle', stepSeq: 46n }));
+      assert.deepEqual(h.texts(), [], `${inputMode}: no question, no option, no "Yes or no?"`);
+    }
   });
 
-  test('a yes or no read is "Yes or no?"; a version the board does not show yet is not guessed', () => {
+  test('the mirror queues only read-backs: after a question and its option reads, only the read-back is offered', () => {
     const h = rowsHarness();
     h.applyBoard();
     h.t.publicBoard.rows = [QUESTION_7];
-    fire(h.t.scanState, 'update', LIVE, null, scanRow({ answerMode: 'YesNo', stepSeq: 5n }));
-    fire(h.t.scanState, 'update', LIVE, null, scanRow({ version: 2, cursor: 1, stepSeq: 6n }));
-    assert.deepEqual(h.texts(), ['Question: Want some tea? Call a number.', 'Yes or no?']);
-  });
-
-  test('no question under the scan fallback, for a follow-up turn, or for the person\'s own menu; options still are', () => {
-    const scan = rowsHarness({ inputMode: 'Scan' });
-    scan.applyBoard();
-    scan.t.publicBoard.rows = [QUESTION_7];
-    fire(scan.t.scanState, 'update', LIVE, null, scanRow({ stepSeq: 2n }));
-    assert.deepEqual(scan.texts(), ['One: Yes please.']);
-
-    const follow = rowsHarness();
-    follow.applyBoard();
-    follow.t.publicBoard.rows = [{ ...QUESTION_7, parentQuestionId: 6n }];
-    fire(follow.t.scanState, 'update', LIVE, null, scanRow({ stepSeq: 2n }));
-    assert.deepEqual(follow.texts(), ['One: Yes please.']);
-
-    const menu = rowsHarness();
-    menu.applyBoard();
-    menu.t.publicBoard.rows = [{ ...QUESTION_7, origin: { tag: 'Menu' } }];
-    fire(menu.t.scanState, 'update', LIVE, null, scanRow({ stepSeq: 2n }));
-    assert.deepEqual(menu.texts(), ['One: Yes please.']);
+    fire(h.t.scanState, 'update', LIVE, null, scanRow({ cursor: 1, stepSeq: 2n }));
+    fire(h.t.scanState, 'update', LIVE, null, scanRow({ cursor: 2, stepSeq: 3n }));
+    fire(h.t.boardSearches, 'insert', LIVE, { searchId: 6n, questionId: 7n, status: { tag: 'Prepared' }, readBackText: 'Search the web for tea? One: yes. Two: cancel.', digest: 'fedcba9876543210' });
+    assert.deepEqual(h.texts(), ['Search the web for tea? One: yes. Two: cancel.']);
+    assert.ok(h.offered.every((o) => o.kind === 'readback'));
   });
 
   test('with sharing off the board hides the words, so nothing is offered', () => {
@@ -461,31 +430,26 @@ describe('the rows the mirror reads', () => {
     h.applyBoard();
     h.t.publicBoard.rows = [{ ...QUESTION_7, textShared: false, text: 'Question 7' }];
     fire(h.t.scanState, 'update', LIVE, null, scanRow({ stepSeq: 2n }));
+    fire(h.t.boardErrands, 'insert', LIVE, { errandId: 2n, questionId: 7n, status: { tag: 'Previewed' }, textShared: false, readBackText: '', previewDigest: '0123456789abcdef' });
     assert.equal(h.offered.length, 0);
     assert.equal(h.sharing(), false);
   });
 
   test('nothing is offered before the board applies or before pairing', () => {
+    const errand = { errandId: 2n, questionId: 8n, status: { tag: 'Previewed' }, textShared: true, readBackText: 'Ask for a ride.', previewDigest: '0123456789abcdef' };
     const h = rowsHarness();
-    h.t.publicBoard.rows = [QUESTION_7];
-    fire(h.t.scanState, 'update', LIVE, null, scanRow({ stepSeq: 2n }));
+    fire(h.t.boardErrands, 'insert', LIVE, errand);
     assert.equal(h.offered.length, 0, 'before the board applied');
 
     const p = rowsHarness({ paired: false });
     p.applyBoard();
-    p.t.publicBoard.rows = [QUESTION_7];
-    fire(p.t.scanState, 'update', LIVE, null, scanRow({ stepSeq: 2n }));
+    fire(p.t.boardErrands, 'insert', LIVE, errand);
     assert.equal(p.offered.length, 0, 'before pairing');
   });
 
-  test('Idle drops the queued options; a pause clears everything', () => {
+  test('a pause clears everything', () => {
     const h = rowsHarness();
     h.applyBoard();
-    h.t.publicBoard.rows = [QUESTION_7];
-    fire(h.t.scanState, 'update', LIVE, null, scanRow({ cursor: 1, stepSeq: 2n }));
-    fire(h.t.scanState, 'update', LIVE, null, scanRow({ cursor: 2, stepSeq: 3n }));
-    fire(h.t.scanState, 'update', LIVE, null, scanRow({ phase: 'Idle', stepSeq: 4n }));
-    assert.deepEqual(h.texts(), ['Question: Want some tea? Call a number.']);
     fire(h.t.scanState, 'update', LIVE, null, scanRow({ phase: 'Paused', stepSeq: 5n }));
     assert.ok(h.calls.includes('clear'));
   });
