@@ -171,3 +171,28 @@ export function buildUserMessage(input: PlanInput): string {
     lines.push('', `Write at most ${input.maxOptions} options.`);
     return lines.join('\n');
 }
+
+/** What each broken rule asks for, said plainly in the one retry after an invalid reply (PLAN D27). */
+const RULE_HINTS: Record<string, (input: PlanInput) => string> = {
+    option_count: (input) => `Return at least 2 and at most ${input.maxOptions} options.`,
+    yes_no_needs_two: () => 'A yes or no answer has exactly two reply options.',
+    duplicate_tone: () => 'Give every option a different tone.',
+    duplicate_text: () => 'Make every option say something different.',
+    duplicate_label: () => 'Give every option a different label.',
+    text_too_long: () => 'Keep every text to one short sentence, under 12 words.',
+    label_too_long: () => 'Keep every label to 1 to 3 words.',
+    unknown_source: () => 'In sources, use only the ids given in the message.',
+    search_not_offered: () => 'Do not write a search option.',
+    duplicate_search: () => 'Write at most one search option.',
+    more_than_one_laugh: () => 'Set laugh true on one option at most.',
+    only_actions: () => 'Include at least one reply option.',
+    action_in_yes_no: () => 'Use answer_mode "pick" when you offer an errand, a call or a search.',
+    schema: () => 'Return JSON that matches the schema.',
+    empty_reply: () => 'Return JSON that matches the schema.',
+};
+
+/** The note added to the user message for the one retry: the broken rules by name, and what each asks for. */
+export function retryNote(problems: readonly string[], input: PlanInput): string {
+    const hints = [...new Set(problems.map((p) => RULE_HINTS[p]?.(input)).filter((h): h is string => !!h))];
+    return [`Your last reply broke these rules: ${problems.join(', ')}.`, ...hints, 'Write the whole reply again and follow every rule.'].join(' ');
+}

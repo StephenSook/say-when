@@ -383,15 +383,16 @@ describe('the direct select options job', () => {
         assert.equal(h.search.calls.length, 0);
     });
 
-    it('refuses a search option the planner wrote when none was offered', async () => {
+    it('drops a search option the planner wrote when none was offered, and keeps its replies (D27)', async () => {
         const h = start(harness({ direct: true }));
         h.db.consent.webSearch = false;
         h.api.reply(withSearchReply());
         const jobId = h.db.addOptionsJob({ questionText: FUN_QUESTION });
-        await waitFor(() => h.db.job(jobId)?.status === 'failed');
-        assert.equal(h.db.publishes.length, 0);
-        const fail = h.db.applied.find((a) => a.name === 'agentFail')?.args as { reasonCode: string } | undefined;
-        assert.equal(fail?.reasonCode, 'planner_invalid_reply');
+        await waitFor(() => h.db.job(jobId)?.status === 'done');
+        assert.equal(h.api.calls.length, 1, 'mended without a second call');
+        const kinds = finalPublish(h)?.options.map((o) => o.kind);
+        assert.deepEqual(kinds, ['reply', 'reply', 'reply']);
+        assert.ok(h.log.entries.some((e) => e.message === 'planner reply repaired' && String(e.fields.fixes).split(',').includes('drop_search')));
     });
 
     it('answers a plain yes or no question at once, "Yes" and "No", but sends one that could use outside facts to the planner', async () => {
