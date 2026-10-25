@@ -16,7 +16,8 @@ from eeg import config
 from eeg.brainmap import POS, BrainState
 
 HOST, PORT = "127.0.0.1", 8765
-ALLOWED_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000", "https://neurolingo-web.vercel.app"]
+ALLOWED_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000", "https://neurolingo-web.vercel.app",
+                   "https://eleven-calhacks.vercel.app"]
 
 
 class DecoderServer:

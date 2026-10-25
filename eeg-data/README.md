@@ -7,10 +7,10 @@ Turns the 8-channel headset into Eleven's four commands. It is not connected to 
 | Imagine squeezing your right fist | YES | Imagery classifier over C3/C4 and neighbours (brain signal) |
 | Imagine squeezing your left fist | NO | same |
 | Double jaw clench | CONFIRM | Jaw-muscle (EMG) bursts, 30-55 Hz |
-| Long jaw clench, about 1 s | STOP | same |
+| Single jaw clench | STOP | same (PLAN D16; a held clench also counts) |
 | No packets for 0.5 s | HEADSET_OFF | watchdog |
 
-Imagery is ignored during a jaw clench and for 1 s after it, so a clench is never read as a fist. With `--jaw-only` (the fallback in [docs/brain-mode-test.md](../docs/brain-mode-test.md)), a single short clench is YES and silence is NO.
+Imagery is ignored during a jaw clench and for 1 s after it, so a clench is never read as a fist. With `--jaw-only` (the fallback in [docs/brain-mode-test.md](../docs/brain-mode-test.md)), a single clench is YES, a double is CONFIRM, silence is NO and there is no STOP gesture.
 
 ## Setup (Windows, Python 3.11 or 3.12)
 

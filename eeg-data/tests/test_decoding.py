@@ -79,7 +79,8 @@ def test_jaw_messages_follow_the_command_map():
     m = messages.from_jaw(ev, now=10.7)
     assert m["type"] == "gesture" and m["command"] == "CONFIRM" and m["source"] == "jaw" and m["onsetAgeMs"] == 700
     assert messages.from_jaw(dict(ev, kind="long"))["command"] == "STOP"
-    assert messages.from_jaw(dict(ev, kind="single")) is None
+    assert messages.from_jaw(dict(ev, kind="single"))["command"] == "STOP"
+    assert messages.from_jaw(dict(ev, kind="long"), jaw_only=True) is None
     assert messages.from_jaw(dict(ev, kind="single"), jaw_only=True)["command"] == "YES"
     assert messages.from_hand({"hand": "right", "onset": 1.0, "confidence": .8}, now=2.0)["command"] == "YES"
     assert messages.from_hand({"hand": "left", "onset": 1.0, "confidence": .8}, now=2.0)["command"] == "NO"

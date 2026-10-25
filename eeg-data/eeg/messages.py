@@ -13,7 +13,10 @@ import uuid
 
 from eeg import config
 
-JAW_COMMAND = {"double": "CONFIRM", "long": "STOP"}
+# PLAN D16: a single clench is STOP (a held one counts as a single), a double is CONFIRM.
+JAW_COMMAND = {"double": "CONFIRM", "single": "STOP", "long": "STOP"}
+# Jaw-only fallback (docs/brain-mode-test.md): a single clench is YES and there is no STOP gesture.
+JAW_ONLY_COMMAND = {"double": "CONFIRM", "single": "YES"}
 
 
 def gesture(command: str, onset: float, confidence: float, source: str, now: float = None) -> dict:
@@ -34,8 +37,8 @@ def from_hand(ev: dict, now: float = None) -> dict:
 
 
 def from_jaw(ev: dict, jaw_only: bool = False, now: float = None):
-    """double -> CONFIRM, long -> STOP; single -> YES only in the jaw-only fallback, else nothing."""
-    cmd = JAW_COMMAND.get(ev["kind"]) or ("YES" if jaw_only and ev["kind"] == "single" else None)
+    """double -> CONFIRM, single or long -> STOP; in the jaw-only fallback single -> YES and no STOP."""
+    cmd = (JAW_ONLY_COMMAND if jaw_only else JAW_COMMAND).get(ev["kind"])
     conf = min(1.0, ev["strength"] / (2 * config.JAW_RATIO))
     return gesture(cmd, ev["onset"], conf, "jaw", now) if cmd else None
 
