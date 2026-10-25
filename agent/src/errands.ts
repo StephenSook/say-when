@@ -23,7 +23,7 @@ import { LIMITS } from './contract.js';
 import type { AgentDb } from './db/db.js';
 import { callReducer, MAX_CLAIM_TRIES, neverSent, type Verified } from './db/retry.js';
 import { withDeadline } from './deadline.js';
-import { parseFields, type PreviewBook } from './jobs.js';
+import { parseFields, type PreviewBook, type SentBook } from './jobs.js';
 import type { Logger } from './log.js';
 import type { ErrandPort, MemoryPort } from './ports.js';
 import { pastRequestNote, type MemoryWatch } from './requests.js';
@@ -92,6 +92,13 @@ export interface ErrandRunnerDeps {
     retryMs?: number;
     /** Past requests (step 5, src/requests.ts). Unset: no note is ever written. */
     pastRequests?: PastRequestDeps;
+    /**
+     * Errands sent here, for a call about the recent errand (src/jobs.ts SentBook). Written only after the module took
+     * a submitted or duplicate result. Unset: a call says only that the request was sent.
+     */
+    sent?: SentBook;
+    /** Wall clock, epoch ms, for the SentBook window. Default Date.now. */
+    now?: () => number;
 }
 
 export interface PastRequestDeps {
@@ -234,7 +241,8 @@ export class ErrandRunner {
         return { ok: false, final: !again };
     }
 
-    private async complete(row: ErrandQueueRow, attempt: number, completion: Completion, submitMs: number): Promise<void> {
+    /** True only when the module took this result (a reply said so); a stale reply after a lost one is not counted. */
+    private async complete(row: ErrandQueueRow, attempt: number, completion: Completion, submitMs: number): Promise<boolean> {
         const outcome = await callReducer(
             this.deps.db,
             'completeErrand',
@@ -242,8 +250,10 @@ export class ErrandRunner {
             // Idempotent: a retry of a committed result is a no-op in the module.
             { onUnknown: 'repeat', attempts: 5, readyTimeoutMs: 30_000 },
         );
-        if (outcome.ok || (outcome.kind === 'stale' && outcome.uncertain)) return;
+        if (outcome.ok) return true;
+        if (outcome.kind === 'stale' && outcome.uncertain) return false;
         this.deps.log.error('the errand result was not recorded; the module lease will mark it unknown', { errand: row.errandId, status: completion.status, why: outcome.kind });
+        return false;
     }
 
     /** Resolves true when the errand is handled for good. */
@@ -273,7 +283,14 @@ export class ErrandRunner {
         }
         const submitMs = this.deps.clock() - started;
         this.deps.log.info('errand submit finished', { errand: row.errandId, status: completion.status, code: completion.reasonCode || undefined, ms: Math.round(submitMs) });
-        await this.complete(row, claimed.attempt, completion, submitMs);
+        const now = this.deps.now ?? Date.now;
+        const fromMs = now();
+        const recorded = await this.complete(row, claimed.attempt, completion, submitMs);
+        // The module stamps submitted_at inside complete_errand, so it falls between fromMs and toMs (src/jobs.ts).
+        if (recorded && (completion.status === 'submitted' || completion.status === 'duplicate')) {
+            const toMs = now();
+            this.deps.sent?.record({ errandId: row.errandId, formKey: row.formKey, fields, fromMs, toMs }, toMs);
+        }
         if (completion.status === 'submitted') await this.keepPastRequest(row, fields);
         return true;
     }

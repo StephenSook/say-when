@@ -22,7 +22,7 @@ import { BINDINGS_DIR, BINDINGS_SDK, loadBuilder } from './db/bindings.js';
 import { SpacetimeAgentDb, TokenSaveError } from './db/spacetime-db.js';
 import { ErrandRunner } from './errands.js';
 import { MemoryWatch } from './requests.js';
-import { ConversationLog, PreviewBook, type JobDeps } from './jobs.js';
+import { ConversationLog, PreviewBook, SentBook, type JobDeps } from './jobs.js';
 import { consoleLogger, type Logger } from './log.js';
 import { Orchestrator } from './orchestrator.js';
 import { SandboxMeter, startHealthServer } from './sandbox.js';
@@ -129,6 +129,8 @@ async function run(result: ConfigResult, log: Logger): Promise<number> {
     const { config } = result;
     const conversation = new ConversationLog();
     const previews = new PreviewBook();
+    // Errands sent here: the errand runner writes, a call option reads, so a call can say what was filled out.
+    const sent = new SentBook();
     let calls: CallRunner | null = null;
     const wired = await wire(config, process.env, log, (snapshot) => calls?.onSnapshot(snapshot));
     log.info('features', {
@@ -171,6 +173,7 @@ async function run(result: ConfigResult, log: Logger): Promise<number> {
         forms: wired.forms,
         contacts: wired.contacts,
         previews,
+        sent,
         conversation,
         log,
         timeZone: config.timeZone,
@@ -188,6 +191,8 @@ async function run(result: ConfigResult, log: Logger): Promise<number> {
         db,
         errands: wired.errands,
         previews,
+        sent,
+        now: Date.now,
         log,
         clock: () => performance.now(),
         // Past requests (src/requests.ts): never in the judge try sandbox.

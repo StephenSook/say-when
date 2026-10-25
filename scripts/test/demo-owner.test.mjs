@@ -218,21 +218,23 @@ describe('devices', () => {
 });
 
 describe('auto-approve', () => {
-    const PAIRING = (rows) => ` code | role | label | expires_at\n------+------+-------+------------\n${rows.map((r) => ` ${r.code} | (${r.role} = ()) | "${r.label}" | ${r.expires}`).join('\n')}\n`;
+    // `expires` is the request time in seconds after the run starts (the fake clock starts at 0, 1970).
+    const PAIRING = (rows) => ` code | role | label | requested_at\n------+------+-------+------------\n${rows.map((r) => ` ${r.code} | (${r.role} = ()) | "${r.label}" | 1970-01-01T00:00:0${r.expires}.000000+00:00`).join('\n')}\n`;
 
-    it('picks at most one request per wanted role, oldest first, and never the agent or a malformed code', () => {
+    it('picks one request per wanted role made after the run started, and refuses a role with two requests', () => {
+        const since = Date.parse('2026-10-24T18:00:00Z');
         const rows = [
-            { code: '222222', role: 'station', label: 'b', expires_at: '2' },
-            { code: '111111', role: 'station', label: 'a', expires_at: '1' },
-            { code: '333333', role: 'agent', label: 'x', expires_at: '1' },
-            { code: '12345', role: 'speaker', label: 'short', expires_at: '1' },
-            { code: '444444', role: 'partner', label: 'p', expires_at: '3' },
+            { code: '111111', role: 'station', label: 'a', requested_at: '2026-10-24T18:00:10Z' },
+            { code: '222222', role: 'speaker', label: 'old', requested_at: '2026-10-24T17:50:00Z' },
+            { code: '333333', role: 'agent', label: 'x', requested_at: '2026-10-24T18:00:10Z' },
+            { code: '12345', role: 'partner', label: 'short', requested_at: '2026-10-24T18:00:10Z' },
+            { code: '444444', role: 'partner', label: 'p1', requested_at: '2026-10-24T18:00:11Z' },
+            { code: '555555', role: 'partner', label: 'p2', requested_at: '2026-10-24T18:00:12Z' },
         ];
-        assert.deepEqual(
-            pickApprovals(rows, ['station', 'speaker', 'partner'], []).map((p) => [p.code, p.role]),
-            [['111111', 'station'], ['444444', 'partner']],
-        );
-        assert.deepEqual(pickApprovals(rows, ['station', 'partner'], ['station']).map((p) => p.role), ['partner']);
+        const { picks, conflicts } = pickApprovals(rows, ['station', 'speaker', 'partner'], [], since);
+        assert.deepEqual(picks.map((p) => [p.code, p.role]), [['111111', 'station']]);
+        assert.deepEqual(conflicts, [{ role: 'partner', count: 2 }]);
+        assert.deepEqual(pickApprovals(rows, ['station'], ['station'], since).picks, []);
     });
 
     it('pairs each page as it asks, never as a caregiver, then stops', () => {
@@ -240,7 +242,6 @@ describe('auto-approve', () => {
             PAIRING([]),
             PAIRING([{ code: '482913', role: 'station', label: 'station', expires: '1' }]),
             PAIRING([
-                { code: '555555', role: 'station', label: 'second station', expires: '2' },
                 { code: '612345', role: 'speaker', label: 'room voice', expires: '2' },
                 { code: '712345', role: 'partner', label: 'phone', expires: '2' },
             ]),
@@ -262,12 +263,11 @@ describe('auto-approve', () => {
             ['approve_pairing', '612345', 'false'],
             ['approve_pairing', '712345', 'false'],
         ]);
-        assert.ok(!approvals.some((a) => a[1] === '555555'), 'a second station is never paired');
         assert.match(lines.join('\n'), /auto-approve is off/);
     });
 
     it('gives up at the deadline and says which pages never asked', () => {
-        const { spacetime } = fakeCli({ 'SELECT code, role': ' code | role | label | expires_at\n---+---+---+---\n' });
+        const { spacetime } = fakeCli({ 'SELECT code, role': ' code | role | label | requested_at\n---+---+---+---\n' });
         const { lines, out } = capture();
         let t = 0;
         const code = run(['--db', 'say-when-demo', 'auto-approve', '--minutes', '1', '--roles', 'station'], { spacetime, out, sleep: () => (t += 2_000), now: () => t });

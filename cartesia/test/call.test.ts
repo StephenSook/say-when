@@ -3,6 +3,7 @@ import './no-network.js';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
+import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,6 +12,7 @@ import {
     appendHoldRecord,
     CallConfigError,
     clearHoldInFile,
+    DEFAULT_ERRAND_TITLES,
     deleteCallData,
     Dialer,
     insideCallingHours,
@@ -19,8 +21,11 @@ import {
     parseConsentList,
     parseDoNotCall,
     parseHolds,
+    PLAN_TITLE,
     readHoldFile,
     REFUSALS,
+    spokenValue,
+    SUMMARY_LIMITS,
     type CallLists,
     type CallSnapshot,
     type DialerConfig,
@@ -29,6 +34,8 @@ import {
 } from '../src/call.js';
 import {
     checkAgentScript,
+    END_CALL_TOOL,
+    ENDING_HEADING,
     heardOptOut,
     HOLD_TRIGGERS,
     loadAgentScript,
@@ -52,6 +59,10 @@ const script = loadAgentScript();
 // 11:00 AM Pacific Daylight Time on Saturday, October 24, 2026.
 const MORNING = Date.parse('2026-10-24T18:00:00Z');
 
+/** Voicemail detection with no message, and the end_call tool the agent hangs up with: what the published agent has. */
+const VOICEMAIL_OFF = { description: null, pre_tool_speech: 'off', message: null };
+const END_CALL = { description: null, pre_tool_speech: 'force' };
+
 const consentFor = (extra: Record<string, unknown> = {}) =>
     JSON.stringify([
         {
@@ -72,7 +83,7 @@ function publishedAgent(overrides: Record<string, unknown> = {}) {
         config: {
             initial_message: script.welcome,
             instructions: script.instructions,
-            system_tools: { voicemail_detection: { description: null, pre_tool_speech: 'off', message: null } },
+            system_tools: { voicemail_detection: VOICEMAIL_OFF, end_call: END_CALL },
             audio: { output: { voice_id: VOICE } },
             ...overrides,
         },
@@ -187,7 +198,7 @@ function harness(options: HarnessOptions = {}) {
             fromNumberId: 'ap_test',
             callbackNumber: CALLBACK,
             personName: 'Shashank',
-            errandTitles: ['Care team request', 'Lunch order'],
+            errandTitles: ['Care team request', 'Lunch order', "Today's plan"],
             ...options.config,
         },
         lists,
@@ -395,6 +406,255 @@ describe('Dialer guards', () => {
     });
 });
 
+/** The values of the demo form's speakable fields, as the person confirmed them: need, details, when, urgency. */
+const SENT_VALUES = ['Meal or drink', 'warm tea, no sugar', '5 PM', 'Today'];
+const SENT_MESSAGE = 'Shashank sent a Care team request: Meal or drink, warm tea, no sugar, 5 PM, Today. It was sent at 10:59 AM';
+const PLAIN_MESSAGE = "Shashank's Care team request was sent at 10:59 AM";
+const PLAIN_READ_BACK = 'Call Leon to say your Care team request was sent.';
+
+const withValues = (clock: { t: number }, values: unknown, requestId = 'call_1') =>
+    request(clock, { requestId, errand: { title: 'Care team request', sentAt: clock.t - 60_000, values } });
+
+/** The dynamic variables the dial request carried. */
+function dialVariables(calls: FetchCall[]): Record<string, string> {
+    const dial = calls.find((c) => c.method === 'POST' && new URL(c.url).pathname === '/agents/calls');
+    return JSON.parse(dial?.body ?? '{}').outbound_calls?.[0]?.dynamic_variables ?? {};
+}
+
+describe('what the call says about the sent request', () => {
+    it('says what was filled out, and the read-back says exactly what the caregiver will hear', async () => {
+        const h = harness();
+        const prepared = h.dialer.prepare(withValues(h.clock, SENT_VALUES));
+        assert.ok(prepared.ok);
+        assert.equal(prepared.call.readBack, `Call Leon to say: ${SENT_MESSAGE}.`);
+        const placed = h.dialer.place(prepared.call.requestId, prepared.call.digest, h.clock.t);
+        assert.ok(placed.ok);
+        await placed.handle.done;
+        const variables = dialVariables(h.fetch.calls);
+        assert.equal(variables.message, SENT_MESSAGE);
+        assert.ok(renderTemplate(script.welcome, variables).includes(`I'm calling to let you know that ${SENT_MESSAGE}. Did you get it?`));
+        assert.ok(renderTemplate(script.instructions, variables).includes(`Message: "${SENT_MESSAGE}"`));
+        assert.ok(SENT_MESSAGE.length <= SUMMARY_LIMITS.messageChars);
+    });
+
+    it('covers the summary in the digest: the digest is over the rendered script, and a different summary changes it', () => {
+        const h = harness();
+        const sent = h.dialer.prepare(withValues(h.clock, SENT_VALUES, 'call_a'));
+        const other = h.dialer.prepare(withValues(h.clock, ['Ride', '5 PM', 'Now'], 'call_b'));
+        const plain = h.dialer.prepare(request(h.clock, { requestId: 'call_c' }));
+        assert.ok(sent.ok && other.ok && plain.ok);
+        const variables = {
+            recipient_name: 'Leon',
+            person_name: 'Shashank',
+            callback_number: spokenNumber(CALLBACK),
+            message: SENT_MESSAGE,
+        };
+        const welcome = renderTemplate(script.welcome, variables);
+        const instructions = renderTemplate(script.instructions, variables);
+        assert.ok(welcome.includes(SENT_MESSAGE) && instructions.includes(SENT_MESSAGE));
+        const digest = createHash('sha256').update(JSON.stringify(['leon', LEON, 'America/Los_Angeles', welcome, instructions])).digest('hex').slice(0, 16);
+        assert.equal(sent.call.digest, digest);
+        assert.equal(new Set([sent.call.digest, other.call.digest, plain.call.digest]).size, 3);
+        // A CONFIRM of one read-back cannot place a call that would say another summary.
+        const swapped = h.dialer.place('call_b', sent.call.digest, h.clock.t);
+        assert.ok(!swapped.ok && swapped.refusal.code === 'digest_mismatch');
+    });
+
+    it('falls back to the plain message when nothing speakable is left, so the call never breaks', async () => {
+        const nothing: unknown[] = [undefined, null, 'Meal or drink', 42, [], [' ', ''], [7, true, null, { text: 'tea' }], ['call 415 555 0123', 'me@example.com', '{{callback_number}}']];
+        for (const values of nothing) {
+            const h = harness();
+            const prepared = h.dialer.prepare(withValues(h.clock, values));
+            assert.ok(prepared.ok, JSON.stringify(values));
+            assert.equal(prepared.call.readBack, PLAIN_READ_BACK, JSON.stringify(values));
+            const placed = h.dialer.place(prepared.call.requestId, prepared.call.digest, h.clock.t);
+            assert.ok(placed.ok);
+            await placed.handle.done;
+            assert.equal(dialVariables(h.fetch.calls).message, PLAIN_MESSAGE, JSON.stringify(values));
+        }
+        // No values at all is the request the old agent sends: the same message and read-back as before.
+        const h = harness();
+        const prepared = h.dialer.prepare(request(h.clock));
+        assert.ok(prepared.ok && prepared.call.readBack === PLAIN_READ_BACK);
+    });
+
+    it('says only the values that pass the check, in order, and leaves out the rest', () => {
+        const h = harness();
+        const prepared = h.dialer.prepare(withValues(h.clock, ['Meal or drink', 'call 415-555-0123', 'warm tea, no sugar', 'https://evil.example', '5 PM', '{{message}}', 'Today']));
+        assert.ok(prepared.ok);
+        assert.equal(prepared.call.readBack, `Call Leon to say: ${SENT_MESSAGE}.`);
+    });
+
+    // Security review, round 1: each value passed alone, but the joined text carried a phone number or a link.
+    it('checks the values again as one joined text, and leaves out a value that would make it unsafe', () => {
+        const said = (values: unknown[], title = 'Care team request', requestId = 'call_1') => {
+            const h = harness();
+            const prepared = h.dialer.prepare(request(h.clock, { requestId, errand: { title, sentAt: h.clock.t - 60_000, values } }));
+            assert.ok(prepared.ok);
+            return prepared.call.readBack;
+        };
+        // Six digits in all is the most the values may carry together: a seventh would start a phone number.
+        for (const piece of ['gate 415 555', 'door 0123']) assert.notEqual(spokenValue(piece), null, piece);
+        assert.equal(said(['Ride', 'gate 415 555', 'door 0123', 'Today']), 'Call Leon to say: Shashank sent a Care team request: Ride, gate 415 555, Today. It was sent at 10:59 AM.');
+        // Number tokens that run on across the join.
+        assert.equal(said(['meet at five', 'one six', 'Today']), 'Call Leon to say: Shashank sent a Care team request: meet at five, Today. It was sent at 10:59 AM.');
+        // A link split across two values, with either join.
+        assert.equal(said(['go to evil', 'com now'], PLAN_TITLE), "Call Leon to pass on today's plan: go to evil.");
+        assert.equal(said(['evil dot', 'com', 'Today']), 'Call Leon to say: Shashank sent a Care team request: evil dot, Today. It was sent at 10:59 AM.');
+    });
+
+    it('leaves out only values with a digit as already said, so a word is never dropped for appearing earlier', () => {
+        const h = harness();
+        const prepared = h.dialer.prepare(withValues(h.clock, ['Company', 'not today, maybe tomorrow', 'Today']));
+        assert.ok(prepared.ok);
+        assert.equal(prepared.call.readBack, 'Call Leon to say: Shashank sent a Care team request: Company, not today, maybe tomorrow, Today. It was sent at 10:59 AM.');
+    });
+
+    it('keeps the whole message within the cap by leaving out a value that does not fit, never cutting one', () => {
+        const h = harness();
+        // 99 and 101 characters: each fits on its own, both together do not.
+        const soup = 'soup '.repeat(20).trim();
+        const bread = 'bread '.repeat(17).trim();
+        const values = [soup, bread, 'warm tea, no sugar', 'Today'];
+        assert.ok(values.every((value) => value.length <= SUMMARY_LIMITS.valueChars));
+        const prepared = h.dialer.prepare(withValues(h.clock, values));
+        assert.ok(prepared.ok);
+        const message = prepared.call.readBack.replace(/^Call Leon to say: /, '').replace(/\.$/, '');
+        assert.ok(message.length <= SUMMARY_LIMITS.messageChars, `${message.length}`);
+        assert.equal(message, `Shashank sent a Care team request: ${soup}, warm tea, no sugar, Today. It was sent at 10:59 AM`);
+    });
+
+    it('leaves out a value already said inside an earlier one, so the plan on the care team form reads once', () => {
+        const h = harness();
+        const prepared = h.dialer.prepare(withValues(h.clock, ['Ride', PLAN, '11:30', 'Today']));
+        assert.ok(prepared.ok);
+        assert.equal(prepared.call.readBack, `Call Leon to say: Shashank sent a Care team request: Ride, ${PLAN_SPOKEN}, Today. It was sent at 10:59 AM.`);
+    });
+
+    it('reads only the first values of a very long list', () => {
+        const h = harness();
+        const values = [...Array.from({ length: SUMMARY_LIMITS.values }, () => ''), 'Today'];
+        const prepared = h.dialer.prepare(withValues(h.clock, values));
+        assert.ok(prepared.ok && prepared.call.readBack === PLAIN_READ_BACK);
+    });
+});
+
+/** The demo script's plan (beat 6), as the person confirmed it, and as the call says it (its last period trimmed). */
+const PLAN = 'Aquarium at 1. Lunch at the Plant Cafe at noon, step-free entrance. Please book a wheelchair-accessible ride for 11:30.';
+const PLAN_SPOKEN = PLAN.replace(/\.$/, '');
+const RIDE = 'Wheelchair-accessible van, pickup at the front entrance';
+
+describe("what the call says about today's plan", () => {
+    const plan = (clock: { t: number }, values: unknown, requestId = 'call_1') =>
+        request(clock, { requestId, errand: { title: PLAN_TITLE, sentAt: clock.t - 60_000, values } });
+
+    it('passes on the plan in its own sentences, ending with its request, and reads it back the same way', async () => {
+        const h = harness();
+        assert.ok(PLAN.length > 60 && PLAN.length <= SUMMARY_LIMITS.valueChars);
+        assert.equal(spokenValue(PLAN), PLAN_SPOKEN);
+        const prepared = h.dialer.prepare(plan(h.clock, [PLAN, RIDE]));
+        assert.ok(prepared.ok);
+        assert.equal(prepared.call.readBack, `Call Leon to pass on today's plan: ${PLAN_SPOKEN}. ${RIDE}.`);
+        const placed = h.dialer.place(prepared.call.requestId, prepared.call.digest, h.clock.t);
+        assert.ok(placed.ok);
+        await placed.handle.done;
+        const variables = dialVariables(h.fetch.calls);
+        assert.equal(variables.message, `Shashank sent you today's plan: ${PLAN_SPOKEN}. ${RIDE}`);
+        assert.ok(variables.message!.length <= SUMMARY_LIMITS.messageChars);
+        const welcome = renderTemplate(script.welcome, variables);
+        assert.ok(welcome.includes(`that Shashank sent you today's plan: ${PLAN_SPOKEN}. ${RIDE}. Did you get it?`));
+        const digest = createHash('sha256')
+            .update(JSON.stringify(['leon', LEON, 'America/Los_Angeles', welcome, renderTemplate(script.instructions, variables)]))
+            .digest('hex')
+            .slice(0, 16);
+        assert.equal(prepared.call.digest, digest);
+    });
+
+    it('says the plan alone when the ride is already in it or missing, and the plain message with no plan', () => {
+        const h = harness();
+        const alone = h.dialer.prepare(plan(h.clock, [PLAN, 'ride for 11:30'], 'call_a'));
+        assert.ok(alone.ok && alone.call.readBack === `Call Leon to pass on today's plan: ${PLAN_SPOKEN}.`);
+        const missing = h.dialer.prepare(plan(h.clock, [PLAN], 'call_b'));
+        assert.ok(missing.ok && missing.call.readBack === alone.call.readBack);
+        const none = h.dialer.prepare(plan(h.clock, ['call 415 555 0123'], 'call_c'));
+        assert.ok(none.ok && none.call.readBack === "Call Leon to say your Today's plan was sent.");
+        // The plan's "1" and "11:30" are 5 digits; another time would take all the values past 6, so it is left out.
+        const moreDigits = h.dialer.prepare(plan(h.clock, [PLAN, 'pickup at 12:45'], 'call_d'));
+        assert.ok(moreDigits.ok && moreDigits.call.readBack === alone.call.readBack);
+    });
+
+    it("is on the default list of titles a call may report, with the care team request", () => {
+        assert.deepEqual([...DEFAULT_ERRAND_TITLES], ['Care team request', PLAN_TITLE]);
+        const h = harness({ config: { errandTitles: undefined } });
+        assert.ok(h.dialer.prepare(plan(h.clock, [PLAN])).ok);
+        assert.ok(h.dialer.prepare(request(h.clock, { requestId: 'call_2' })).ok);
+        assert.ok(!h.dialer.prepare(request(h.clock, { requestId: 'call_3', errand: { title: 'Lunch order', sentAt: h.clock.t } })).ok);
+    });
+});
+
+describe('spokenValue: a field value as a call may say it', () => {
+    it('normalizes spacing and typographic marks, and trims edge punctuation', () => {
+        assert.equal(spokenValue('  warm tea,\n  no   sugar. '), 'warm tea, no sugar');
+        assert.equal(spokenValue('don\u2019t add sugar'), "don't add sugar");
+        assert.equal(spokenValue('tea \u2013 no sugar!'), 'tea - no sugar');
+        assert.equal(spokenValue('cafe\u0301 au lait'), 'caf\u00e9 au lait');
+        assert.equal(spokenValue('5:30 PM, room B (east) / Fri & Sat'), '5:30 PM, room B (east) / Fri & Sat');
+        assert.equal(spokenValue('x'.repeat(SUMMARY_LIMITS.valueChars)), 'x'.repeat(SUMMARY_LIMITS.valueChars));
+        assert.equal(spokenValue('one or two cups of tea at 5:30'), 'one or two cups of tea at 5:30');
+        assert.equal(spokenValue('Please book a wheelchair-accessible ride for 11:30.'), 'Please book a wheelchair-accessible ride for 11:30');
+        assert.equal(spokenValue('room 12'), 'room 12');
+    });
+
+    // Security review, round 1: a phone number said in words, around filler words, in a mix of words and digits, or
+    // with words that sound like digits.
+    it('drops a phone number said in number words, homophones, or a mix of words and digits, filler or not', () => {
+        for (const value of [
+            'five one six four six nine',
+            '5 one 6 four 6 9 1',
+            'five one, uh, six four, uh, six nine, uh, one',
+            'ring for two to four',
+            'ate ate ate',
+            'double five one',
+            'call oh oh seven',
+            'room 12, 10/24',
+        ]) {
+            assert.equal(spokenValue(value), null, value);
+        }
+    });
+
+    it('drops anything that looks like a phone number, an email, a link or a template', () => {
+        for (const value of [
+            'call 415 555 0123',
+            'call four one five five five five oh one two three',
+            'call 415 five five five 0123',
+            '4155550123',
+            '555-0123 x4',
+            'room 12, 10/24/2026',
+            'me@example.com',
+            'me at example dot com',
+            'https://evil.example',
+            'see www example',
+            'evil.example.org',
+            'visit tinyurl.com now',
+            'visit tinyurl . com now',
+            'evil dot  com',
+            'ftp://files',
+            '{{callback_number}}',
+            '{ x }',
+            'a }} b',
+        ]) {
+            assert.equal(spokenValue(value), null, value);
+        }
+    });
+
+    it('drops characters outside letters, digits, spaces and basic punctuation, and anything too long or empty', () => {
+        for (const value of ['tea; then coffee', 'tea + honey', '"quoted"', 'say \u201chi\u201d', '<b>tea</b>', 'tea\u200bpot', 'line\u0000end', 'tea #2', 'is it ready? yes', '100%', '$5', 'emoji \u{1F375}', 'x'.repeat(SUMMARY_LIMITS.valueChars + 1), '', '   ', ' . ', '()', '( & )']) {
+            assert.equal(spokenValue(value), null, JSON.stringify(value));
+        }
+        for (const value of [5, true, null, undefined, ['tea'], { text: 'tea' }]) assert.equal(spokenValue(value), null, String(value));
+    });
+});
+
 describe('Dialer calls', () => {
     it('places one call after a matching confirm, polls every 1.5 s and reports how it ended', async () => {
         const h = harness();
@@ -457,10 +717,39 @@ describe('Dialer calls', () => {
     });
 
     it('refuses an agent that would leave an unreviewed voicemail message', async () => {
-        const voicemail = { voicemail_detection: { description: null, pre_tool_speech: 'off', message: 'Call me back.' } };
+        const voicemail = { voicemail_detection: { ...VOICEMAIL_OFF, message: 'Call me back.' }, end_call: END_CALL };
         const h = harness({ scenario: { agent: publishedAgent({ system_tools: voicemail }) } });
         const outcome = await prepareAndPlace(h).handle.done;
         assert.equal(outcome.refusal?.code, 'agent_mismatch');
+        assert.deepEqual((await h.dialer.preflight()).agent, { ok: false, code: 'agent_mismatch', what: 'voicemail message' });
+    });
+
+    // Oct 24, 4:31 PM live test: the agent said goodbye and stayed on the line, because the published agent's end_call
+    // tool was off (system_tools.end_call null). The script tells it to hang up with that tool, so without the tool the
+    // agent cannot do what the script says, and the check refuses it.
+    it('refuses an agent whose end_call tool is off or missing, so it can hang up after the goodbye', async () => {
+        for (const systemTools of [
+            { voicemail_detection: VOICEMAIL_OFF, end_call: null },
+            { voicemail_detection: VOICEMAIL_OFF },
+            { voicemail_detection: VOICEMAIL_OFF, end_call: 'on' },
+        ]) {
+            const h = harness({ scenario: { agent: publishedAgent({ system_tools: systemTools }) } });
+            const outcome = await prepareAndPlace(h).handle.done;
+            assert.equal(outcome.refusal?.code, 'agent_mismatch', JSON.stringify(systemTools));
+            assert.equal(dials(h.fetch.calls), 0);
+            const report = await h.dialer.preflight();
+            assert.equal(report.ok, false);
+            assert.deepEqual(report.agent, { ok: false, code: 'agent_mismatch', what: 'end_call tool off' });
+        }
+        const noTools = harness({ scenario: { agent: publishedAgent({ system_tools: undefined }) } });
+        assert.deepEqual((await noTools.dialer.preflight()).agent, { ok: false, code: 'agent_mismatch', what: 'end_call tool off' });
+        const disabled = harness({ scenario: { agent: publishedAgent({ system_tools: { voicemail_detection: VOICEMAIL_OFF, end_call: { ...END_CALL, enabled: false } } }) } });
+        assert.deepEqual((await disabled.dialer.preflight()).agent, { ok: false, code: 'agent_mismatch', what: 'end_call tool off' });
+        // A tool object, as the agent PATCH sets it, or true: on.
+        for (const endCall of [END_CALL, {}, true]) {
+            const on = harness({ scenario: { agent: publishedAgent({ system_tools: { voicemail_detection: VOICEMAIL_OFF, end_call: endCall } }) } });
+            assert.deepEqual((await on.dialer.preflight()).agent, { ok: true }, JSON.stringify(endCall));
+        }
     });
 
     it('uses one confirm for one call: the same digest is refused afterwards', async () => {
@@ -1403,20 +1692,63 @@ describe('call data', () => {
 });
 
 describe('the reviewed script', () => {
-    it('discloses the AI voice, the recording and the callback number before the message', () => {
+    it('discloses the AI voice and the recording before the message, and gives the callback number only at the end', () => {
         assert.deepEqual(checkAgentScript(script), []);
-        const spoken = renderTemplate(script.welcome, {
+        const values = {
             recipient_name: 'Leon',
             person_name: 'Shashank',
             callback_number: '415-555-0188',
             message: "Shashank's Care team request was sent at 10:59 AM",
-        });
+        };
+        const spoken = renderTemplate(script.welcome, values);
         const at = (phrase: string) => spoken.indexOf(phrase);
         assert.ok(at('automated assistant') >= 0 && at('AI-generated voice') >= 0 && at('recorded') >= 0);
-        assert.ok(at('415-555-0188') < at('Care team request'));
+        assert.ok(at('recorded') < at('Care team request'));
+        // Oct 24 live test: the number right after the disclosure came before the message. It now comes at the end only
+        // (47 CFR 64.1200(b)(2) allows it during or after the message).
+        assert.equal(spoken.includes('415-555-0188'), false);
+        assert.equal(script.welcome.includes('{{callback_number}}'), false);
+        const rendered = renderTemplate(script.instructions, values);
+        const ending = rendered.slice(rendered.indexOf(ENDING_HEADING));
+        assert.ok(ending.includes("To reach Shashank's team, call 415-555-0188. Goodbye."));
         assert.match(script.instructions, /You are not \{\{person_name\}\}/);
-        assert.match(script.instructions, /call \{\{callback_number\}\}\. Goodbye\./);
         assert.equal(script.welcome.endsWith('\n'), false);
+    });
+
+    it('needs the callback number in the ending of the instructions, not in the welcome', () => {
+        // A welcome without the number passes; one that still gives it before the message is allowed too.
+        assert.deepEqual(checkAgentScript(script), []);
+        const early = { welcome: script.welcome.replace(' I\'m calling', ' To reach {{person_name}}\'s team, call {{callback_number}}. I\'m calling'), instructions: script.instructions };
+        assert.notEqual(early.welcome, script.welcome);
+        assert.deepEqual(checkAgentScript(early), []);
+        // The ending without the number fails, even when the number appears earlier in the instructions.
+        const closing = "To reach {{person_name}}'s team, call {{callback_number}}. Goodbye.";
+        assert.ok(script.instructions.includes(closing));
+        const noNumber = { welcome: script.welcome, instructions: script.instructions.replace(closing, 'Goodbye.') };
+        assert.ok(checkAgentScript(noNumber).some((problem) => problem.includes('{{callback_number}}')));
+        const moved = {
+            welcome: script.welcome,
+            instructions: noNumber.instructions.replace('# Rules\n', '# Rules\n- The team is at {{callback_number}}.\n'),
+        };
+        assert.ok(moved.instructions.includes('{{callback_number}}'));
+        assert.ok(checkAgentScript(moved).some((problem) => problem.includes('{{callback_number}}')));
+        const noEnding = { welcome: script.welcome, instructions: script.instructions.replace(ENDING_HEADING, '# Last') };
+        assert.ok(checkAgentScript(noEnding).some((problem) => problem.includes(ENDING_HEADING)));
+    });
+
+    it('tells the agent to hang up with the end_call tool after the goodbye, and flags a script that does not', () => {
+        const ending = script.instructions.slice(script.instructions.indexOf(ENDING_HEADING));
+        assert.ok(ending.indexOf(END_CALL_TOOL) > ending.indexOf('{{callback_number}}'));
+        const sentence = script.instructions.slice(script.instructions.indexOf('Right after'));
+        assert.ok(sentence.includes(END_CALL_TOOL));
+        const dropped = { welcome: script.welcome, instructions: script.instructions.replace(sentence, 'Then end the call.') };
+        assert.ok(checkAgentScript(dropped).some((problem) => problem.includes(END_CALL_TOOL)));
+        // The tool named only before the goodbye line does not count: the hang-up must come after it.
+        const before = {
+            welcome: script.welcome,
+            instructions: dropped.instructions.replace(ENDING_HEADING, `${ENDING_HEADING}\nYou have the ${END_CALL_TOOL} tool.`),
+        };
+        assert.ok(checkAgentScript(before).some((problem) => problem.includes(END_CALL_TOOL)));
     });
 
     it('treats the message as quoted data, and flags a script that does not', () => {
