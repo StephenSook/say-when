@@ -49,6 +49,10 @@ function parseField(raw: unknown, where: string): FormField {
         if (!hint) throw new FormsFileError(`${where} has a bad hint.`);
         field.hint = hint;
     }
+    if (f.speak !== undefined) {
+        if (typeof f.speak !== 'boolean') throw new FormsFileError(`${where} has a speak flag that is not true or false.`);
+        field.speak = f.speak;
+    }
     return field;
 }
 

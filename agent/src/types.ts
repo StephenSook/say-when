@@ -224,6 +224,12 @@ export interface FormField {
     fixedValue?: string;
     /** A short note for the planner, for example "what they need, in a few words". */
     hint?: string;
+    /**
+     * True when a call about this form, once it was sent, may say this field's value to the recipient (for example
+     * what was asked for and when). Only fields marked true are ever passed to the Dialer, which checks each value
+     * again before it is spoken. Unset or false: never said on a call.
+     */
+    speak?: boolean;
 }
 
 /** A contact the Dialer has consent for. Only the id and the spoken name; the number never leaves the Dialer. */
