@@ -7,6 +7,7 @@
  * leaves without a fresh CONFIRM:
  * - One plain sentence on top, rolled up from the agent at work (docs/ui.md pattern 8).
  * - The agent at work gets the big card. The other agent is one dimmed line at the bottom.
+ * - Under the form errand, the care team email (PLAN D25): drafted with the read-back, sent only after the form.
  * - Errands and calls are options (PLAN D11): YES picks one, the read-back plays, and only a fresh
  *   CONFIRM matched to the read-back digest sends it (a single jaw clench with the headset; the key
  *   or the switch press in a keyboard or switch session). STOP hangs up a call.
@@ -20,6 +21,8 @@
 import { useMemo, useState } from 'react';
 import { AgentLine } from '@/components/agents/AgentLine';
 import { CallCard } from '@/components/agents/CallCard';
+import { emailCardView } from '@/components/agents/email';
+import { EmailCard } from '@/components/agents/EmailCard';
 import { ErrandCard } from '@/components/agents/ErrandCard';
 import {
   agentsEmptySentence,
@@ -34,7 +37,7 @@ import {
   type AgentRef,
 } from '@/components/agents/model';
 import { StatusMark } from '@/components/ui/StatusMark';
-import { useCalls, useCommands, useErrands, useInput, useRows, useSafety } from '@/lib/data/provider';
+import { useCalls, useCommands, useErrands, useInput, usePipelineEvents, useRows, useSafety } from '@/lib/data/provider';
 import styles from './Agents.module.css';
 
 /** The viewer's "Show" choice, tied to the rows on screen when it was made. */
@@ -48,6 +51,7 @@ export function Agents() {
   const errands = useErrands();
   const calls = useCalls();
   const commands = useCommands();
+  const events = usePipelineEvents();
   const { options } = useRows();
   const safety = useSafety();
   const input = useInput();
@@ -66,6 +70,9 @@ export function Agents() {
 
   const focus = chooseFocus(errand, call, pinned);
   const errandOption = useMemo(() => findOption(options, errand?.optionId ?? null), [options, errand?.optionId]);
+  // PLAN D25: the care team email under the form errand, from the agent's email steps.
+  const focusErrand = focus?.kind === 'errand' ? focus.row : null;
+  const email = useMemo(() => (focusErrand ? emailCardView(focusErrand, events) : null), [focusErrand, events]);
 
   const headline =
     focus === null
@@ -101,6 +108,7 @@ export function Agents() {
       {focus?.kind === 'errand' ? (
         <ErrandCard key={`errand:${focus.row.id}`} errand={focus.row} option={errandOption} commands={commands} safety={safety.state} input={input} />
       ) : null}
+      {focus?.kind === 'errand' && email !== null ? <EmailCard key={`email:${focus.row.id}`} view={email} /> : null}
       {focus?.kind === 'call' ? <CallCard key={`call:${focus.row.id}`} call={focus.row} commands={commands} safety={safety.state} input={input} /> : null}
 
       {focus !== null ? (

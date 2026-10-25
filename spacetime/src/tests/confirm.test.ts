@@ -318,6 +318,57 @@ test('the agent claims a confirmed errand once and completes it', () => {
   expect([done.status.tag, done.confirmationText, done.submitMs]).toEqual(['Submitted', 'Your response has been recorded.', 3100]);
 });
 
+/** One `agent_errand_email` call as the agent (PLAN D25). */
+function email(db: Test, errandId: bigint, status: string, detail: string, extra: { attempt?: number; payloadJson?: string; countsJson?: string } = {}) {
+  return as(db, AGENT, (ctx) =>
+    m.agentErrandEmail(ctx, { errandId, attempt: extra.attempt ?? 1, status, detail, ms: 12, countsJson: extra.countsJson ?? '{}', payloadJson: extra.payloadJson ?? '' }),
+  );
+}
+
+test('agent_errand_email writes the email steps only for a Submitted errand claimed by this agent (PLAN D25)', () => {
+  const db = newDb();
+  const e = confirmed(db);
+  // Not claimed yet, then claimed but still Submitting: no email step.
+  expect(failure(() => email(db, e.id, 'started', 'email sending'))).toBe('stale attempt');
+  as(db, AGENT, (ctx) => m.claimErrand(ctx, { errandId: e.id, digest: DIGEST }));
+  expect(failure(() => email(db, e.id, 'started', 'email sending'))).toBe('errand is not sent');
+  as(db, AGENT, (ctx) =>
+    m.completeErrand(ctx, { errandId: e.id, attempt: 1, status: 'submitted', confirmationText: 'Recorded.', screenshotUrl: '', reasonCode: '', reason: '', submitMs: 10 }),
+  );
+  // The wrong attempt, another caller, a detail that is not an email step, and an unknown status are refused.
+  expect(failure(() => email(db, e.id, 'started', 'email sending', { attempt: 2 }))).toBe('stale attempt');
+  expect(failure(() => as(db, STATION, (ctx) => m.agentErrandEmail(ctx, { errandId: e.id, attempt: 1, status: 'ok', detail: 'email sent', ms: 1, countsJson: '{}', payloadJson: '' })))).toBe('not allowed');
+  expect(failure(() => email(db, e.id, 'ok', 'sent'))).toBe('detail must start with email');
+  expect(failure(() => email(db, e.id, 'ok', 'email Sent'))).toBe('bad detail');
+  expect(failure(() => email(db, e.id, 'done', 'email sent'))).toBe('status must be started, ok or error');
+  expect(failure(() => email(db, e.id, 'ok', 'email sent', { countsJson: '{"to":"a sentence"}' }))).toBe('counts_json values must be numbers or booleans');
+
+  email(db, e.id, 'started', 'email sending', { payloadJson: '{"email":{"to":"s***@example.com"}}' });
+  email(db, e.id, 'ok', 'email sent', { countsJson: '{"mailMs":2400}', payloadJson: '{"email":{"to":"s***@example.com","subject":"Care team request: Ride"}}' });
+  // A repeat of a step is a no-op: one row per step.
+  email(db, e.id, 'ok', 'email sent');
+  const sent = db.db.pipelineEvent.eventKey.find(`e${e.id}:email:sent`)!;
+  expect([sent.stage, sent.status, sent.detail, sent.actor, sent.questionId, sent.countsJson]).toEqual(['errand', 'ok', 'email sent', 'Agent', e.questionId, '{"mailMs":2400}']);
+  expect(db.db.pipelineEvent.eventKey.find(`e${e.id}:email:sending`)?.status).toBe('started');
+  const payload = db.db.pipelinePayload.eventId.find(sent.id)!;
+  expect(JSON.parse(payload.payloadJson)).toEqual({ email: { to: 's***@example.com', subject: 'Care team request: Ride' } });
+  const ledger = [...db.db.ledger.ledgerBySession.filter(scan(db).sessionId)].filter((l) => l.kind === 'errand_email').map((l) => l.outcome);
+  expect(ledger).toEqual(['sending', 'sent']);
+  // The errand itself is unchanged.
+  expect([errandOf(db).status.tag, errandOf(db).confirmationText]).toEqual(['Submitted', 'Recorded.']);
+});
+
+test('agent_errand_email is refused for an errand that ended without being sent', () => {
+  const db = newDb();
+  const e = confirmed(db);
+  as(db, AGENT, (ctx) => m.claimErrand(ctx, { errandId: e.id, digest: DIGEST }));
+  as(db, AGENT, (ctx) =>
+    m.completeErrand(ctx, { errandId: e.id, attempt: 1, status: 'failed', confirmationText: '', screenshotUrl: '', reasonCode: 'no_confirmation', reason: '', submitMs: 10 }),
+  );
+  expect(failure(() => email(db, e.id, 'error', 'email failed: timeout'))).toBe('errand is not sent');
+  expect(db.db.pipelineEvent.eventKey.find(`e${e.id}:email:failed`) ?? null).toBeNull();
+});
+
 test('a lapsed submit lease becomes UnknownOutcome; nothing can claim it again; a late true result is recorded', () => {
   const db = newDb();
   const e = confirmed(db);

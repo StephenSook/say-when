@@ -38,6 +38,7 @@ import AddCallLineReducer from "./add_call_line_reducer";
 import AgentAttachPreviewReducer from "./agent_attach_preview_reducer";
 import AgentClaimReducer from "./agent_claim_reducer";
 import AgentDoneReducer from "./agent_done_reducer";
+import AgentErrandEmailReducer from "./agent_errand_email_reducer";
 import AgentFailReducer from "./agent_fail_reducer";
 import AgentProgressReducer from "./agent_progress_reducer";
 import AgentPublishOptionsReducer from "./agent_publish_options_reducer";
@@ -292,6 +293,7 @@ const reducersSchema = __reducers(
   __reducerSchema("agent_attach_preview", AgentAttachPreviewReducer),
   __reducerSchema("agent_claim", AgentClaimReducer),
   __reducerSchema("agent_done", AgentDoneReducer),
+  __reducerSchema("agent_errand_email", AgentErrandEmailReducer),
   __reducerSchema("agent_fail", AgentFailReducer),
   __reducerSchema("agent_progress", AgentProgressReducer),
   __reducerSchema("agent_publish_options", AgentPublishOptionsReducer),

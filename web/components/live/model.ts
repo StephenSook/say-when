@@ -39,6 +39,7 @@ import type {
 } from '../../lib/data/types';
 import { countWords, formatCount, formatMs, maskPhoneNumbers } from '../../lib/format';
 import { callStatusWord, STATUS_WORDS, statusFromCall, statusFromErrand, type RunStatus } from '../../lib/status';
+import { isEmailStep } from '../agents/email';
 
 /** The six steps drawn left to right. Errand and call steps are one line each under them. */
 export type CardStage = 'listen' | 'search' | 'retrieve' | 'plan' | 'speak' | 'select';
@@ -956,7 +957,8 @@ function actionLines(input: LiveInput, ctx: Context): ActionLine[] {
   const reply = replyLine(input, ctx);
   if (reply) lines.push(reply);
 
-  const errandScope = scopeOf(input.events, 'errand', Number.NEGATIVE_INFINITY);
+  // The form's own steps only: the care team email's steps (PLAN D25) come after the form and have their own card.
+  const errandScope = scopeOf(input.events, 'errand', Number.NEGATIVE_INFINITY, (event) => !isEmailStep(event));
   const errandId = errandScope.latest ? text(loose(errandScope.latest.detail).errandId) : null;
   const errand = (errandId ? input.errands.find((row) => row.id === errandId) : undefined) ?? newestFor(input.errands, questionId);
   if (errand) {

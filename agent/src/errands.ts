@@ -16,6 +16,9 @@
 //    Moss (src/requests.ts MemoryWatch), so the
 //    next time the same form comes up it can be filled from last time. Never in the try sandbox. The note never
 //    changes the errand's result, and it never sends anything: a repeat still needs its own read-back and CONFIRM.
+// 6. PLAN D25: only after the module took a `submitted` result, the care team email drafted at the preview goes out
+//    once through Apify's Send Email Actor (src/email.ts), and its steps go to `agent_errand_email`. A form that was
+//    not sent drops its draft; a duplicate sends no second email. The email never changes the errand's result.
 
 import { ApifyHttpError, ConfigError, UnknownOutcomeError, type ErrandResult, type FieldInput } from '@say-when/apify-client';
 
@@ -23,8 +26,10 @@ import { LIMITS } from './contract.js';
 import type { AgentDb } from './db/db.js';
 import { callReducer, MAX_CLAIM_TRIES, neverSent, type Verified } from './db/retry.js';
 import { withDeadline } from './deadline.js';
+import { emailPayload, mailSentence, type ErrandEmailDeps, type MailOutcome } from './email.js';
 import { parseFields, type PreviewBook, type SentBook } from './jobs.js';
 import type { Logger } from './log.js';
+import { countsJson, label, payloadJson, wholeMs, type Counts } from './pipeline.js';
 import type { ErrandPort, MemoryPort } from './ports.js';
 import { pastRequestNote, type MemoryWatch } from './requests.js';
 import { MOSS_DEADLINES } from './retrieval.js';
@@ -99,6 +104,11 @@ export interface ErrandRunnerDeps {
     sent?: SentBook;
     /** Wall clock, epoch ms, for the SentBook window. Default Date.now. */
     now?: () => number;
+    /**
+     * PLAN D25 (src/email.ts): the care team email drafted at the preview, sent here once the module took the errand's
+     * submitted result. Unset: no email.
+     */
+    email?: ErrandEmailDeps;
 }
 
 export interface PastRequestDeps {
@@ -262,6 +272,7 @@ export class ErrandRunner {
         const claimed = await this.claim(row, key);
         if (!claimed.ok) return claimed.final;
         await this.complete(row, claimed.attempt, { status: 'refused', confirmationText: '', screenshotUrl: '', reasonCode: refusal.code, reason: refusal.reason }, 0);
+        this.dropEmail(row, 'refused');
         return true;
     }
 
@@ -291,8 +302,91 @@ export class ErrandRunner {
             const toMs = now();
             this.deps.sent?.record({ errandId: row.errandId, formKey: row.formKey, fields, fromMs, toMs }, toMs);
         }
+        // PLAN D25: the care team email goes only after the module took this errand's submitted result.
+        if (recorded && completion.status === 'submitted') await this.sendEmail(row, claimed.attempt);
+        else if (recorded && completion.status === 'duplicate') await this.skipDuplicateEmail(row, claimed.attempt);
+        else this.dropEmail(row, recorded ? completion.status : 'not_recorded');
         if (completion.status === 'submitted') await this.keepPastRequest(row, fields);
         return true;
+    }
+
+    /** A form that was not sent (or whose result the module did not take) never sends its email: the draft is dropped. */
+    private dropEmail(row: ErrandQueueRow, why: string): void {
+        if (this.deps.email?.book.take(row.errandId)) this.deps.log.info('no care team email: the form was not sent', { errand: row.errandId, why });
+    }
+
+    /** One email step through `agent_errand_email`. Never throws: the email's fate never changes the errand's. */
+    private async reportEmail(row: ErrandQueueRow, attempt: number, status: 'started' | 'ok' | 'error', detail: string, end: { ms?: number; counts?: Counts; payload?: Record<string, unknown> }): Promise<void> {
+        const outcome = await callReducer(
+            this.deps.db,
+            'agentErrandEmail',
+            {
+                errandId: row.errandId,
+                attempt,
+                status,
+                detail: label(detail),
+                ms: wholeMs(end.ms ?? 0),
+                countsJson: countsJson(end.counts),
+                payloadJson: payloadJson(end.payload).json,
+            },
+            // Idempotent: one step per status (e<errand>:email:<step>), so a lost reply is sent again.
+            { onUnknown: 'repeat', attempts: 3, readyTimeoutMs: 5_000 },
+        );
+        if (outcome.ok) return;
+        const missing = outcome.kind === 'internal';
+        this.deps.log.warn(missing ? 'the module cannot show the email step (agent_errand_email is not published there)' : 'an email step was not recorded', {
+            errand: row.errandId,
+            step: status,
+            why: outcome.kind,
+        });
+    }
+
+    /** The form already had this request: its earlier send's email covers it, so no second email goes out. */
+    private async skipDuplicateEmail(row: ErrandQueueRow, attempt: number): Promise<void> {
+        const draft = this.deps.email?.book.take(row.errandId);
+        if (!draft) return;
+        this.deps.log.info('no care team email: the form already had this request', { errand: row.errandId });
+        await this.reportEmail(row, attempt, 'error', 'email not sent: duplicate', {
+            counts: { errandId: Number(row.errandId), notSent: true },
+            payload: emailPayload(draft, { outcome: 'not_sent', reason: 'The form already had this request, so no second email was sent.' }),
+        });
+    }
+
+    /** PLAN D25: the drafted email, once, right after the module took the submitted result. Never throws. */
+    private async sendEmail(row: ErrandQueueRow, attempt: number): Promise<void> {
+        const email = this.deps.email;
+        const draft = email?.book.take(row.errandId);
+        if (!email || !draft) return;
+        // The read-back that announced the email is the one the person confirmed.
+        if (draft.digest !== row.confirmedDigest) {
+            this.deps.log.warn('the email draft does not match the confirmed read-back; no email is sent', { errand: row.errandId });
+            return;
+        }
+        const errandId = Number(row.errandId);
+        await this.reportEmail(row, attempt, 'started', 'email sending', { counts: { errandId }, payload: emailPayload(draft) });
+        let outcome: MailOutcome;
+        try {
+            // Sent once. Never retried: a second try could send a second email.
+            outcome = await email.mail.send({ to: draft.to, subject: draft.subject, text: draft.text });
+        } catch {
+            outcome = { status: 'unknown', code: 'agent_error', ms: 0 };
+        }
+        const sentAt = new Date(email.now()).toISOString();
+        if (outcome.status === 'sent') {
+            this.deps.log.info('care team email sent', { errand: row.errandId, ms: outcome.ms });
+            await this.reportEmail(row, attempt, 'ok', 'email sent', { ms: outcome.ms, counts: { errandId, mailMs: outcome.ms }, payload: emailPayload(draft, { outcome: 'sent', sentAt }) });
+            return;
+        }
+        this.deps.log.warn(outcome.status === 'unknown' ? 'the care team email may or may not have gone out; it is not sent again' : 'the care team email was not sent', {
+            errand: row.errandId,
+            code: outcome.code,
+            ms: outcome.ms,
+        });
+        await this.reportEmail(row, attempt, 'error', `email ${outcome.status === 'unknown' ? 'unknown' : 'failed'}: ${outcome.code}`, {
+            ms: outcome.ms,
+            counts: { errandId, mailMs: outcome.ms, maybeSent: outcome.status === 'unknown' },
+            payload: emailPayload(draft, { outcome: outcome.status, reason: mailSentence(outcome) }),
+        });
     }
 
     /** Step 5: one private note about the sent form. Never throws; the errand's result is already recorded. */

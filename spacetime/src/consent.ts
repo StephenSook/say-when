@@ -24,6 +24,7 @@ import type {
 } from './schema';
 import {
   appendLedger,
+  DETAIL_RE,
   digest16,
   DIGEST_RE,
   emitCue,
@@ -35,6 +36,7 @@ import {
   onceAt,
   plusMs,
   publicCode,
+  requireCountsJson,
   requireMatch,
   requireOptionalText,
   requireText,
@@ -1166,6 +1168,49 @@ export function completeErrand(ctx: Ctx, errandId: bigint, given: CompleteInput)
   });
   const label = target === 'Submitted' ? 'sent' : target === 'UnknownOutcome' ? 'unknown outcome' : `${r.status}: ${codeLabel(next.reasonCode)}`;
   errandEvent(ctx, next, late ? `late:${r.status}` : r.status, target === 'Submitted' ? 'ok' : 'error', late ? `late result: ${codeLabel(r.status)}` : label, r.submitMs, 'Agent');
+}
+
+export interface ErrandEmailInput {
+  attempt: number;
+  status: string;
+  detail: string;
+  ms: number;
+  countsJson: string;
+  payloadJson: string;
+}
+
+/** The three steps of the care team email (PLAN D25), by the pipeline status the sidecar reports. */
+const EMAIL_STEPS: Record<string, string> = { started: 'sending', ok: 'sent', error: 'failed' };
+
+/**
+ * PLAN D25: the email the sidecar sends to the care team after a form went out. Only the sidecar that claimed the
+ * errand, with its claim attempt, and only once the errand is Submitted, so no email step can show for a form that was
+ * not sent. It writes one public, content-free `errand` pipeline step per email step (`e<errand>:email:<step>`, once
+ * each) and its private payload (shown on the board only while sharing is on). The errand itself does not change.
+ */
+export function errandEmail(ctx: Ctx, errandId: bigint, r: ErrandEmailInput): void {
+  const step = hasKey(EMAIL_STEPS, r.status) ? EMAIL_STEPS[r.status] : undefined;
+  if (!step) throw new SenderError('status must be started, ok or error');
+  requireMatch(r.detail, DETAIL_RE, 'detail');
+  if (!r.detail.startsWith('email ')) throw new SenderError('detail must start with email');
+  const countsJson = requireCountsJson(r.countsJson);
+  if (r.payloadJson.length > 16384) throw new SenderError('payload_json is larger than 16 KB');
+  const e = ctx.db.errand.id.find(errandId);
+  if (!e || e.claimAttempt !== r.attempt || !e.claimedBy.isEqual(ctx.sender)) throw new SenderError('stale attempt');
+  if (e.status.tag !== 'Submitted') throw new SenderError('errand is not sent');
+  const row = writePipeline(ctx, {
+    eventKey: `e${e.id}:email:${step}`,
+    sessionId: e.sessionId,
+    questionId: e.questionId,
+    stage: 'errand',
+    status: r.status as 'started' | 'ok' | 'error',
+    detail: r.detail,
+    ms: r.ms,
+    countsJson,
+    actor: 'Agent',
+    payloadJson: r.payloadJson,
+  });
+  if (row) appendLedger(ctx, e.sessionId, 'errand_email', 'Agent', { errandId: e.id, questionId: e.questionId, outcome: step });
 }
 
 /** `errand_timeout`: each kind acts only if its row is still the one it was armed for. */

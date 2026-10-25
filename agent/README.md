@@ -141,6 +141,7 @@ Names only; `.env.example` lists them all. Never commit real values.
 | `AGENT_MOSS_REOPEN` | reopen Moss after its idle close | off (Moss bills session minutes; see moss/README.md) |
 | `AGENT_MEMORY_SHAREABLE` | mark written-back replies shareable | off; turn on only if the person agreed their replies may show on screens |
 | `AGENT_FORMS_FILE` | errand options | no errand options; see `forms.example.json` (a field with `"speak": true` may be said on a call about that sent form) |
+| `ERRAND_EMAIL_TO` | the care team email after a sent form (PLAN D25, below) | not set: no email. One address; it needs `APIFY_TOKEN` and `FORM_ERRAND_URL`, is off in the try sandbox, and a malformed value stops the start. Never logged or shown in full: `npm run check` and the screens show it masked (`s***@gmail.com`) |
 | `AGENT_CALLS` | calls | off |
 | `CARTESIA_API_KEY`, `CARTESIA_AGENT_ID`, `CARTESIA_FROM_NUMBER_ID`, `CALL_CONSENT_FILE`, `CALL_DO_NOT_CALL_FILE`, `CALL_HOLD_FILE`, `CALL_CALLBACK_NUMBER`, `CALL_PERSON_NAME`, `CALL_ERRAND_TITLES` | calls | see cartesia/README.md; `CALL_HOLD_FILE` is where the Dialer keeps holds on contacts, and calls do not start without it |
 | `AGENT_TIME_ZONE` | the date and times in the planner prompt | `America/Los_Angeles` |
@@ -157,6 +158,14 @@ Names only; `.env.example` lists them all. Never commit real values.
 | `AGENT_HEALTH_HOST` | where `GET /healthz` listens | not set: every address (a web service host). `127.0.0.1`, `::1` or `localhost` keeps it on this laptop, off the venue network (`scripts/demo-up.sh` sets `127.0.0.1`); any other value stops the start |
 
 Each errand form also needs an Errand consent row in the module for its `formKey`, and each call contact a Call consent row for its id; the module refuses the pick otherwise.
+
+### The care team email (PLAN D25)
+
+With `ERRAND_EMAIL_TO` set, every form errand also emails the care team, for real, through Apify's public Send Email Actor (`apify/send-mail`, input `{ to, subject, text }`) with the same `APIFY_TOKEN` (`src/email.ts`).
+
+- **Drafted with the read-back.** The preview job writes the email (subject "Care team request: Ride" from the form's first field with choices; the body lists the values read back off the page, the time of the request, and that the Eleven app sent it on the person's behalf after they heard it read back and confirmed it) and keeps it in this process under the errand id and the preview digest. The read-back then ends "Confirm to send it and email the care team.", so the one confirm covers both. A step "email drafted" goes to the board (`agent_progress`), with the subject, the body and the masked address in its private payload.
+- **Sent only after the form.** Only after the module took the errand's `submitted` result, the email goes out once, never retried, and its steps go to `agent_errand_email` ("email sending", then "email sent" or "email failed: <code>"; "email unknown: <code>" when it may have gone out). A form that was stopped, cancelled, refused, failed, or ended with an unknown outcome drops its draft and sends nothing; a duplicate sends no second email and says so. The email never changes the errand's result.
+- **Module change.** `agent_errand_email` is new in the module (docs/spacetime.md, `spacetime/src/consent.ts` `errandEmail`). On a module that does not have it yet, the email is still sent, the screen shows it only as drafted, and the sidecar logs that the module cannot show the step.
 
 ## The try sandbox (PLAN 5.11)
 

@@ -208,6 +208,16 @@ export interface ReducerArgs {
         reason: string;
         submitMs: number;
     };
+    /** PLAN D25: one step of the care team email after a Submitted errand, fenced by the errand's claim attempt. */
+    agentErrandEmail: {
+        errandId: bigint;
+        attempt: number;
+        status: StageStatus;
+        detail: string;
+        ms: number;
+        countsJson: string;
+        payloadJson: string;
+    };
     claimCall: { callId: bigint; digest: string };
     reportCallStatus: {
         callId: bigint;
