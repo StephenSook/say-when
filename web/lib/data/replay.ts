@@ -658,19 +658,13 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
   updateCall(callConfirmAt + 900, 'call ringing', { status: 'ringing', ringingAt: at(callConfirmAt + 900) });
   const connectedAt = callConfirmAt + 3_700;
   updateCall(connectedAt, 'call connected', { status: 'connected', startedAt: at(connectedAt) });
-  // The welcome follows cartesia/agent/welcome.txt. A screen never shows a phone number, so the callback number is hidden.
+  // The welcome follows cartesia/agent/welcome.txt (Oct 25: straight to the point, no callback number).
   const lines: Array<[number, 'assistant' | 'recipient', string]> = [
-    [
-      connectedAt + 300,
-      'assistant',
-      'Hi Demo caregiver. This is an automated assistant with an AI-generated voice, calling for Demo user through the Eleven app. ' +
-        "This call is recorded and transcribed. To reach Demo user's team, call [number hidden].",
-    ],
+    [connectedAt + 300, 'assistant', 'Hi Demo caregiver, this is an AI assistant from the Eleven app, and this call is recorded.'],
     [
       connectedAt + 4_300,
       'assistant',
-      "I'm calling to let you know that Demo user and their partner are having dinner at the cafe on Bay St at 7 tonight, " +
-        'and they ask if you can meet them there. Did you get it?',
+      'Demo user and their partner are having dinner at the cafe on Bay St at 7 tonight, and they ask if you can meet them there.',
     ],
     [connectedAt + 8_300, 'recipient', 'Yes, I got it. I will be there at 7.'],
   ];
