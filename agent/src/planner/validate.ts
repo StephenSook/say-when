@@ -108,15 +108,19 @@ function checkQuery(raw: string, problems: Set<string>): string {
     return query;
 }
 
-/** Validates a reply and resolves it into a Plan. Throws PlannerError('invalid_reply') listing every broken rule. */
-export function validatePlan(reply: PlanReply, input: PlanInput): Plan {
+/**
+ * Validates a reply and resolves it into a Plan. Throws PlannerError('invalid_reply') listing every broken rule.
+ * `minPick` lowers the fewest pick options, for a reply repair.ts shortened (the sidecar pads it back up, PLAN D27).
+ */
+export function validatePlan(reply: PlanReply, input: PlanInput, rules: { minPick?: number } = {}): Plan {
     const task: PlanTask = input.task ?? 'options';
     const problems = new Set<string>();
     const max = Math.min(Math.max(1, input.maxOptions), LIMITS.maxOptions);
+    const min = Math.max(1, rules.minPick ?? MIN_PICK_OPTIONS);
     const count = reply.options.length;
     if (reply.answer_mode === 'yes_no' && count !== 2) problems.add('yes_no_needs_two');
     // Never a single answer: the person always chooses between at least two (PLAN D22).
-    if (reply.answer_mode === 'pick' && (count < MIN_PICK_OPTIONS || count > max)) problems.add('option_count');
+    if (reply.answer_mode === 'pick' && (count < min || count > max)) problems.add('option_count');
     if (task === 'categories' && reply.answer_mode !== 'pick') problems.add('categories_need_pick');
     if (task === 'category_search' && reply.answer_mode !== 'pick') problems.add('results_need_pick');
 

@@ -567,10 +567,12 @@ describe('draft first', () => {
     it('still ends with the options when the draft\'s planner call fails', async () => {
         const h = start(harness({ draftFirst: true }));
         const release = h.search.hold();
+        // Invalid twice: the draft's call and its one retry (PLAN D27).
+        h.api.reply({ answer_mode: 'pick', options: [] });
         h.api.reply({ answer_mode: 'pick', options: [] });
         h.api.reply(fourOptions());
         const jobId = h.db.addOptionsJob({ questionText: LUNCH });
-        await waitFor(() => h.api.calls.length === 1, 3_000, 'draft asked');
+        await waitFor(() => h.api.calls.length === 2, 3_000, 'draft asked');
         await settle(30);
         release();
         await waitFor(() => h.db.job(jobId)?.status === 'done', 3_000, 'job done');

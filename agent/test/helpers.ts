@@ -562,13 +562,13 @@ export function harness(options: HarnessOptions = {}): Harness {
     const trace = new Trace();
     const db = new MemoryDb({ leaseMs: options.leaseMs });
     const api = new FakeApi(trace);
-    const planner = new ClaudePlanner({ api, retryDelayMs: 1, sleep: async () => undefined });
+    const log = recordingLogger();
+    const planner = new ClaudePlanner({ api, retryDelayMs: 1, sleep: async () => undefined, log });
     const search = new FakeSearch(trace);
     const memory = new FakeMemory(trace);
     const web = new FakeWebIndex(trace);
     const errands = new FakeErrands();
     const dialer = new FakeDialer();
-    const log = recordingLogger();
     const previews = new PreviewBook();
     const sent = new SentBook();
     const clock = options.clock ?? (() => performance.now());

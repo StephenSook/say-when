@@ -10,16 +10,24 @@
 //   zod schema and checked by validate.ts.
 // - Retries: the SDK's own retries are off. One attempt, plus at most one retry on a transient error (timeout,
 //   network, 429 with a short Retry-After, 5xx, 529 overloaded). Everything else fails at once.
+// - Invalid replies (PLAN D27): repair.ts first mends what it can without a model call. A reply still invalid is
+//   logged by rule name and sent back once, with the broken rules named in the message. The two retries share one
+//   budget of two calls, so a planner call never takes longer than it did before.
 // - Refusal fallback: for models that support it (Opus 5.5, Opus 5, Fable 5.1, Sonnet 5.5) the request opts into
 //   the server-side fallback (`fallbacks: "default"`, beta server-side-fallback-2026-07-01). Haiku 5.5 has no
 //   server-side fallback, so its requests do not send the parameter; a refusal there is a PlannerError.
 
 import Anthropic from '@anthropic-ai/sdk';
 
-import { buildUserMessage, SYSTEM_PROMPT } from './prompt.js';
+import { silentLogger, type Logger } from '../log.js';
+import { buildUserMessage, retryNote, SYSTEM_PROMPT } from './prompt.js';
+import { repairReply } from './repair.js';
 import { planReplyFormat, type PlanReply } from './schema.js';
 import { allowedInput, PlannerError, TRANSIENT_CODES, type PlanInput, type PlannerErrorCode, type PlannerPort, type PlanResult } from './types.js';
 import { validatePlan } from './validate.js';
+
+/** Calls per plan, every retry included: the transient retry and the invalid-reply retry share them. */
+const MAX_CALLS = 2;
 
 export const DEFAULT_PLANNER_MODEL = 'claude-haiku-5-5';
 export const DEFAULT_PLANNER_EFFORT = 'low';
@@ -51,6 +59,8 @@ export interface ClaudePlannerOptions {
     retryDelayMs?: number;
     sleep?: (ms: number) => Promise<void>;
     now?: () => number;
+    /** Repairs and invalid replies, by rule name only. */
+    log?: Logger;
 }
 
 export class ClaudePlanner implements PlannerPort {
@@ -62,6 +72,7 @@ export class ClaudePlanner implements PlannerPort {
     private readonly retryDelayMs: number;
     private readonly sleep: (ms: number) => Promise<void>;
     private readonly now: () => number;
+    private readonly log: Logger;
 
     constructor(options: ClaudePlannerOptions = {}) {
         this.api = options.api ?? new Anthropic({ maxRetries: 0 }).beta.messages;
@@ -72,15 +83,17 @@ export class ClaudePlanner implements PlannerPort {
         this.retryDelayMs = options.retryDelayMs ?? 400;
         this.sleep = options.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
         this.now = options.now ?? (() => performance.now());
+        this.log = options.log ?? silentLogger;
     }
 
-    /** The request for one planner call. Exposed for tests. */
-    request(input: PlanInput): CreateParams {
+    /** The request for one planner call; `broken` names the rules the last reply broke, for the retry. Exposed for tests. */
+    request(input: PlanInput, broken: readonly string[] = []): CreateParams {
+        const message = buildUserMessage(input);
         const params: CreateParams = {
             model: this.model,
             max_tokens: this.maxTokens,
             system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
-            messages: [{ role: 'user', content: buildUserMessage(input) }],
+            messages: [{ role: 'user', content: broken.length > 0 ? `${message}\n\n${retryNote(broken, input)}` : message }],
             output_config: { effort: this.effort, format: planReplyFormat },
         };
         if (FALLBACK_MODELS.has(this.model)) {
@@ -92,24 +105,46 @@ export class ClaudePlanner implements PlannerPort {
 
     async plan(input: PlanInput, signal: AbortSignal): Promise<PlanResult> {
         const started = this.now();
-        let sent = input;
-        let message: Anthropic.Beta.BetaMessage | null = null;
         let attempts = 0;
-        while (message === null) {
-            attempts += 1;
-            // Consent is read again for every attempt, the retry included, right before the request leaves.
-            sent = allowedInput(input);
+        // The last invalid reply's error, once the one retry for it is under way.
+        let invalid: PlannerError | null = null;
+        for (;;) {
+            let sent = input;
+            let message: Anthropic.Beta.BetaMessage | null = null;
+            while (message === null) {
+                attempts += 1;
+                // Consent is read again for every attempt, the retry included, right before the request leaves.
+                sent = allowedInput(input);
+                try {
+                    message = await this.api.create(this.request(sent, invalid?.problems), { timeout: this.timeoutMs, maxRetries: 0, signal });
+                } catch (error) {
+                    const code = errorCode(error);
+                    if (invalid) {
+                        // The retry for an invalid reply failed too: the job fails on the reply, as it did before.
+                        if (signal.aborted || code === 'aborted') throw new PlannerError('aborted');
+                        this.log.warn('planner retry failed', { code, attempt: attempts });
+                        throw invalid;
+                    }
+                    const wait = retryWait(error, this.retryDelayMs);
+                    if (attempts >= MAX_CALLS || !TRANSIENT_CODES.has(code) || wait === null || signal.aborted) throw new PlannerError(code);
+                    await this.sleep(wait);
+                    if (signal.aborted) throw new PlannerError('aborted');
+                }
+            }
             try {
-                message = await this.api.create(this.request(sent), { timeout: this.timeoutMs, maxRetries: 0, signal });
+                return this.result(message, sent, started, attempts);
             } catch (error) {
-                const code = errorCode(error);
-                const wait = retryWait(error, this.retryDelayMs);
-                if (attempts >= 2 || !TRANSIENT_CODES.has(code) || wait === null || signal.aborted) throw new PlannerError(code);
-                await this.sleep(wait);
-                if (signal.aborted) throw new PlannerError('aborted');
+                if (!(error instanceof PlannerError) || error.code !== 'invalid_reply') throw error;
+                // Rule names only, never the reply's words.
+                this.log.warn('planner reply invalid', { problems: error.problems.join(','), attempt: attempts });
+                if (invalid || attempts >= MAX_CALLS || signal.aborted) throw error;
+                invalid = error;
             }
         }
+    }
 
+    /** One reply read, repaired and validated against what was sent. Throws PlannerError. */
+    private result(message: Anthropic.Beta.BetaMessage, sent: PlanInput, started: number, attempts: number): PlanResult {
         // Read the stop reason before the content: a refusal or a cut-off reply does not match the schema.
         if (message.stop_reason === 'refusal') throw new PlannerError('refused');
         if (message.stop_reason === 'max_tokens' || message.stop_reason === 'model_context_window_exceeded') throw new PlannerError('truncated');
@@ -125,8 +160,10 @@ export class ClaudePlanner implements PlannerPort {
             // The SDK's parse error can quote the reply, so only its kind is kept.
             throw new PlannerError('invalid_reply', ['schema']);
         }
-        // Checked against what was sent: an option may cite only what the planner was shown.
-        const plan = validatePlan(reply, sent);
+        // Mended where the code can, then checked against what was sent: an option may cite only what the planner was shown.
+        const repaired = repairReply(reply, sent);
+        if (repaired.fixes.length > 0) this.log.info('planner reply repaired', { fixes: repaired.fixes.join(','), attempt: attempts });
+        const plan = validatePlan(repaired.reply, sent, repaired.short ? { minPick: 1 } : {});
         const usage = message.usage;
         return {
             ...plan,

@@ -74,14 +74,16 @@ async function failureFlow(): Promise<Harness> {
         attempts: 1,
         bodySnippet: `${SECRET.question} ${SECRET.phone}`,
     });
-    // Two options with the same text and tone: the planner's reply is invalid, and it quotes content back.
-    h.api.reply({
-        answer_mode: 'pick',
+    // A yes or no answer whose two options say the same thing: invalid even after the repair (one option is left), it
+    // quotes content back, and the one retry (PLAN D27) gets the same reply, so both attempts' logs are checked.
+    const invalid = {
+        answer_mode: 'yes_no' as const,
         options: [
             reply({ text: `${SECRET.option} ${SECRET.contactName}`, tone: 'warm' }),
             reply({ text: `${SECRET.option} ${SECRET.contactName}`, tone: 'warm' }),
         ],
-    });
+    };
+    h.api.reply(invalid).reply(invalid);
     h.errands.previewResult = errandResult({
         status: 'refused',
         previewDigest: null,

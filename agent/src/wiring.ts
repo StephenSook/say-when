@@ -92,6 +92,7 @@ export async function wire(config: AgentConfig, env: Readonly<Record<string, str
         model: config.planner.model,
         effort: config.planner.effort,
         timeoutMs: config.planner.timeoutMs,
+        log,
     });
 
     let search: SearchPort | null = null;
