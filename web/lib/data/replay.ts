@@ -19,7 +19,7 @@
  *           in the earpiece, CONFIRM (a single jaw clench), and the form is sent
  *  36.7 s   another follow-up; YES picks the call option; the script is read back, CONFIRM, dialing,
  *           ringing, connected, transcript lines
- *  61.5 s   STOP (a double jaw clench) hangs up the call
+ *  61.5 s   STOP (a held jaw clench) hangs up the call
  *  63.6 s   STOP while idle pauses; YES resumes
  *  67.2 s   the headset loses contact (HEADSET_OFF, a system event); YES resumes
  *  71.0 s   the loop starts again with a new question number
@@ -674,7 +674,7 @@ export function buildLoop(loop: number, loopStart: number): ReplayStep[] {
     });
   });
 
-  // STOP, a double jaw clench, hangs up. During a call STOP does not pause (docs/spacetime.md 4.2): the
+  // STOP, a held jaw clench, hangs up. During a call STOP does not pause (docs/spacetime.md 4.2): the
   // module asks the call agent to hang up (`cancel_requested`), and the call ends once the line drops.
   const hangUpAt = connectedAt + 10_300;
   command(hangUpAt, 'STOP', { confidence: 0.97 }, (rows, id) => {
