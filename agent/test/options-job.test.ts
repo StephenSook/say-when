@@ -317,7 +317,7 @@ describe('the Options job', () => {
         assert.equal(h.dialer.prepared.length, 0);
     });
 
-    it('drops a call option the Dialer refuses, and keeps the replies', async () => {
+    it('drops a call option the Dialer refuses, keeps the replies, and fills back up to two choices', async () => {
         const h = start(harness({ contacts: [LEON] }));
         h.dialer.refusePrepare = true;
         h.api.reply({
@@ -329,9 +329,13 @@ describe('the Options job', () => {
         });
         const jobId = h.db.addOptionsJob({ questionText: 'Call', origin: 'menu', menuItem: 'call', recentErrandTitle: 'Care team request', recentErrandSentAtMs: Date.now() - 60_000 });
         await waitFor(() => h.db.job(jobId)?.status === 'done');
+        // Never a single answer (PLAN D22): a stock reply in a tone not already used takes the call's place.
         assert.deepEqual(
-            finalPublish(h)?.options.map((o) => o.kind),
-            ['reply'],
+            finalPublish(h)?.options.map((o) => [o.kind, o.text, o.tone, o.provenance]),
+            [
+                ['reply', 'Not now.', 'calm', 'model'],
+                ['reply', 'Ask me again later.', 'neutral', 'stock'],
+            ],
         );
         assert.equal(JSON.parse(h.db.events.find((e) => e.detail === 'claude' && e.status === 'ok')?.countsJson ?? '{}').droppedCalls, 1);
     });

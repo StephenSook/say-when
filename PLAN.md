@@ -75,7 +75,7 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⛔ blocked
 |----------|-------|-----------|------------|
 | Decoder event | Shashank | station page (Stephen) | The decoder sends `{ type: "gesture", id, command, onsetAgeMs, confidence, source }` and `{ type: "health", decoderHealthy }` (at least every 250 ms) over `ws://127.0.0.1:8765` to the station page (port confirmed by Shashank, Oct 24 8:45 AM). `command` is `YES`, `NO`, `CONFIRM`, `STOP` or `HEADSET_OFF` (D11). The decoder never calls SpacetimeDB itself. |
 | Gesture reducer | Stephen | station page | `gesture(gesture_id, command, heard_step_seq, heard_option_id, heard_digest, confidence, source, onset_age_ms)`, Station role only, idempotent on `gesture_id`. A refused command is recorded as `ignored:<reason>`, not thrown. |
-| Options | Stephen | station, web | Private `answer_option` rows, written only by the sidecar through `agent_publish_options(job_id, attempt, ...)`: 1 to 4 options, exactly 2 for a yes or no question; `kind` is `reply`, `errand`, `call` or `menu`. |
+| Options | Stephen | station, web | Private `answer_option` rows, written only by the sidecar through `agent_publish_options(job_id, attempt, ...)`: the module accepts 1 to 4 options, exactly 2 for a yes or no question, and the sidecar always sends at least 2 (D22); `kind` is `reply`, `errand`, `call` or `menu`. |
 | Pipeline event | Stephen | web | Public, content-free `pipeline_event { stage, status, detail, ms, counts_json, ... }`; content lives in the private `pipeline_payload` and reaches the board only while sharing is on. |
 | Search client | Stephen | agent | `searchWeb(question)` and `searchPlaces(query, near)` return `{ rows, ms }`. Each row is `{ id, source, title, text, url or placeId, fetchedAt }`. See `apify/client/README.md`. |
 | Form-errand Actor | Stephen | agent | Standby `POST /preview { formUrl, fields }` returns `{ status, readBack, readBackText, previewDigest, screenshot }`. `POST /submit { formUrl, fields, confirmDigest }` returns `{ status, confirmationText }`. See `apify/form-errand/README.md`. |
@@ -169,6 +169,12 @@ SpacetimeDB is the whole live backend, not a store behind an API:
 6. **A public pipeline table drives the live dashboards** on any laptop, and an event table carries chimes and toasts.
 
 **Locked Oct 23 by Stephen. Design detail in `docs/spacetime.md`.**
+
+### D22: Claude never answers; the person always gets a choice of at least two replies (Oct 24, Stephen)
+
+Claude is not a voice in the conversation. It only writes choices for the person wearing the headset, who picks one or none, and nothing is said until they do (silence never picks, D19; the speaker says only the picked reply; the partner phone never shows the option words). A pick question now always offers at least 2 options. The planner prompt says so in plain words ("You never answer the partner yourself ... always give the person at least two different replies"), and `validatePlan` refuses a pick reply with fewer than 2 options (`option_count`, `MIN_PICK_OPTIONS` in `agent/src/planner/validate.ts`), so the planner retries instead of sending a single answer. If the Dialer refuses a call option and only one option is left, `buildOptions` adds a stock reply in a tone not already used ("Not now.", "Ask me again later.", "Let me think about it.", "No, thank you."), with provenance `stock`. Yes or no questions keep exactly 2 options (yes, then no), and memory-first options already needed at least 2. The module still accepts 1 to 4 options, so this needed no republish; only the sidecar changed.
+
+**Locked Oct 24 by Stephen.**
 
 ### D21: Double jaw clench no longer means STOP; STOP is a held clench (Oct 24, team), and new imagery thresholds
 

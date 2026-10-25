@@ -20,6 +20,9 @@ function firstWord(text: string): string {
     return key(text).replace(/^[^a-z]+/, '').split(/[^a-z']+/)[0] ?? '';
 }
 
+/** The fewest options a pick question may have: Claude never gives a single answer. */
+export const MIN_PICK_OPTIONS = 2;
+
 const NO_WORDS = new Set(['no', 'nope', 'nah', 'not']);
 const YES_WORDS = new Set(['yes', 'yeah', 'yep', 'sure', 'yup']);
 
@@ -76,7 +79,8 @@ export function validatePlan(reply: PlanReply, input: PlanInput): Plan {
     const max = Math.min(Math.max(1, input.maxOptions), LIMITS.maxOptions);
     const count = reply.options.length;
     if (reply.answer_mode === 'yes_no' && count !== 2) problems.add('yes_no_needs_two');
-    if (reply.answer_mode === 'pick' && (count < 1 || count > max)) problems.add('option_count');
+    // Never a single answer: the person always chooses between at least two (PLAN D22).
+    if (reply.answer_mode === 'pick' && (count < MIN_PICK_OPTIONS || count > max)) problems.add('option_count');
 
     const refs = new Set<string>([...input.memory.map((m) => m.ref), ...input.web.map((w) => w.ref)]);
     const texts = new Set<string>();
