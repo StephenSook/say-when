@@ -170,6 +170,12 @@ SpacetimeDB is the whole live backend, not a store behind an API:
 
 **Locked Oct 23 by Stephen. Design detail in `docs/spacetime.md`.**
 
+### D25: Email after the form (Oct 25, Stephen)
+
+"After we finish filling out the form, create and draft the mock email, and then send it out as well. Keep one ready beforehand, so when the form is done, you're able to show on the screen, just like how you show the form getting filled out, the email as well, getting sent out." The email is real, not a mock: the sidecar sends it through Apify's public Send Email Actor (`apify/send-mail`) with the same `APIFY_TOKEN`, to the one address in `ERRAND_EMAIL_TO` (unset: off; never in the try sandbox; never logged or shown in full, only masked like `s***@gmail.com`). It is drafted when the errand's read-back is prepared (subject "Care team request: Ride", the values read back, the time, and that Eleven sent it on the person's behalf after they confirmed), and the read-back then says "Confirm to send it and email the care team", so the same confirm covers the form and the email. It is sent once, only after the module took the errand's Submitted result; a form that was stopped, cancelled, refused, failed, or had an unknown outcome sends no email, and a duplicate sends no second one. The Agents screen shows an Email card under the form errand: Drafted (subject, masked address, body), Sending, Sent (with its time) or Failed (with its reason), from `errand` pipeline steps whose text rides in the private payload (board only while sharing is on). Steps after the submit need a new module reducer, `agent_errand_email(errand_id, attempt, status, detail, ms, counts_json, payload_json)`, fenced by the errand's claim attempt and refused unless the errand is Submitted; until the module is published with it, the email still goes out but the card stays at Drafted. Code: `agent/src/email.ts`, `agent/src/jobs.ts` (draft), `agent/src/errands.ts` (send), `spacetime/src/consent.ts` `errandEmail`, `web/components/agents/email.ts` and `EmailCard.tsx`.
+
+**Asked for by Stephen, Oct 25.**
+
 ### D24: "Search the web" is always option 3, and "do you know" searches at once (Oct 25, Stephen)
 
 Stephen, about 1:20 AM: "when Khadim says 'do you know', that should automatically signal Apify to start web searching", and "as a third option, when the options are back to the EEG, one of the options should be to web search, so Apify can work". Two changes, both in the agent sidecar only (`agent/src/direct.ts`, the planner prompt; no module change, no republish):
