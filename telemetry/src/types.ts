@@ -5,12 +5,24 @@
 /** Microseconds since the Unix epoch, from a SpacetimeDB server timestamp. Never a laptop clock. */
 export type Micros = bigint;
 
-// ---------- Vocabularies (docs/spacetime.md 2.2, 4.2; PLAN D11) ----------
+// ---------- Vocabularies (docs/spacetime.md 2.2, 4.2; PLAN D11; docs/direct-select.md, D18) ----------
 
-export const COMMANDS = ['YES', 'NO', 'CONFIRM', 'STOP', 'HEADSET_OFF'] as const;
+/**
+ * Every command word switch_events stores, in the order of its CHECK (sql/010, widened by sql/070). Scan mode sends
+ * YES, NO, CONFIRM and STOP; direct select (D18) sends PICK_1 (imagined left fist), PICK_2 (imagined right fist),
+ * PICK_3 (single jaw clench) and STOP. HEADSET_OFF comes in both. There is no PICK_4: no gesture sends it, and a
+ * PICK_4 row (the station's key 4) is a contract skip, never stored.
+ */
+export const COMMANDS = ['YES', 'NO', 'CONFIRM', 'STOP', 'HEADSET_OFF', 'PICK_1', 'PICK_2', 'PICK_3'] as const;
 export type CommandName = (typeof COMMANDS)[number];
 /** The person's commands. HEADSET_OFF is a system event (D11) and never counts as one. */
-export const PERSON_COMMANDS: readonly CommandName[] = ['YES', 'NO', 'CONFIRM', 'STOP'];
+export const PERSON_COMMANDS: readonly CommandName[] = ['YES', 'NO', 'CONFIRM', 'STOP', 'PICK_1', 'PICK_2', 'PICK_3'];
+/** Direct select's picks (D18): the rank is the word's number, and the option is picked by rank, not by what was heard. */
+export const DIRECT_PICKS: ReadonlyMap<CommandName, number> = new Map<CommandName, number>([
+    ['PICK_1', 1],
+    ['PICK_2', 2],
+    ['PICK_3', 3],
+]);
 
 export const PHASES = ['idle', 'preparing', 'reading', 'window', 'veto', 'paused'] as const;
 export const SCAN_MODES = ['answer', 'menu'] as const;
@@ -41,9 +53,11 @@ export const OPEN_CALL: ReadonlySet<string> = new Set(['prepared', 'awaiting_con
 /**
  * Ignore reasons that mean "this command had nothing to act on" (docs/spacetime.md 4.2): NO (or YES with the menu
  * off) while idle, CONFIRM with nothing awaiting confirmation, NO or CONFIRM during a pause, STOP when already
- * paused. Refractory, stale-step and similar reasons are about a command that did have something to act on.
+ * paused. In direct select (docs/direct-select.md 4.1): a PICK with no list on offer (`no_list`, preparing or idle),
+ * and PICK_2 or PICK_3 during a pause (`paused`). Refractory, stale-step, wrong-mode (`direct_mode`, `scan_mode`) and
+ * similar reasons are about a command that did have something to act on, or about the decoder, not the person.
  */
-export const NOTHING_TO_ACT_ON: ReadonlySet<string> = new Set(['idle', 'nothing_to_confirm', 'paused', 'already_paused']);
+export const NOTHING_TO_ACT_ON: ReadonlySet<string> = new Set(['idle', 'nothing_to_confirm', 'paused', 'already_paused', 'no_list']);
 
 /**
  * Pause reasons that still count as resting: the wearer or the operator paused on purpose, or the 2-minute idle
@@ -75,8 +89,22 @@ export function inputOf(label: string): InputKind {
     return 'unknown';
 }
 
-/** Accepted codes of a gesture that made a pick; its ledger row shares the gesture id with the `pick` row. */
-export const PICK_CODES: ReadonlySet<string> = new Set(['pick', 'pick_errand', 'pick_call', 'menu_item', 'answer_yes', 'answer_no']);
+/**
+ * Accepted codes of a gesture that made a pick; its ledger row shares the gesture id with the `pick` row. Scan mode:
+ * pick, pick_errand, pick_call, menu_item, answer_yes, answer_no. Direct select adds pick_reply, pick_search and
+ * pick_category (clock.ts `pickDirect`, which writes the `pick` row for every kind it accepts).
+ */
+export const PICK_CODES: ReadonlySet<string> = new Set([
+    'pick',
+    'pick_errand',
+    'pick_call',
+    'menu_item',
+    'answer_yes',
+    'answer_no',
+    'pick_reply',
+    'pick_search',
+    'pick_category',
+]);
 
 export function oneOf<T extends string>(value: string, allowed: readonly T[]): T | 'other' {
     return (allowed as readonly string[]).includes(value) ? (value as T) : 'other';

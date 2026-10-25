@@ -8,7 +8,7 @@
 // TELEMETRY_SESSIONS (optional: comma-separated session ids; only their rows are written).
 import { connectTiger } from '../db.js';
 import { consoleLogger } from '../log.js';
-import { AGGREGATES, HYPERTABLES, PLAIN_TABLES } from '../migrate.js';
+import { AGGREGATES, COMMAND_CHECK_SQL, HYPERTABLES, judgeCommandCheck, PLAIN_TABLES } from '../migrate.js';
 import { createPipeline } from '../pipeline.js';
 import { PgSink, type RowSink } from '../sink.js';
 import { SpacetimeSource } from '../sources/spacetime.js';
@@ -40,9 +40,11 @@ const conn = await connectTiger({ log, max: 1, applicationName: 'neurolingo-tele
     process.exit(1);
 });
 
-// Refuse to start against a service that was never migrated: rows would fail one batch at a time. If Tiger cannot
+// Refuse to start against a service that was never migrated: rows would fail one batch at a time. That includes a
+// service without sql/070, whose command CHECK refuses the direct select words (PICK_1 to PICK_3). If Tiger cannot
 // be reached at all, start anyway: the writer buffers (up to its cap) and retries, as it would for a later outage.
 let schemaComplete: boolean | null = null;
+let commandCheck: { ok: boolean; detail: string } | null = null;
 try {
     const r = await conn.pool.query(
         "SELECT count(*)::int AS n FROM timescaledb_information.continuous_aggregates WHERE view_schema = 'telemetry' AND view_name = ANY($1::text[])",
@@ -54,11 +56,17 @@ try {
     const p = await conn.pool.query("SELECT count(*)::int AS n FROM pg_tables WHERE schemaname = 'telemetry' AND tablename = ANY($1::text[])", [[...PLAIN_TABLES]]);
     schemaComplete =
         (r.rows[0] as { n: number }).n === AGGREGATES.length && (h.rows[0] as { n: number }).n === HYPERTABLES.length && (p.rows[0] as { n: number }).n === PLAIN_TABLES.length;
+    commandCheck = judgeCommandCheck(((await conn.pool.query(COMMAND_CHECK_SQL)).rows as Array<{ def: string }>).map((row) => row.def));
 } catch (error) {
     log.warn('Tiger is not reachable; starting anyway, rows will queue and the writer will retry', { error: conn.describe(error) });
 }
 if (schemaComplete === false) {
     console.error('telemetry writer: the telemetry schema is incomplete; run npm run migrate first.');
+    await conn.close();
+    process.exit(1);
+}
+if (commandCheck && !commandCheck.ok) {
+    console.error(`telemetry writer: ${commandCheck.detail}.`);
     await conn.close();
     process.exit(1);
 }

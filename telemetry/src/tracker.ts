@@ -8,18 +8,22 @@
 //   ledger's session_start and session_end, device_status.last_seen_at), never from this laptop's clock.
 // - Rest time is kept per second: a second counts when its midpoint falls inside a rest period. Each minute's
 //   seconds are a 60-bit mask, merged with OR in Tiger, so restarts and overlapping writers add up to the union.
-// - A false activation: a YES, NO, CONFIRM or STOP the module recorded as having nothing to act on (`ignored:idle`,
-//   `ignored:nothing_to_confirm`, `ignored:paused`, `ignored:already_paused`) while the session was resting.
+// - A false activation: a person's command (YES, NO, CONFIRM, STOP, or in direct select PICK_1 to PICK_3) the module
+//   recorded as having nothing to act on (`ignored:idle`, `ignored:nothing_to_confirm`, `ignored:paused`,
+//   `ignored:already_paused`, `ignored:no_list`) while the session was resting.
 //   Commands the writer cannot place in observed time never count, and neither does rest time it did not observe,
 //   so a gap can only leave the rate unknown, never inflate it.
 // - Latency and time to pick: from the moment the option a command was matched to began playing (the ledger's
-//   `step` row for the reading the station reported hearing, on the server clock) to the module's decision.
+//   `step` row for the reading the station reported hearing, on the server clock) to the module's decision. A
+//   direct select pick (D18) names its option by rank, so it is timed from that option's reading in the list the
+//   person heard (directMark), not from whatever was playing at the onset.
 import {
     ANSWER_MODES,
     CALL_RESULTS,
     CALL_STATUSES,
     codeOf,
     COMMANDS,
+    DIRECT_PICKS,
     ERRAND_STATUSES,
     GESTURE_ID_RE,
     inputOf,
@@ -211,8 +215,11 @@ export class Tracker {
     private buffered: LedgerIn[] = [];
     /** Pick rows waiting for their gesture row (same transaction, any order), by gesture id. */
     private readonly pendingPicks = new Map<string, { row: LedgerIn; session: SessionTrack }>();
-    /** The reading an accepted pick gesture was matched to, waiting for its pick row, by gesture id. */
-    private readonly heardByGesture = new Map<string, { mark: StepMark | null; at: Micros }>();
+    /**
+     * The reading an accepted pick gesture was matched to, waiting for its pick row, by gesture id. `direct`: a direct
+     * select pick, whose null mark is final (its option was not read yet in the list heard) and never falls back.
+     */
+    private readonly heardByGesture = new Map<string, { mark: StepMark | null; at: Micros; direct: boolean }>();
     readonly counters: TrackerCounters = {
         ledgerRows: 0,
         switchEvents: 0,
@@ -660,6 +667,25 @@ export class Tracker {
         return null;
     }
 
+    /**
+     * Direct select (D18): the reading of the picked option in the list the person heard. The person picks by rank any
+     * time after the list starts, so the step playing at the onset can be another option, or the wait after the list.
+     * Every list, a resumed or republished one too, is read from option 1, so the list heard starts at the newest
+     * reading of option 1 at or before the heard step. A pick made before its option was read in that list has no
+     * such moment: null, so the pick is untimed rather than timed from an older list.
+     */
+    private directMark(s: SessionTrack, heardStepSeq: bigint, questionId: bigint, rank: number): StepMark | null {
+        let picked: StepMark | null = null;
+        for (let i = s.steps.length - 1; i >= 0; i--) {
+            const m = s.steps[i]!;
+            if (m.stepSeq > heardStepSeq) continue;
+            if (questionId !== 0n && m.questionId !== questionId) break;
+            if (picked === null && m.cursor === rank) picked = m;
+            if (m.cursor === 1) break;
+        }
+        return picked;
+    }
+
     private switchEvent(row: LedgerIn): void {
         const command = (COMMANDS as readonly string[]).includes(row.command) ? (row.command as CommandName) : null;
         const sep = row.outcome.indexOf(':');
@@ -682,8 +708,9 @@ export class Tracker {
         let heardIn: 'reading' | 'window' | null = null;
         let latencyMs: number | null = null;
         let mark: StepMark | null = null;
+        const rank = DIRECT_PICKS.get(command);
         if (s && HEARD_CODES.has(code)) {
-            mark = this.heardMark(s, row.stepSeq, row.questionId);
+            mark = rank !== undefined ? this.directMark(s, row.stepSeq, row.questionId, rank) : this.heardMark(s, row.stepSeq, row.questionId);
             if (mark) {
                 heardIn = row.stepSeq === mark.stepSeq ? 'reading' : 'window';
                 latencyMs = msBetween(row.at, mark.at);
@@ -691,11 +718,12 @@ export class Tracker {
         }
         if (s && verdict === 'accepted' && PICK_CODES.has(code)) {
             const pending = this.pendingPicks.get(row.gestureId);
+            const direct = rank !== undefined;
             if (pending) {
                 this.pendingPicks.delete(row.gestureId);
-                this.emitPick(pending.session, pending.row, mark ?? this.fallbackMark(pending.session, pending.row));
+                this.emitPick(pending.session, pending.row, mark ?? (direct ? null : this.fallbackMark(pending.session, pending.row)));
             } else {
-                this.heardByGesture.set(row.gestureId, { mark, at: row.at });
+                this.heardByGesture.set(row.gestureId, { mark, at: row.at, direct });
             }
         }
         this.emit({
@@ -729,7 +757,7 @@ export class Tracker {
         const heard = this.heardByGesture.get(row.gestureId);
         if (heard) {
             this.heardByGesture.delete(row.gestureId);
-            this.emitPick(s, row, heard.mark ?? this.fallbackMark(s, row));
+            this.emitPick(s, row, heard.mark ?? (heard.direct ? null : this.fallbackMark(s, row)));
             return;
         }
         if (!GESTURE_ID_RE.test(row.gestureId)) {

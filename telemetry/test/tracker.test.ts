@@ -743,3 +743,139 @@ describe('the input a session ran with (T1)', () => {
         assert.equal(tracker.stateAt(14n, sec(31)), 'off');
     });
 });
+
+describe('direct select (D18): PICK_1 to PICK_3', () => {
+    /** A three-option list read once (options at 2, 3.5 and 5 s), then the wait for a pick from 6.5 s. */
+    function list(s: Scenario, questionId = 7n): Scenario {
+        s.preparing(sec(1), questionId);
+        s.read(sec(2), questionId, 1, { optionCount: 3 }).read(sec(3.5), questionId, 2, { optionCount: 3 }).read(sec(5), questionId, 3, { optionCount: 3 });
+        return s;
+    }
+
+    test('a pick is stored under its word, paired with its pick row, and timed from the picked option, not the step heard', () => {
+        const s = list(new Scenario().start(sec(0)).ready()).window(sec(6.5));
+        const heard = s.step; // the wait after the list, which writes no step row: heardMark would answer option 3
+        s.pick(sec(8), 7n, 2, 'reply');
+        s.gesture(sec(8), 'PICK_2', 'accepted:pick_reply', { heard, questionId: 7n, optionId: 102n, cursor: 2 });
+        s.idle(sec(8), 'picked');
+        const { rows, tracker } = play(s.events);
+        const [e] = rowsOf(rows, 'switch_events');
+        assert.equal(e?.command, 'PICK_2');
+        assert.equal(e?.outcome, 'accepted');
+        assert.equal(e?.code, 'pick_reply');
+        assert.equal(e?.optionRank, 2);
+        assert.equal(e?.latencyMs, 4500); // from option 2 at 3.5 s, not option 3 at 5 s
+        assert.equal(e?.heardIn, 'window');
+        assert.equal(e?.lateByMs, 0);
+        assert.equal(e?.falseActivation, false);
+        const [p] = rowsOf(rows, 'picks');
+        assert.equal(p?.pickKind, 'reply');
+        assert.equal(p?.optionRank, 2);
+        assert.equal(p?.timeToPickMs, 4500);
+        assert.equal(p?.lateByMs, 0);
+        assert.equal(tracker.counters.contractSkips, 0);
+        assert.equal(tracker.counters.unpairedPicks, 0);
+        assert.equal(tracker.counters.untimedPicks, 0);
+    });
+
+    test('each word picks its rank whatever was playing; a pick during its own clip is heard in reading', () => {
+        const cases: Array<[string, number, string, string, string, number, 'reading' | 'window']> = [
+            ['PICK_1', 1, 'errand', 'pick_errand', 'errand', 3500, 'window'],
+            // The module writes the kind word; search and category are not in the picks CHECK, so they are stored as other.
+            ['PICK_2', 2, 'search', 'pick_search', 'other', 2000, 'window'],
+            ['PICK_3', 3, 'category', 'pick_category', 'other', 500, 'reading'],
+        ];
+        for (const [word, rank, kind, code, stored, ms, heardIn] of cases) {
+            const s = list(new Scenario().start(sec(0)).ready());
+            const heard = s.step; // option 3's clip, playing at 5.5 s
+            s.pick(sec(5.5), 7n, rank, kind);
+            s.gesture(sec(5.5), word, `accepted:${code}`, { heard, questionId: 7n, optionId: 100n + BigInt(rank), cursor: rank });
+            const { rows, tracker } = play(s.events);
+            const e = rowsOf(rows, 'switch_events')[0];
+            assert.equal(e?.command, word);
+            assert.equal(e?.code, code);
+            assert.equal(e?.latencyMs, ms, word);
+            assert.equal(e?.heardIn, heardIn, word);
+            const p = rowsOf(rows, 'picks')[0];
+            assert.equal(p?.pickKind, stored, word);
+            assert.equal(p?.optionRank, rank, word);
+            assert.equal(p?.timeToPickMs, ms, word);
+            assert.equal(tracker.counters.unpairedPicks, 0, word);
+        }
+    });
+
+    test('a resumed list is timed from its own reading of the option, not the earlier list', () => {
+        const s = list(new Scenario().start(sec(0)).ready()).window(sec(6.5));
+        s.pause(sec(7), 'stop');
+        s.read(sec(10), 7n, 1, { optionCount: 3 }).read(sec(11.5), 7n, 2, { optionCount: 3 }); // the resume reads from option 1
+        const heard = s.step;
+        s.pick(sec(12), 7n, 1, 'reply');
+        s.gesture(sec(12), 'PICK_1', 'accepted:pick_reply', { heard, questionId: 7n, optionId: 101n, cursor: 1 });
+        const { rows } = play(s.events);
+        assert.equal(rowsOf(rows, 'picks')[0]?.timeToPickMs, 2000); // from 10 s, not from 2 s
+        assert.equal(rowsOf(rows, 'switch_events')[0]?.latencyMs, 2000);
+    });
+
+    test('a pick made before its option was read in the list heard is untimed, never timed from an earlier list', () => {
+        for (const gestureFirst of [false, true]) {
+            const s = list(new Scenario().start(sec(0)).ready()).window(sec(6.5));
+            s.pause(sec(7), 'stop');
+            s.read(sec(10), 7n, 1, { optionCount: 3 }); // the new list has read only option 1 so far
+            const heard = s.step;
+            const id = 'early-pick';
+            const gesture = () => s.gesture(sec(10.5), 'PICK_3', 'accepted:pick_reply', { heard, questionId: 7n, optionId: 103n, cursor: 3, gestureId: id });
+            if (gestureFirst) gesture();
+            s.pick(sec(10.5), 7n, 3, 'reply', 0, id);
+            if (!gestureFirst) gesture();
+            const { rows, tracker } = play(s.events);
+            // The earlier list read option 3 at 5 s: a fallback would give 5500 ms.
+            assert.equal(rowsOf(rows, 'picks')[0]?.timeToPickMs, null, `gesture first: ${gestureFirst}`);
+            assert.equal(rowsOf(rows, 'picks')[0]?.optionRank, 3);
+            assert.equal(rowsOf(rows, 'switch_events')[0]?.latencyMs, null);
+            assert.equal(rowsOf(rows, 'switch_events')[0]?.heardIn, null);
+            assert.equal(tracker.counters.untimedPicks, 1);
+            assert.equal(tracker.counters.unpairedPicks, 0);
+        }
+    });
+
+    test('a pick with nothing on offer at rest is a false activation; wrong-mode words and HEADSET_OFF never are', () => {
+        const s = new Scenario().start(sec(0)).ready().beat(2, 20);
+        s.gesture(sec(20), 'PICK_3', 'ignored:no_list', { cursor: 3 });
+        s.gesture(sec(21), 'YES', 'ignored:direct_mode');
+        s.gesture(sec(21.5), 'PICK_1', 'ignored:scan_mode', { cursor: 1 });
+        s.beat(22, 30);
+        s.pause(sec(30), 'stop').beat(32, 40);
+        s.gesture(sec(40), 'PICK_2', 'ignored:paused', { cursor: 2 });
+        s.gesture(sec(41), 'HEADSET_OFF', 'ignored:already_paused');
+        s.beat(42, 60);
+        const events = rowsOf(play(s.events).rows, 'switch_events');
+        assert.deepEqual(
+            events.map((e) => [e.command, e.code, e.resting, e.falseActivation]),
+            [
+                ['PICK_3', 'no_list', true, true],
+                ['YES', 'direct_mode', true, false],
+                ['PICK_1', 'scan_mode', true, false],
+                ['PICK_2', 'paused', true, true],
+                ['HEADSET_OFF', 'already_paused', true, false],
+            ],
+        );
+        assert.equal(events[0]?.optionRank, 3);
+    });
+
+    test('PICK_4 is a contract skip; a confirm or cancel by PICK_1 or PICK_2 is a command, not a pick', () => {
+        const s = new Scenario().start(sec(0)).ready();
+        s.gesture(sec(1), 'PICK_4', 'ignored:rank_out_of_range', { cursor: 4 });
+        s.gesture(sec(2), 'PICK_1', 'accepted:confirm');
+        s.gesture(sec(3), 'PICK_2', 'accepted:stop_errand');
+        const { rows, tracker } = play(s.events);
+        assert.deepEqual(
+            rowsOf(rows, 'switch_events').map((e) => [e.command, e.code, e.latencyMs, e.optionRank]),
+            [
+                ['PICK_1', 'confirm', null, null],
+                ['PICK_2', 'stop_errand', null, null],
+            ],
+        );
+        assert.equal(rowsOf(rows, 'picks').length, 0);
+        assert.equal(tracker.counters.contractSkips, 1);
+    });
+});

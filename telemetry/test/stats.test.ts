@@ -122,6 +122,15 @@ describe('which sessions count, by input (T1)', () => {
             "(($1::text IS NOT NULL AND session_id = $1::text) OR ($1::text IS NULL AND ($2::boolean OR session_id NOT LIKE 'test-%') AND ($4::text = 'any' OR session_id IN (SELECT i.session_id FROM telemetry.session_inputs i WHERE i.input = $4::text))))",
         );
     });
+
+    test('commands are every event but HEADSET_OFF, so direct select picks count, not switch_1m.commands (scan words only)', async () => {
+        const { pool, calls } = stubPool();
+        assert.equal((await fetchRawStats(pool)).commands, 4);
+        const counts = calls.find((c) => c.sql.startsWith('WITH w AS'));
+        assert.ok(counts);
+        assert.match(counts.sql, /\(SELECT coalesce\(sum\(events - headset_off_count\), 0\) FROM telemetry\.switch_1m WHERE [^\n]*\) AS commands,/);
+        assert.doesNotMatch(counts.sql, /sum\(commands\)/);
+    });
 });
 
 describe('percentile_cont', () => {

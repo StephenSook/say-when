@@ -5,6 +5,9 @@ import { readFileSync } from 'node:fs';
 
 import {
     choosePlan,
+    COMMAND_CHECK_SQL,
+    DIRECT_SELECT_MIGRATION,
+    judgeCommandCheck,
     COLUMNSTORE_AFTER,
     COLUMNSTORE_LAYOUT,
     EXPECTED_COLUMNS,
@@ -32,7 +35,7 @@ import {
     type IdentityIndexRow,
     type JobRow,
 } from '../src/migrate.js';
-import { INPUT_KINDS } from '../src/types.js';
+import { COMMANDS, INPUT_KINDS } from '../src/types.js';
 
 /** Catalog-shaped compression_settings rows for a layout, as the live service printed them for sql/050. */
 function settingRows(name: string, segmentby: readonly string[], orderby: ReadonlyArray<{ col: string; asc: boolean; nullsFirst: boolean }>): ColumnstoreSettingRow[] {
@@ -215,7 +218,11 @@ describe('the content-free column check', () => {
         assert.equal(judgeColumns('switch_events', good).ok, true);
         // The wording pg_get_constraintdef printed on the live service (PostgreSQL 18.6), copied verbatim.
         assert.equal(EXPECTED_TEXT_CHECKS.switch_events.heard_in, "CHECK (((heard_in IS NULL) OR (heard_in = ANY (ARRAY['reading'::text, 'window'::text]))))");
-        assert.equal(EXPECTED_TEXT_CHECKS.switch_events.command, "CHECK ((command = ANY (ARRAY['YES'::text, 'NO'::text, 'CONFIRM'::text, 'STOP'::text, 'HEADSET_OFF'::text])))");
+        // sql/070 replaced the five words of sql/010 with eight (direct select): verify expects the eight.
+        assert.equal(
+            EXPECTED_TEXT_CHECKS.switch_events.command,
+            "CHECK ((command = ANY (ARRAY['YES'::text, 'NO'::text, 'CONFIRM'::text, 'STOP'::text, 'HEADSET_OFF'::text, 'PICK_1'::text, 'PICK_2'::text, 'PICK_3'::text])))",
+        );
         assert.equal(EXPECTED_TEXT_CHECKS.picks.session_id, "CHECK ((session_id ~ '^(test-[A-Za-z0-9_-]{1,64}|[a-z0-9]+(-[a-z0-9]+)*:[0-9]{1,20})$'::text))");
         // A further CHECK beside the expected one can only restrict more, so it is allowed.
         assert.equal(judgeColumns('switch_events', replace('code', { checks: ['CHECK ((length(code) < 10))', EXPECTED_TEXT_CHECKS.switch_events.code!] })).ok, true);
@@ -245,17 +252,24 @@ describe('the content-free column check', () => {
     test('the expected columns are exactly what the sql files create, less the dropped gesture id', () => {
         const sqlType: Record<string, string> = { timestamptz: 'timestamp with time zone', text: 'text', bigint: 'bigint', integer: 'integer', smallint: 'smallint', boolean: 'boolean' };
         const file: Record<string, string> = { switch_events: '010', scan_steps: '011', picks: '012', action_outcomes: '013', rest_minutes: '014' };
+        const migrations = readMigrations();
         for (const t of HYPERTABLES) {
             const sql = readFileSync(new URL(`../sql/${file[t]}_${t}.sql`, import.meta.url), 'utf8');
+            // A later file that replaces one of the table's CHECKs (sql/070 for switch_events_command_word).
+            const replacing = migrations
+                .filter((f) => f.statements.some((s) => s.startsWith(`ALTER TABLE telemetry.${t}`) && s.includes('ADD CONSTRAINT')))
+                .map((f) => f.statements.join('\n'));
             const created = Object.fromEntries(
                 [...sql.matchAll(/^\s+([a-z_]+) (timestamptz|text|bigint|integer|smallint|boolean)\b/gm)].filter((m) => !FORBIDDEN_COLUMNS.has(m[1]!)).map((m) => [m[1]!, sqlType[m[2]!]!]),
             );
             assert.deepEqual(created, { ...EXPECTED_COLUMNS[t] }, t);
-            // Every text column has an expected CHECK, and each expected CHECK's words and pattern come from the file.
+            // Every text column has an expected CHECK, and each expected CHECK's words and pattern come from the file or
+            // from a later file that replaces that CHECK.
             const textCols = Object.entries(EXPECTED_COLUMNS[t]).filter(([, type]) => type === 'text').map(([c]) => c);
             assert.deepEqual(Object.keys(EXPECTED_TEXT_CHECKS[t]).sort(), textCols.sort(), t);
+            const source = [sql, ...replacing].join('\n');
             for (const def of Object.values(EXPECTED_TEXT_CHECKS[t])) {
-                for (const m of def.matchAll(/'([^']*)'::text/g)) assert.ok(sql.includes(`'${m[1]}'`), `${t}: ${m[1]} is not in the sql file`);
+                for (const m of def.matchAll(/'([^']*)'::text/g)) assert.ok(source.includes(`'${m[1]}'`), `${t}: ${m[1]} is not in the sql files`);
             }
         }
     });
@@ -283,6 +297,48 @@ describe('the content-free column check', () => {
         const loose = good.map((r) => (r.col === 'input' ? { ...r, checks: ["CHECK ((input = ANY (ARRAY['headset'::text, 'keyboard'::text, 'switch'::text, 'unknown'::text, 'keyboard-test'::text])))"] } : r));
         assert.equal(judgeColumns('session_inputs', loose).ok, false);
         assert.equal(judgeColumns('session_inputs', [...good, { tbl: 'session_inputs', col: 'label', type: 'text', checks: [] }]).ok, false, 'a stored label');
+    });
+});
+
+describe('the direct select command CHECK (sql/070)', () => {
+    // As pg_get_constraintdef prints the CHECK of sql/010, which a service without sql/070 still has.
+    const FIVE_WORDS = "CHECK ((command = ANY (ARRAY['YES'::text, 'NO'::text, 'CONFIRM'::text, 'STOP'::text, 'HEADSET_OFF'::text])))";
+    const EIGHT_WORDS = EXPECTED_TEXT_CHECKS.switch_events.command!;
+    const WITH_PICK_4 = EIGHT_WORDS.replace("'PICK_3'::text]", "'PICK_3'::text, 'PICK_4'::text]");
+    const rows = (commandChecks: string[]): ColumnRow[] =>
+        Object.entries(EXPECTED_COLUMNS.switch_events).map(([col, type]) => ({
+            tbl: 'switch_events',
+            col,
+            type,
+            checks: col === 'command' ? commandChecks : type === 'text' ? [EXPECTED_TEXT_CHECKS.switch_events[col]!] : [],
+        }));
+
+    test('verify passes only with the eight-word CHECK, validated', () => {
+        assert.equal(judgeColumns('switch_events', rows([EIGHT_WORDS])).ok, true);
+        const bad: Array<[string, string[]]> = [
+            ['sql/070 not applied: the five words of sql/010', [FIVE_WORDS]],
+            // The catalog query reads validated CHECKs only, so a NOT VALID one reaches the judge as no CHECK.
+            ['added NOT VALID and never validated', []],
+            ['a ninth word, PICK_4', [WITH_PICK_4]],
+        ];
+        for (const [name, checks] of bad) {
+            const verdict = judgeColumns('switch_events', rows(checks));
+            assert.equal(verdict.ok, false, name);
+            assert.match(verdict.detail, /command is not held by its expected CHECK/, name);
+        }
+    });
+
+    test('the writer starts only when the live CHECK admits every command word', () => {
+        assert.deepEqual(judgeCommandCheck([EIGHT_WORDS]), { ok: true, detail: 'switch_events_command_word admits every command word' });
+        assert.equal(judgeCommandCheck([FIVE_WORDS]).ok, false);
+        assert.match(judgeCommandCheck([FIVE_WORDS]).detail, /070_direct_select_commands.*npm run migrate/);
+        assert.equal(judgeCommandCheck([]).ok, false);
+        assert.match(judgeCommandCheck([]).detail, /missing or not validated/);
+        assert.equal(judgeCommandCheck([WITH_PICK_4]).ok, false);
+        // The query reads only the named, validated CHECK of telemetry.switch_events.
+        for (const part of ["n.nspname = 'telemetry'", "t.relname = 'switch_events'", "k.conname = 'switch_events_command_word'", "k.contype = 'c'", 'k.convalidated', 'pg_get_constraintdef(k.oid) AS def']) {
+            assert.ok(COMMAND_CHECK_SQL.includes(part), part);
+        }
     });
 });
 
@@ -340,6 +396,7 @@ describe('the sql files', () => {
             '040_switch_events_no_gesture_id.sql': 1,
             '050_columnstore.sql': 10,
             '060_session_inputs.sql': 2,
+            '070_direct_select_commands.sql': 1,
         });
         for (const f of files) for (const s of f.statements) assert.ok(!s.includes(';'), `${f.file}: a statement still holds a semicolon`);
     });
@@ -387,9 +444,36 @@ describe('the sql files', () => {
                 '040_switch_events_no_gesture_id.sql',
                 '050_columnstore.sql',
                 '060_session_inputs.sql',
+                '070_direct_select_commands.sql',
             ],
         );
         assert.equal(choosePlan(files, 'exact').find((f) => f.id === '022_picks_1m')?.variant, 'exact');
+    });
+
+    test('sql/070 replaces the command CHECK in one statement with exactly the eight words, validated, and nothing else', () => {
+        const f = files.find((x) => x.id === DIRECT_SELECT_MIGRATION);
+        assert.ok(f, `sql/${DIRECT_SELECT_MIGRATION}.sql is missing`);
+        // After every applied file, so npm run migrate runs it last.
+        assert.equal(files.at(-1)?.file, f.file);
+        assert.equal(f.statements.length, 1);
+        const [statement] = f.statements;
+        // One ALTER TABLE, so the drop and the add commit together: the column is never left without a CHECK.
+        const m = /^ALTER TABLE telemetry\.switch_events\s+DROP CONSTRAINT IF EXISTS switch_events_command_word,\s+ADD CONSTRAINT switch_events_command_word CHECK \(command IN \(([^)]*)\)\)$/.exec(statement!);
+        assert.ok(m, statement);
+        const words = m[1]!.split(',').map((w) => w.trim().replace(/^'|'$/g, ''));
+        // The words, in order, of COMMANDS and of the CHECK verify expects (as PostgreSQL deparses `IN (...)`).
+        assert.deepEqual(words, [...COMMANDS]);
+        assert.equal(EXPECTED_TEXT_CHECKS.switch_events.command, `CHECK ((command = ANY (ARRAY[${words.map((w) => `'${w}'::text`).join(', ')}])))`);
+        // Every word sql/010 allowed is still allowed, so every stored row passes when the CHECK is added.
+        const old = /CONSTRAINT switch_events_command_word CHECK \(command IN \(([^)]*)\)\)/.exec(readFileSync(new URL('../sql/010_switch_events.sql', import.meta.url), 'utf8'));
+        const oldWords = old![1]!.split(',').map((x) => x.trim().replace(/^'|'$/g, ''));
+        assert.equal(oldWords.length, 5);
+        for (const w of oldWords) assert.ok((words as readonly string[]).includes(w), w);
+        // Validated as it is added (verify counts only validated CHECKs), no PICK_4, and no other table or constraint.
+        assert.doesNotMatch(statement!, /NOT VALID|VALIDATE|PICK_4/);
+        const named = [...statement!.matchAll(/CONSTRAINT (?:IF EXISTS )?(\w+)/g)].map((c) => c[1]);
+        assert.deepEqual(named, ['switch_events_command_word', 'switch_events_command_word']);
+        assert.equal(choosePlan(files, 'exact').at(-1)?.file, f.file);
     });
 
     test('every aggregate is real-time and refreshed inside the raw retention window', () => {
